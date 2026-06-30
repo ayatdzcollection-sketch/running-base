@@ -1,0 +1,47 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  body {
+    margin: 0;
+    background: #020617;
+    color: #e2e8f0;
+  }
+  /* Remove number input spinners */
+  input[type='number']::-webkit-inner-spin-button,
+  input[type='number']::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-[#0a101e] border border-[#1e293b] rounded-xl p-4;
+  }
+  .tag {
+    @apply inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-medium;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+  }
+  .tag-teal  { @apply bg-teal-950/60  text-teal-400  border border-teal-900/40;  }
+  .tag-amber { @apply bg-amber-950/60 text-amber-400 border border-amber-900/40; }
+  .tag-sky   { @apply bg-sky-950/60   text-sky-400   border border-sky-900/40;   }
+  .tag-rose  { @apply bg-rose-950/60  text-rose-400  border border-rose-900/40;  }
+}
+
+@layer utilities {
+  .tabular-nums { font-variant-numeric: tabular-nums; }
+  .font-display { font-family: 'Space Grotesk', system-ui, sans-serif; }
+  .bg-ink       { background-color: #020617; }
+  .border-border { border-color: #1e293b; }
+}

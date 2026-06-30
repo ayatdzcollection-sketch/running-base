@@ -1,0 +1,21 @@
+{
+  "name": "Bulletproof Base",
+  "short_name": "BB Training",
+  "description": "7-week XC base block — governed training log",
+  "start_url": "/running-base/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "icons": [
+    {
+      "src": "/running-base/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/running-base/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

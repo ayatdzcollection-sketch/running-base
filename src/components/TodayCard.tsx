@@ -1,0 +1,206 @@
+import { useState, useEffect } from 'react';
+import type { PlanDay, PlanWeek, RunEntry } from '../lib/types';
+import CapGauge from './CapGauge';
+
+interface Props {
+  today: string;
+  day: PlanDay | null;
+  week: PlanWeek | null;
+  entry: RunEntry | undefined;
+  onUpdate: (date: string, updates: Partial<RunEntry>) => void;
+  planStart: string;
+  planEnd: string;
+}
+
+export default function TodayCard({ today, day, week, entry, onUpdate, planStart, planEnd }: Props) {
+  const [localMiles, setLocalMiles] = useState(
+    entry?.miles_actual != null ? String(entry.miles_actual) : ''
+  );
+  const [focused, setFocused] = useState(false);
+
+  // Sync local input when parent state changes (e.g. Supabase pull), but not while typing
+  useEffect(() => {
+    if (!focused) {
+      setLocalMiles(entry?.miles_actual != null ? String(entry.miles_actual) : '');
+    }
+  }, [entry?.miles_actual, focused]);
+
+  function handleBlur() {
+    setFocused(false);
+    const num = parseFloat(localMiles);
+    onUpdate(today, { miles_actual: isNaN(num) ? null : Math.max(0, num) });
+  }
+
+  // ── Before / after plan ──────────────────────────────────
+  if (today < planStart) {
+    return (
+      <div className="card text-center py-8 space-y-2">
+        <p className="text-slate-400 text-sm">Plan starts</p>
+        <p className="font-display text-2xl font-semibold text-slate-200">Monday Jun 29</p>
+        <p className="text-slate-500 text-sm">Today is a free day. Bonus day is Jun 26.</p>
+      </div>
+    );
+  }
+  if (today > planEnd) {
+    return (
+      <div className="card text-center py-8 space-y-2">
+        <p className="text-2xl">🏁</p>
+        <p className="font-display text-xl font-semibold text-slate-200">Block complete</p>
+        <p className="text-slate-500 text-sm">7 weeks done. XC season — go.</p>
+      </div>
+    );
+  }
+
+  // ── Bonus day ────────────────────────────────────────────
+  if (day?.type === 'bonus') {
+    return (
+      <div className="card space-y-4">
+        <div className="flex items-center gap-2">
+          <span className="tag tag-sky">Bonus day</span>
+          <span className="text-slate-500 text-sm">Fri Jun 26</span>
+        </div>
+        <p className="font-display text-lg text-slate-200">
+          Optional easy 3–4 mi. Real plan starts Monday.
+        </p>
+        <MilesRow
+          localMiles={localMiles}
+          done={!!entry?.done}
+          onToggle={() => onUpdate(today, { done: !entry?.done })}
+          onMilesChange={setLocalMiles}
+          onFocus={() => setFocused(true)}
+          onBlur={handleBlur}
+          prescribed={null}
+        />
+      </div>
+    );
+  }
+
+  // ── Rest day ─────────────────────────────────────────────
+  if (!day || day.type === 'rest') {
+    const dow = new Date(today + 'T12:00:00Z').getUTCDay();
+    const label = dow === 6 ? 'Saturday' : 'Sunday';
+    return (
+      <div className="card text-center py-8 space-y-2">
+        <span className="tag tag-teal mx-auto">Rest day</span>
+        <p className="font-display text-xl font-semibold text-slate-200 mt-2">{label}</p>
+        <p className="text-slate-500 text-sm">Off. Let it absorb. Strength work if cleared.</p>
+      </div>
+    );
+  }
+
+  // ── Run day ──────────────────────────────────────────────
+  const prescribed = day.prescribed ?? 0;
+  const cap = week?.longRunCap ?? prescribed;
+  const isLong = day.isLongRun;
+
+  const fmtDay = `${day.dayLabel} ${fmtDateShort(today)}`;
+
+  return (
+    <div className="card space-y-5">
+      {/* Header */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className={`tag ${isLong ? 'tag-amber' : 'tag-teal'}`}>
+          {isLong ? 'Long run' : 'Easy run'}
+        </span>
+        {day.isDownWeek && <span className="tag tag-sky">Down week</span>}
+        <span className="text-slate-500 text-sm ml-auto">{fmtDay}</span>
+      </div>
+
+      {/* Distance */}
+      <div className="flex items-end gap-3">
+        <span className="font-display text-5xl font-semibold tabular-nums text-slate-100">
+          {prescribed}
+        </span>
+        <span className="font-display text-xl text-slate-400 mb-1">mi</span>
+        {isLong && (
+          <span className="text-xs text-amber-400/80 mb-2 ml-1">← week ceiling</span>
+        )}
+      </div>
+
+      {/* HR reminder */}
+      <div className="rounded-lg bg-ink border border-border px-3 py-2 text-xs text-slate-400 leading-relaxed">
+        <span className="text-rose-300 font-semibold">HR governor:</span>{' '}
+        keep 140–150 bpm · hard cap 155 · talk-test not enough
+      </div>
+
+      {/* Gauge + actions */}
+      <div className="flex flex-col sm:flex-row items-center gap-6">
+        <CapGauge current={prescribed} cap={cap} />
+        <div className="flex-1 w-full space-y-3">
+          <MilesRow
+            localMiles={localMiles}
+            done={!!entry?.done}
+            onToggle={() => onUpdate(today, { done: !entry?.done })}
+            onMilesChange={setLocalMiles}
+            onFocus={() => setFocused(true)}
+            onBlur={handleBlur}
+            prescribed={prescribed}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Shared miles/done row ────────────────────────────────────
+
+interface MilesRowProps {
+  localMiles: string;
+  done: boolean;
+  prescribed: number | null;
+  onToggle: () => void;
+  onMilesChange: (v: string) => void;
+  onFocus: () => void;
+  onBlur: () => void;
+}
+
+function MilesRow({
+  localMiles, done, prescribed,
+  onToggle, onMilesChange, onFocus, onBlur,
+}: MilesRowProps) {
+  return (
+    <div className="flex items-center gap-3">
+      {/* Done toggle */}
+      <button
+        onClick={onToggle}
+        aria-label={done ? 'Mark undone' : 'Mark done'}
+        className={`w-12 h-12 rounded-full border-2 flex items-center justify-center
+                    text-xl transition-all active:scale-95 shrink-0
+                    ${done
+                      ? 'border-teal-500 bg-teal-500/20 text-teal-400'
+                      : 'border-border text-slate-600 hover:border-slate-500'}`}
+      >
+        {done ? '✓' : '○'}
+      </button>
+
+      {/* Miles input */}
+      <div className="flex-1 relative">
+        <input
+          type="number"
+          inputMode="decimal"
+          step="0.1"
+          min="0"
+          max="30"
+          value={localMiles}
+          onChange={e => onMilesChange(e.target.value)}
+          onFocus={onFocus}
+          onBlur={onBlur}
+          placeholder={prescribed != null ? `${prescribed} planned` : 'miles run'}
+          className="w-full bg-ink border border-border rounded-lg px-4 py-3
+                     text-slate-200 font-display tabular-nums text-base
+                     placeholder:text-slate-700 outline-none
+                     focus:border-teal-500/60 transition"
+        />
+        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-600 text-sm pointer-events-none">
+          mi
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function fmtDateShort(dateStr: string): string {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}

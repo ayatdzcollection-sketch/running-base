@@ -1,0 +1,170 @@
+// ============================================================
+// TRAINING PLAN CONFIG — edit this file to change the plan.
+// All calendar dates derive from PLAN_START_DATE. Changing
+// that constant shifts the whole schedule automatically.
+// ============================================================
+
+/** Monday that kicks off Week 1 of the real block */
+export const PLAN_START_DATE = '2026-06-29';
+
+/** Optional easy day before the block officially begins */
+export const BONUS_DAY_DATE = '2026-06-26';
+
+/** Block total prescribed miles (Weeks 1–7, Mon–Fri) */
+export const BLOCK_TOTAL_MILES = 165;
+
+/** Coach mileage award tracking */
+export const AWARD = {
+  target: 175.3,
+  windowStart: '2026-06-26', // 45-day window opens on bonus day
+  windowEnd: '2026-08-09',   // cutoff (Week 7 starts Aug 10, just after)
+  safePlanDelivery: 143,     // what the governed plan realistically delivers
+};
+
+/** HR governors */
+export const HR = {
+  easyMin: 140,
+  easyMax: 150,
+  hardCap: 155,
+  hrmax: 198,
+};
+
+/** Single-session cap rule: no run > this × trailing-30-day longest */
+export const CAP_FACTOR = 1.1;
+
+/** Trailing-30-day longest run as of the plan start (unchanged by seed runs) */
+export const TRAILING_LONGEST = 4.5;
+
+// ── Weekly mileage ─────────────────────────────────────────
+// Each entry is [Mon, Tue, Wed, Thu, Fri(long)] prescribed miles.
+// The Friday number is the week's ceiling — nothing else should exceed it.
+interface WeekConfig {
+  miles: [number, number, number, number, number];
+  note?: string;
+  isDownWeek?: boolean;
+}
+
+export const WEEK_CONFIGS: WeekConfig[] = [
+  /* W1 */ { miles: [4.0, 4.0, 4.0, 3.5, 4.5] },
+  /* W2 */ { miles: [4.5, 4.5, 4.0, 4.0, 5.0] },
+  /* W3 */ { miles: [5.0, 5.0, 5.0, 4.5, 5.5] },
+  /* W4 */ { miles: [3.5, 3.5, 3.0, 2.5, 5.5], isDownWeek: true, note: 'down week' },
+  /* W5 */ { miles: [5.5, 5.5, 5.0, 5.0, 6.0] },
+  /* W6 */ { miles: [6.0, 6.0, 5.5, 6.0, 6.5], note: 'peak' },
+  /* W7 */ { miles: [4.5, 4.0, 4.0, 3.0, 6.5], isDownWeek: true, note: 'taper' },
+];
+
+// ── Derived plan (computed from config above) ──────────────
+import type { PlanDay, PlanWeek } from '../lib/types';
+
+const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function addDays(dateStr: string, n: number): string {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function fmtDate(dateStr: string): string {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  return `${MONTH_ABBR[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+export interface BuiltPlan {
+  bonusDay: PlanDay;
+  weeks: PlanWeek[];
+  allRunDates: Set<string>;
+  allDates: Set<string>;
+  dateToWeek: Map<string, PlanWeek>;
+  dateToDay: Map<string, PlanDay>;
+}
+
+let _plan: BuiltPlan | null = null;
+
+export function getPlan(): BuiltPlan {
+  if (_plan) return _plan;
+
+  const bonusDay: PlanDay = {
+    date: BONUS_DAY_DATE,
+    weekNum: 0,
+    dayLabel: 'Fri',
+    type: 'bonus',
+    prescribed: null,
+    isLongRun: false,
+    isDownWeek: false,
+  };
+
+  const weeks: PlanWeek[] = WEEK_CONFIGS.map((cfg, i) => {
+    const weekNum = i + 1;
+    const weekStart = addDays(PLAN_START_DATE, i * 7);
+    const weekEnd = addDays(weekStart, 4); // Friday
+
+    const runDays: PlanDay[] = cfg.miles.map((miles, j) => ({
+      date: addDays(weekStart, j),
+      weekNum,
+      dayLabel: DAY_LABELS[j],
+      type: 'run' as const,
+      prescribed: miles,
+      isLongRun: j === 4,
+      isDownWeek: !!cfg.isDownWeek,
+      weekNote: cfg.note,
+    }));
+
+    const restDays: PlanDay[] = [5, 6].map(j => ({
+      date: addDays(weekStart, j),
+      weekNum,
+      dayLabel: DAY_LABELS[j],
+      type: 'rest' as const,
+      prescribed: null,
+      isLongRun: false,
+      isDownWeek: !!cfg.isDownWeek,
+      weekNote: cfg.note,
+    }));
+
+    const baseLabel = `Week ${weekNum} — ${fmtDate(weekStart)}–${fmtDate(weekEnd)}`;
+
+    return {
+      weekNum,
+      startDate: weekStart,
+      endDate: weekEnd,
+      label: cfg.note ? `${baseLabel} (${cfg.note})` : baseLabel,
+      allDays: [...runDays, ...restDays],
+      runDays,
+      totalPlanned: cfg.miles.reduce((a, b) => a + b, 0),
+      longRunCap: cfg.miles[4],
+      isDownWeek: !!cfg.isDownWeek,
+      note: cfg.note,
+    };
+  });
+
+  const allRunDates = new Set<string>();
+  const allDates = new Set<string>();
+  const dateToWeek = new Map<string, PlanWeek>();
+  const dateToDay = new Map<string, PlanDay>();
+
+  allDates.add(BONUS_DAY_DATE);
+  dateToDay.set(BONUS_DAY_DATE, bonusDay);
+
+  for (const week of weeks) {
+    for (const day of week.allDays) {
+      allDates.add(day.date);
+      dateToDay.set(day.date, day);
+      dateToWeek.set(day.date, week);
+      if (day.type === 'run') allRunDates.add(day.date);
+    }
+  }
+
+  _plan = { bonusDay, weeks, allRunDates, allDates, dateToWeek, dateToDay };
+  return _plan;
+}
+
+/** Today's YYYY-MM-DD in local time */
+export function todayStr(): string {
+  const d = new Date();
+  return [
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, '0'),
+    String(d.getDate()).padStart(2, '0'),
+  ].join('-');
+}
