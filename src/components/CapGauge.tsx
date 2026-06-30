@@ -6,80 +6,78 @@ interface Props {
 export default function CapGauge({ current, cap }: Props) {
   const CX = 100;
   const CY = 100;
-  const R = 76;
-  const STROKE = 10;
+  const R = 80;
+  const SW = 10; // stroke width
 
-  // ratio: 0 = left, 1 = right
   const ratio = cap > 0 ? Math.min(current / cap, 1.2) : 0;
 
-  function arcPoint(p: number) {
-    const angle = Math.PI - p * Math.PI; // π → 0 as p → 1
-    return {
-      x: CX + R * Math.cos(angle),
-      y: CY - R * Math.sin(angle),
-    };
+  // angle goes π (left) → 0 (right) as p goes 0 → 1
+  // In SVG (Y-down), sweep=1 is clockwise on screen: left → top → right ✓
+  function pt(p: number) {
+    const a = Math.PI * (1 - p);
+    return { x: CX + R * Math.cos(a), y: CY - R * Math.sin(a) };
   }
 
-  function arcPath(p: number) {
+  const startPt = pt(0); // (20, 100)
+  const endPt   = pt(1); // (180, 100)
+
+  function fillPath(p: number): string {
     if (p <= 0) return '';
-    const clamped = Math.min(p, 1);
-    const end = arcPoint(clamped);
-    // Always 0: we draw a fraction of a 180° arc, never the "large" (>180°) variant
-    const start = arcPoint(0);
-    return `M ${start.x} ${start.y} A ${R} ${R} 0 0 0 ${end.x} ${end.y}`;
+    const { x, y } = pt(Math.min(p, 1));
+    // sweep=1 (clockwise on screen) = upper semicircle
+    return `M ${startPt.x} ${startPt.y} A ${R} ${R} 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)}`;
   }
 
-  // Color: teal under cap, amber at cap, rose over cap
   const color =
     ratio > 1 ? '#fb7185' : ratio >= 0.95 ? '#f59e0b' : '#2dd4bf';
 
-  // Needle endpoint
-  const needle = arcPoint(Math.min(ratio, 1));
-  const startPt = arcPoint(0);
+  const needle = pt(Math.min(ratio, 1));
 
   return (
     <div className="flex flex-col items-center gap-1">
       <svg
-        viewBox="0 0 200 110"
-        className="w-48 h-auto motion-safe:transition-all"
+        viewBox="0 0 200 115"
+        className="w-48 h-auto"
         aria-label={`${current} mi vs ${cap} mi cap`}
       >
-        {/* Track */}
+        {/* Track — full upper semicircle */}
         <path
-          d={`M ${startPt.x} ${startPt.y} A ${R} ${R} 0 0 0 ${arcPoint(1).x} ${arcPoint(1).y}`}
+          d={`M ${startPt.x} ${startPt.y} A ${R} ${R} 0 0 1 ${endPt.x} ${endPt.y}`}
           fill="none"
-          stroke="#1e293b"
-          strokeWidth={STROKE}
+          stroke="#334155"
+          strokeWidth={SW}
           strokeLinecap="round"
         />
-        {/* Fill */}
+
+        {/* Fill — portion driven by today's distance */}
         {ratio > 0 && (
           <path
-            d={arcPath(ratio)}
+            d={fillPath(ratio)}
             fill="none"
             stroke={color}
-            strokeWidth={STROKE}
+            strokeWidth={SW}
             strokeLinecap="round"
           />
         )}
-        {/* Needle */}
+
+        {/* Needle from center to arc point */}
         <line
-          x1={CX}
-          y1={CY}
-          x2={needle.x}
-          y2={needle.y}
+          x1={CX} y1={CY}
+          x2={needle.x} y2={needle.y}
           stroke={color}
-          strokeWidth={2}
+          strokeWidth={2.5}
           strokeLinecap="round"
-          opacity={0.9}
+          opacity={0.85}
         />
-        {/* Center dot */}
         <circle cx={CX} cy={CY} r={4} fill={color} />
-        {/* Labels */}
-        <text x={startPt.x} y={CY + 18} textAnchor="middle" fontSize={9} fill="#64748b" fontFamily="Space Grotesk, sans-serif">0</text>
-        <text x={arcPoint(1).x} y={CY + 18} textAnchor="middle" fontSize={9} fill="#64748b" fontFamily="Space Grotesk, sans-serif">{cap}</text>
-        <text x={CX} y={CY - R - 12} textAnchor="middle" fontSize={9} fill="#64748b" fontFamily="Space Grotesk, sans-serif">cap</text>
+
+        {/* End-point labels */}
+        <text x={startPt.x} y={CY + 14} textAnchor="middle"
+          fontSize={9} fill="#64748b" fontFamily="Space Grotesk, sans-serif">0</text>
+        <text x={endPt.x} y={CY + 14} textAnchor="middle"
+          fontSize={9} fill="#64748b" fontFamily="Space Grotesk, sans-serif">{cap}</text>
       </svg>
+
       <p className="text-xs text-slate-500 tabular-nums">
         {current} mi / {cap} mi cap
       </p>
