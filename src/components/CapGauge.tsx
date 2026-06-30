@@ -24,9 +24,9 @@ export default function CapGauge({ current, cap }: Props) {
     if (p <= 0) return '';
     const clamped = Math.min(p, 1);
     const end = arcPoint(clamped);
-    const largeArc = clamped > 0.5 ? 1 : 0;
+    // Always 0: we draw a fraction of a 180° arc, never the "large" (>180°) variant
     const start = arcPoint(0);
-    return `M ${start.x} ${start.y} A ${R} ${R} 0 ${largeArc} 0 ${end.x} ${end.y}`;
+    return `M ${start.x} ${start.y} A ${R} ${R} 0 0 0 ${end.x} ${end.y}`;
   }
 
   // Color: teal under cap, amber at cap, rose over cap
