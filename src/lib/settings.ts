@@ -191,7 +191,7 @@ export function requiredStreakFor(target: SpeedStateNum, eff: RawSettings | null
 
 // ── Build week configs from settings ─────────────────────────
 
-function roundHalf(x: number): number {
+export function roundHalf(x: number): number {
   return Math.round(x / TUNABLES.HALF_STEP) * TUNABLES.HALF_STEP;
 }
 
@@ -199,7 +199,7 @@ function roundHalf(x: number): number {
  *  lightest, no easy day above the long-run ceiling. The prescribed sum never
  *  exceeds roundHalf(total) — half-step rounding is trimmed down, never up, so
  *  the peak-week ceiling genuinely binds. */
-function splitWeek(total: number, long: number, daysPerWeek: number): number[] {
+export function splitWeek(total: number, long: number, daysPerWeek: number): number[] {
   const easyCount = Math.max(0, daysPerWeek - 1);
   const longR = roundHalf(long);
   if (easyCount === 0) return [longR];
@@ -222,55 +222,69 @@ function splitWeek(total: number, long: number, daysPerWeek: number): number[] {
   return easy;
 }
 
+export function clampBlockWeeks(n: number): number {
+  return Math.round(Math.min(12, Math.max(1, n)));
+}
+
 /**
- * Build WeekConfig[] from effective settings. Structural safety, not advisory:
- *  • weekly total grows by at most min(buildStep, +10%) per build week
- *  • never exceeds peakMpw
- *  • a down week (~27.5% cut) is forced after `downEvery` build weeks; long held
- *  • the final week is a taper (down)
- *  • the long run advances only on build weeks via nextLongFrom(prevLong),
- *    so no week's long run exceeds ~110% of the previous — the cap is baked in.
+ * Build one week from the previous week's total + long run. Down weeks land on
+ * a fixed cadence (every `downEvery`th week, excluding the first) and the final
+ * week is always a taper — an index-based cadence keeps the settings scaffold
+ * predictable (the generator handles pain-driven down weeks dynamically).
+ * Returns the config plus the carry-forward total/long for the NEXT week, so a
+ * caller can splice locked weeks in and keep the ladder continuous across the
+ * boundary (no long-run jump).
+ *
+ * Structural safety baked in:
+ *  • build weeks grow by at most min(buildStep, +10%); never exceed peakMpw
+ *  • down/taper weeks cut ~27.5% and HOLD the long run (no ladder step)
+ *  • the long run advances only via nextLongFrom(prevLong) — ≤110% of prior
  */
-export function buildWeekConfigsFromSettings(eff: EffectiveSettings): WeekConfig[] {
-  const configs: WeekConfig[] = [];
+export function stepWeek(
+  i: number, weeksN: number, prevTotal: number, prevLong: number, eff: EffectiveSettings,
+): { config: WeekConfig; total: number; long: number } {
   const days = Math.round(Math.min(6, Math.max(3, eff.daysPerWeek)));
-  const weeksN = Math.round(Math.min(12, Math.max(1, eff.blockWeeks)));
+  const isLast = i === weeksN - 1 && weeksN > 1;
+  const isDown = !isLast && i > 0 && (i + 1) % eff.downEvery === 0;
+  const cut = isLast || isDown;
+
+  let total: number;
+  if (i === 0) {
+    total = eff.startMpw;
+  } else if (cut) {
+    total = prevTotal * (1 - TUNABLES.DOWN_WEEK_CUT);
+  } else {
+    const step = Math.min(eff.buildStep, prevTotal * (TUNABLES.WEEKLY_GROWTH_MAX - 1));
+    total = Math.min(prevTotal + step, eff.peakMpw);
+  }
+
+  // Down/taper weeks hold the long run (prevLong is already a half-step).
+  const long = cut ? floorToHalf(prevLong) : nextLongFrom(prevLong);
+  total = Math.max(roundHalf(total), long); // a week is never smaller than its long run
+
+  const miles = splitWeek(total, long, days);
+  // Carry the ACTUAL prescribed sum forward (not the pre-split target) so the
+  // +10% growth cap is measured against real totals and never compounds drift.
+  const actualTotal = miles.reduce((a, b) => a + b, 0);
+  const note = isLast ? 'taper' : isDown ? 'down week' : undefined;
+  return {
+    config: { miles, note, isDownWeek: cut },
+    total: actualTotal,
+    long: cut ? prevLong : long,
+  };
+}
+
+/** Build a full WeekConfig[] purely from settings (no locked-week splicing). */
+export function buildWeekConfigsFromSettings(eff: EffectiveSettings): WeekConfig[] {
+  const weeksN = clampBlockWeeks(eff.blockWeeks);
+  const configs: WeekConfig[] = [];
   let prevTotal = eff.startMpw;
   let prevLong = eff.trailingLongest;
-  let buildsSinceDown = 0;
-
-  for (let w = 0; w < weeksN; w++) {
-    let isDown = false;
-    let note: string | undefined;
-    let total: number;
-
-    const isLast = w === weeksN - 1 && weeksN > 1;
-    if (w === 0) {
-      total = eff.startMpw;
-    } else if (isLast) {
-      isDown = true; note = 'taper';
-      total = prevTotal * (1 - TUNABLES.DOWN_WEEK_CUT);
-    } else if (buildsSinceDown >= eff.downEvery) {
-      isDown = true; note = 'down week';
-      total = prevTotal * (1 - TUNABLES.DOWN_WEEK_CUT);
-      buildsSinceDown = 0;
-    } else {
-      const step = Math.min(eff.buildStep, prevTotal * (TUNABLES.WEEKLY_GROWTH_MAX - 1));
-      total = Math.min(prevTotal + step, eff.peakMpw);
-      buildsSinceDown++;
-    }
-
-    let long: number;
-    if (isDown) {
-      long = floorToHalf(prevLong); // held — no ladder step on a down/taper week
-    } else {
-      long = nextLongFrom(prevLong);
-      prevLong = long;
-    }
-
-    total = Math.max(roundHalf(total), long); // a week is never smaller than its long run
-    configs.push({ miles: splitWeek(total, long, days), note, isDownWeek: isDown });
+  for (let i = 0; i < weeksN; i++) {
+    const { config, total, long } = stepWeek(i, weeksN, prevTotal, prevLong, eff);
+    configs.push(config);
     prevTotal = total;
+    prevLong = long;
   }
   return configs;
 }

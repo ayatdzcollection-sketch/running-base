@@ -11,12 +11,12 @@
 //    per-date and independent of the prescription shown.
 // ============================================================
 
-import type { BuiltPlan } from '../config/plan';
+import type { BuiltPlan, WeekConfig } from '../config/plan';
 import { buildPlan, getPlan, WEEK_CONFIGS, PLAN_START_DATE } from '../config/plan';
-import type { PlanWeek, RawSettings, RunState } from './types';
+import type { RawSettings, RunState } from './types';
 import { mondayOf, addDaysStr } from './metrics';
 import {
-  effectiveSettings, buildWeekConfigsFromSettings, type ClampNote,
+  effectiveSettings, stepWeek, clampBlockWeeks, type ClampNote,
 } from './settings';
 
 /**
@@ -39,10 +39,20 @@ export interface ResolvedPlan {
   clamps: ClampNote[];
 }
 
+function configTotal(cfg: WeekConfig): number {
+  return cfg.miles.reduce((a, b) => a + b, 0);
+}
+function configLong(cfg: WeekConfig): number {
+  return cfg.miles[cfg.miles.length - 1];
+}
+
 /**
  * Resolve the plan to display. With no settings, this is the static plan.
- * With settings, future unlocked weeks are regenerated (safety-clamped) while
- * locked weeks keep their static prescription.
+ * With settings, weeks are built in one continuous forward pass: a LOCKED week
+ * keeps its original static prescription, an unlocked week is regenerated from
+ * settings — and crucially the volume/long-run ladder carries across the
+ * boundary, so a settings week that follows a locked week never jumps the long
+ * run (it continues from the locked week's long run, ≤110%).
  */
 export function resolveEffectivePlan(
   raw: RawSettings | null,
@@ -59,53 +69,35 @@ export function resolveEffectivePlan(
   }
 
   const { eff, clamps } = effectiveSettings(raw, runState, today);
-  const settingsPlan = buildPlan(buildWeekConfigsFromSettings(eff), eff.startDate);
+  const weeksN = clampBlockWeeks(eff.blockWeeks);
+  const configs: WeekConfig[] = [];
+  let prevTotal = eff.startMpw;
+  let prevLong = eff.trailingLongest;
 
-  // Index static/original weeks by start date so a locked week keeps whatever
-  // it was originally prescribed (static config).
-  const staticByStart = new Map<string, PlanWeek>();
-  for (const w of staticPlan.weeks) staticByStart.set(w.startDate, w);
+  for (let i = 0; i < weeksN; i++) {
+    const weekStart = addDaysStr(eff.startDate, i * 7);
+    const staticCfg = WEEK_CONFIGS[i];
+    const locked = !opts?.fullReset && isWeekLocked(weekStart, runState, today);
 
-  const mergedWeeks: PlanWeek[] = settingsPlan.weeks.map((sw, i) => {
-    const locked = !opts?.fullReset && isWeekLocked(sw.startDate, runState, today);
-    if (locked) {
-      // Prefer the original week with the same start date; fall back to the
-      // same ordinal position (handles a shifted start date).
-      const original = staticByStart.get(sw.startDate) ?? staticPlan.weeks[i];
-      if (original) {
-        weekSource.set(sw.startDate, 'static');
-        // Re-key the original to this week number/date so the calendar stays
-        // consistent even if the ordinal shifted.
-        return original.startDate === sw.startDate ? original : { ...original, weekNum: sw.weekNum };
-      }
-    }
-    weekSource.set(sw.startDate, 'settings');
-    return sw;
-  });
-
-  const plan = assemble(mergedWeeks, staticPlan);
-  return { plan, weekSource, clamps };
-}
-
-/** Reassemble the BuiltPlan lookups from a merged week list. */
-function assemble(weeks: PlanWeek[], staticPlan: BuiltPlan): BuiltPlan {
-  const allRunDates = new Set<string>();
-  const allDates = new Set<string>();
-  const dateToWeek = new Map<string, PlanWeek>();
-  const dateToDay = new Map<string, typeof staticPlan.bonusDay>();
-
-  allDates.add(staticPlan.bonusDay.date);
-  dateToDay.set(staticPlan.bonusDay.date, staticPlan.bonusDay);
-
-  for (const week of weeks) {
-    for (const day of week.allDays) {
-      allDates.add(day.date);
-      dateToDay.set(day.date, day);
-      dateToWeek.set(day.date, week);
-      if (day.type === 'run') allRunDates.add(day.date);
+    if (locked && staticCfg) {
+      // Keep the completed/current week exactly as originally prescribed, and
+      // carry its total/long forward so the next settings week continues the
+      // ladder from here instead of restarting it.
+      configs.push(staticCfg);
+      prevTotal = configTotal(staticCfg);
+      prevLong = configLong(staticCfg);
+      weekSource.set(weekStart, 'static');
+    } else {
+      const { config, total, long } = stepWeek(i, weeksN, prevTotal, prevLong, eff);
+      configs.push(config);
+      prevTotal = total;
+      prevLong = long;
+      weekSource.set(weekStart, 'settings');
     }
   }
-  return { bonusDay: staticPlan.bonusDay, weeks, allRunDates, allDates, dateToWeek, dateToDay };
+
+  const plan = buildPlan(configs, eff.startDate);
+  return { plan, weekSource, clamps };
 }
 
 /** Total prescribed miles across the resolved plan (for block progress copy). */

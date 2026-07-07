@@ -85,6 +85,17 @@ describe('resolveEffectivePlan', () => {
     }
   });
 
+  it('the long-run ladder is continuous across the locked→settings boundary (no jump)', () => {
+    const { plan } = resolveEffectivePlan(raw({ startMpw: 30, peakMpw: 50, buildStep: 3, trailingLongest: 12 }), LOG, TODAY);
+    // Walk every consecutive week: no long run ever exceeds ~110% of the prior,
+    // even where a settings week follows a locked static week.
+    for (let i = 1; i < plan.weeks.length; i++) {
+      const prev = plan.weeks[i - 1].longRunCap;
+      const cur = plan.weeks[i].longRunCap;
+      expect(cur).toBeLessThanOrEqual(prev * 1.1 + 0.5);
+    }
+  });
+
   it('planTotalMiles sums the resolved plan', () => {
     const { plan } = resolveEffectivePlan(null, LOG, TODAY);
     expect(planTotalMiles(plan)).toBeCloseTo(
