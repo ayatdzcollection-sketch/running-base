@@ -35,20 +35,22 @@ export default function BackupRestore({ runState, globals, onRestore }: Props) {
   }
 
   return (
-    <div className="card space-y-0">
+    <section data-block="backup" className="card !rounded-2xl px-2 py-1.5 flex flex-col">
       <button
         onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between py-1 text-left hover:opacity-80 transition"
+        aria-expanded={open}
+        className="w-full flex items-center justify-between px-2.5 py-2.5 text-left"
       >
-        <span className="text-xs text-slate-600">Backup / restore</span>
-        <span className="text-slate-700 text-xs">{open ? '▴' : '▾'}</span>
+        <span className="font-display text-[10.5px] font-semibold tracking-[0.12em] text-slate-500">BACKUP / RESTORE</span>
+        <span className="text-slate-600 text-[10px]">{open ? '▾' : '▸'}</span>
       </button>
 
       {open && (
-        <div className="mt-3 space-y-3 border-t border-border pt-3">
-          <p className="text-xs text-slate-600">
-            Safety net — Supabase is the primary sync. Export copies your log (runs + speed-plan
-            state) as JSON; import reads it back, and old-format exports still restore fine.
+        <div className="px-2.5 pb-3 space-y-3 border-t border-[#101a2c] pt-3">
+          <p className="text-[11.5px] leading-relaxed text-slate-500">
+            Safety net — export copies your log (runs + speed-plan state) as JSON; paste it back to
+            restore. Useful when switching devices or for an offline backup; old-format exports still
+            restore fine.
           </p>
 
           <button
@@ -82,9 +84,9 @@ export default function BackupRestore({ runState, globals, onRestore }: Props) {
             </button>
           </div>
 
-          {msg && <p className="text-xs text-teal-500">{msg}</p>}
+          {msg && <p className="text-xs text-teal-400">{msg}</p>}
         </div>
       )}
-    </div>
+    </section>
   );
 }
