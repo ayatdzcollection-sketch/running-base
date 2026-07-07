@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { HOME_BLOCKS, type BlockId } from '../config/homeBlocks';
+import { HOME_BLOCKS, STUB_IDS, type BlockId } from '../config/homeBlocks';
 import { sanitizeOrder, sanitizeHidden, moveBlock, toggleHidden } from '../lib/layout';
 
 // Home layout editor (Settings → Home layout). Real <button> reorder controls
@@ -33,6 +33,14 @@ export default function LayoutEditor({ layoutOrder, layoutOff, onChange }: Props
     onChange(order, next);
     setAnnounce(`${HOME_BLOCKS.find(b => b.id === id)?.label} ${next.includes(id) ? 'hidden' : 'shown'}`);
   }
+  function resetLayout() {
+    // Registry default order, proposed stubs hidden. Safety blocks are already
+    // non-hideable, so this can never bury a safety surface.
+    onChange(HOME_BLOCKS.map(b => b.id), [...STUB_IDS]);
+    setAnnounce('Home layout reset to default');
+  }
+  const isDefault = order.join(',') === HOME_BLOCKS.map(b => b.id).join(',')
+    && [...off].sort().join(',') === [...STUB_IDS].sort().join(',');
 
   return (
     <div className="rounded-xl border border-border bg-[#0b1220] overflow-hidden">
@@ -89,6 +97,13 @@ export default function LayoutEditor({ layoutOrder, layoutOff, onChange }: Props
               </div>
             );
           })}
+          <div className="flex justify-end pt-2">
+            <button
+              onClick={resetLayout}
+              disabled={isDefault}
+              className="text-[11px] text-slate-500 hover:text-slate-300 disabled:text-slate-700 disabled:cursor-not-allowed transition"
+            >Reset to default order</button>
+          </div>
         </div>
       )}
     </div>

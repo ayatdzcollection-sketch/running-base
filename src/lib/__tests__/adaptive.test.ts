@@ -141,4 +141,15 @@ describe('generator honors adaptation (downward-only)', () => {
     expect(m.growthFactor).toBe(p.growthFactor);
     expect(m.downEvery).toBe(p.downEvery);
   });
+
+  it('END TO END: recent pain makes the generated week no larger than a clean run', () => {
+    const clean = CURRENT_LOG;
+    const painful: RunState = { ...CURRENT_LOG, '2026-07-06': run('2026-07-06', 4.5, { painDuring: 6 }) };
+    const cleanMod = toModulation(computeAdaptiveProfile(clean, globals({ painCap: 3 }), TODAY));
+    const painMod = toModulation(computeAdaptiveProfile(painful, globals({ painCap: 3 }), TODAY));
+    expect(painMod.growthFactor).toBeLessThan(cleanMod.growthFactor); // pain → more conservative
+    const cleanWk = generateNextWeek({ runState: clean, globals: globals({ painCap: 3 }), today: TODAY, adaptive: cleanMod });
+    const painWk = generateNextWeek({ runState: painful, globals: globals({ painCap: 3 }), today: TODAY, adaptive: painMod });
+    expect(painWk.totalMiles).toBeLessThanOrEqual(cleanWk.totalMiles + 1e-9);
+  });
 });

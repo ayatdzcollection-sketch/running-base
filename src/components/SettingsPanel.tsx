@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { RawSettings, RunState } from '../lib/types';
-import { effectiveSettings, type ClampNote } from '../lib/settings';
+import { effectiveSettings, resetToRecentActuals, type ClampNote } from '../lib/settings';
 
 // Every knob that shapes the plan, grouped like the design's Settings sheet.
 // Steppers allow the full range the user might type; effectiveSettings() clamps
@@ -113,6 +113,10 @@ export default function SettingsPanel({
   const { clamps } = effectiveSettings(raw, runState, today);
   const clampByField = new Map<string, ClampNote>();
   for (const c of clamps) clampByField.set(c.field, c);
+
+  // Preview what a season reset would seed, so the user sees the new starting
+  // mileage (from recent training) before confirming.
+  const resetPreview = resetToRecentActuals(raw, runState, today, raw.updated_at);
 
   const bump = (f: FieldDef, dir: 1 | -1) => {
     const cur = Number(raw[f.key]);
@@ -251,10 +255,13 @@ export default function SettingsPanel({
         <div className="rounded-xl border border-border bg-[#0b1220] px-3.5 py-3 flex flex-col gap-2">
           <span className="text-[12.5px] text-slate-300">Start a new base block</span>
           <span className="text-[11px] leading-relaxed text-slate-500">
-            After a season or a break, restart base from where you are now. The new block builds
-            from your recent training, not an old peak, and speed resets to base so it is re-earned
-            through the ladder. Type <span className="font-mono text-slate-400">new base</span> to
-            confirm. Your logged runs are kept, and completed weeks are never rewritten.
+            After a season or a break, restart base from where you are now. It would start at{' '}
+            <span className="text-slate-300 font-semibold">~{resetPreview.startMpw} mi/week</span>{' '}
+            (from your recent training, not an old peak), with the long run seeded at{' '}
+            <span className="text-slate-300">{resetPreview.trailingLongest.toFixed(1)} mi</span> and
+            week 1 on {resetPreview.startDate}. Speed resets to base and PT clearances clear, so both
+            are re-earned. Type <span className="font-mono text-slate-400">new base</span> to confirm.
+            Your logged runs are kept, and completed weeks are never rewritten.
           </span>
           <div className="flex gap-2">
             <input

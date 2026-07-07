@@ -47,13 +47,14 @@ export default function AdaptiveInsight({ profile }: { profile: AdaptiveProfile 
         <Signal label="adherence" value={`${Math.round(profile.adherence * 100)}%`} />
       </div>
 
-      {profile.reasons.length > 0 && (
-        <div className="flex flex-col gap-1 border-t border-[#101a2c] pt-2.5">
-          {profile.reasons.map((r, i) => (
-            <p key={i} className="m-0 text-[11.5px] leading-snug text-slate-500">{r}</p>
-          ))}
-        </div>
-      )}
+      <div className="flex flex-col gap-1 border-t border-[#101a2c] pt-2.5">
+        {profile.reasons.map((r, i) => (
+          <p key={i} className="m-0 text-[11.5px] leading-snug text-slate-500">{r}</p>
+        ))}
+        <p className="m-0 text-[11px] leading-snug text-slate-600">
+          This only ever slows the build. It never raises your caps or unlocks speed.
+        </p>
+      </div>
     </section>
   );
 }

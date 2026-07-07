@@ -3,7 +3,7 @@ import {
   defaultSettings, migrateSettings, effectiveSettings,
   buildWeekConfigsFromSettings, requiredStreakFor, resetToRecentActuals,
 } from '../settings';
-import { nextLongFrom } from '../metrics';
+import { nextLongFrom, trailing30Longest } from '../metrics';
 import type { RawSettings, RunState } from '../types';
 
 const NOW = '2026-07-07T12:00:00Z';
@@ -156,6 +156,14 @@ describe('resetToRecentActuals — fresh base from recent training, not old peak
     const s = resetToRecentActuals(null, {}, '2026-07-07', NOW2);
     expect(s.startMpw).toBeLessThanOrEqual(15);
     expect(s.startDate).toBe('2026-07-13');
+  });
+
+  it("the first long run of a reset block still obeys the trailing-30-day cap", () => {
+    const s = resetToRecentActuals(defaultSettings(NOW2), brokenSeason, '2026-07-07', NOW2);
+    const cfgs = buildWeekConfigsFromSettings(s);
+    const firstLong = cfgs[0].miles[cfgs[0].miles.length - 1];
+    const cap = nextLongFrom(trailing30Longest(brokenSeason, '2026-07-07'));
+    expect(firstLong).toBeLessThanOrEqual(cap + 1e-9);
   });
 });
 
