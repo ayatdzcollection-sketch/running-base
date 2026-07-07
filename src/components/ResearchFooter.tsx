@@ -1,7 +1,12 @@
-export default function ResearchFooter() {
+interface Props {
+  hrBand: string;
+  hrMax: number;
+}
+
+export default function ResearchFooter({ hrBand, hrMax }: Props) {
   return (
-    <footer className="space-y-3 text-[11px] text-slate-600 leading-relaxed">
-      <h4 className="font-display text-xs font-semibold text-slate-500 uppercase tracking-wider">
+    <footer data-block="evidence" className="space-y-3 text-[11px] text-slate-600 leading-relaxed px-1 pt-2">
+      <h4 className="font-display text-[10.5px] font-semibold text-slate-500 uppercase tracking-[0.12em]">
         Evidence behind the rules
       </h4>
 
@@ -48,14 +53,21 @@ export default function ResearchFooter() {
       />
 
       <Cite
-        strength="MODERATE"
+        strength="CONSENSUS"
         source="Easy by HR — standard zone physiology"
-        finding="140–150 bpm is roughly 71–78% of an estimated HRmax ~198, below the first ventilatory threshold."
+        finding={`${hrBand} bpm is roughly ${Math.round((parseInt(hrBand) / hrMax) * 100)}–${Math.round((parseInt(hrBand.split('–')[1] || hrBand) / hrMax) * 100)}% of an estimated HRmax ~${hrMax}, below the first ventilatory threshold.`}
         caveat="Estimated, not lab-measured; pair with the conversational-effort check."
       />
 
+      <Cite
+        strength="MODERATE"
+        source="Riegel race-time model · Runner's World 1977 / Athletics 1981"
+        finding="Projects times across distances via T₂ = T₁ × (D₂/D₁)^1.06 — about 80% accurate, best within one order of magnitude. Used to set paces for later blocks, not this block's runs."
+        caveat="A fitness ceiling, not a promise — needs a genuine all-out effort; youth projections applied cautiously."
+      />
+
       <p className="pt-2 border-t border-border text-slate-700">
-        Saves across your devices. Assumes the hip stays pain-free on easy running.
+        Progress saves on this device. Assumes the hip stays pain-free on easy running.
         If it doesn't, hold and tell your PT.{' '}
         <strong className="text-slate-600">Not medical advice.</strong>
       </p>
@@ -77,6 +89,7 @@ function Cite({ strength, source, finding, caveat }: CiteProps) {
     'MODERATE (extrapolated)': 'text-teal-600',
     'WHY NOT WEEKLY': 'text-amber-600',
     'MODEL': 'text-sky-600',
+    'CONSENSUS': 'text-slate-500',
     'WEAK / consensus': 'text-slate-500',
   };
 

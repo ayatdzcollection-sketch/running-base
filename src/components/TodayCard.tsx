@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import type { PlanDay, PlanWeek, RunEntry } from '../lib/types';
 import type { TodaySpeedRow } from '../lib/todaySpeed';
 import CapGauge from './CapGauge';
-import SubjectiveRow from './SubjectiveRow';
 
 interface Props {
   today: string;
@@ -16,15 +15,15 @@ interface Props {
   /** Live ceiling computed from trailing-30-day actuals (§2). */
   nextLong: number;
   trailingLongest: number;
-  painCap: number;
-  speedState: number;
+  hrBand: string;
+  hrHardCap: number;
   /** Today's optional speed dose (Stage D); null = nothing shown. */
   todaySpeed?: TodaySpeedRow | null;
 }
 
 export default function TodayCard({
   today, day, entry, onUpdate, planStart, planEnd,
-  nextLong, trailingLongest, painCap, speedState, todaySpeed,
+  nextLong, trailingLongest, hrBand, hrHardCap, todaySpeed,
 }: Props) {
   const [localMiles, setLocalMiles] = useState(
     entry?.miles_actual != null ? String(entry.miles_actual) : ''
@@ -125,28 +124,20 @@ export default function TodayCard({
       </div>
 
       {/* Distance */}
-      <div className="flex items-end gap-3">
-        <span className="font-display text-5xl font-semibold tabular-nums text-slate-100">
+      <div className="flex items-baseline gap-2.5">
+        <span className="font-display text-[60px] font-bold leading-none tracking-tight tabular-nums text-slate-100">
           {target}
         </span>
-        <span className="font-display text-xl text-slate-400 mb-1">mi</span>
-        {isLong && (
-          <span className="text-xs text-amber-400/80 mb-2 ml-1">← ceiling {cap} mi</span>
-        )}
+        <span className="font-display text-[17px] font-semibold text-slate-500">mi</span>
+        <span className="ml-auto text-xs text-slate-500">
+          {clamped ? 'ceiling today' : isLong ? 'long run' : 'planned today'}
+        </span>
       </div>
 
-      {/* Calm clamp reason when the plan ran ahead of recent volume */}
-      {clamped && (
-        <p className="text-xs text-sky-300/90 bg-sky-950/30 border border-sky-900/40 rounded-lg px-3 py-2 leading-relaxed">
-          Your recent longest is {trailingLongest} mi, so today's ceiling is {cap} mi.
-          The ladder is paused until you rebuild. That's the rule working, not a downgrade.
-        </p>
-      )}
-
       {/* HR reminder */}
-      <div className="rounded-lg bg-ink border border-border px-3 py-2 text-xs text-slate-400 leading-relaxed">
+      <div className="rounded-xl bg-rose-500/[0.07] border border-rose-500/20 px-3 py-2.5 text-[12.5px] text-slate-400 leading-relaxed">
         <span className="text-rose-300 font-semibold">HR governor:</span>{' '}
-        keep 140–150 bpm · hard cap 155 · talk-test not enough
+        keep {hrBand} bpm · hard cap {hrHardCap} · if you can't speak in sentences, slow down
       </div>
 
       {/* Today's optional speed dose (Stage D) */}
@@ -172,9 +163,20 @@ export default function TodayCard({
         </div>
       )}
 
-      {/* Gauge + actions */}
+      {/* Gauge */}
+      <CapGauge current={target} cap={cap} actual={entry?.miles_actual} />
+
+      {/* Calm clamp reason when the plan ran ahead of recent volume */}
+      {clamped && (
+        <div className="rounded-xl bg-amber-500/[0.07] border border-amber-500/25 px-3 py-2.5 text-[12.5px] leading-relaxed text-slate-400">
+          <span className="text-amber-300 font-semibold">Ceiling paused — rebuilding.</span>{' '}
+          Your recent longest is {trailingLongest} mi, so today's ceiling is {cap} mi. The ceiling
+          rises again as easy days come back in. Nothing is lost.
+        </div>
+      )}
+
+      {/* Actions */}
       <div className="flex flex-col sm:flex-row items-center gap-6">
-        <CapGauge current={target} cap={cap} actual={entry?.miles_actual} />
         <div className="flex-1 w-full space-y-3">
           <MilesRow
             localMiles={localMiles}
@@ -187,16 +189,6 @@ export default function TodayCard({
           />
         </div>
       </div>
-
-      {/* Optional subjective log — the tendon governor. Chips inline here. */}
-      <SubjectiveRow
-        date={today}
-        entry={entry}
-        painCap={painCap}
-        speedState={speedState}
-        onUpdate={onUpdate}
-        alwaysOpen
-      />
     </div>
   );
 }

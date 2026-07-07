@@ -1,89 +1,44 @@
 interface Props {
   current: number;         // today's target miles (clamped to the live ceiling)
   cap: number;             // live nextLong ceiling from trailing-30-day actuals
-  actual?: number | null;  // logged actual — rose if it exceeds the cap
+  actual?: number | null;  // logged actual — drives the fill and full opacity
 }
 
+// Semicircle cap gauge (design spec): a full track with a colored arc filling
+// to today's fraction of the cap, plus a needle. Teal under cap, amber at the
+// cap, rose over it. Faded until the run is logged.
 export default function CapGauge({ current, cap, actual }: Props) {
-  const CX = 100;
-  const CY = 100;
-  const R = 80;
-  const SW = 10; // stroke width
+  const cur = actual != null ? actual : current;
+  const done = actual != null;
+  const LEN = Math.PI * 84;
+  const frac = cap > 0 ? cur / cap : 0;
+  const arc = Math.min(frac, 1);
 
-  const ratio = cap > 0 ? Math.min(current / cap, 1.2) : 0;
+  const color = frac > 1.001 ? '#fb7185' : frac > 0.949 ? '#f59e0b' : '#2dd4bf';
+  const dash = `${(LEN * arc).toFixed(1)} ${Math.ceil(LEN + 2)}`;
+  const nx = (100 - 74 * Math.cos(Math.PI * arc)).toFixed(1);
+  const ny = (104 - 74 * Math.sin(Math.PI * arc)).toFixed(1);
 
-  // angle goes π (left) → 0 (right) as p goes 0 → 1
-  // In SVG (Y-down), sweep=1 is clockwise on screen: left → top → right ✓
-  function pt(p: number) {
-    const a = Math.PI * (1 - p);
-    return { x: CX + R * Math.cos(a), y: CY - R * Math.sin(a) };
-  }
-
-  const startPt = pt(0); // (20, 100)
-  const endPt   = pt(1); // (180, 100)
-
-  function fillPath(p: number): string {
-    if (p <= 0) return '';
-    const { x, y } = pt(Math.min(p, 1));
-    // sweep=1 (clockwise on screen) = upper semicircle
-    return `M ${startPt.x} ${startPt.y} A ${R} ${R} 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)}`;
-  }
-
-  // teal below cap · amber at cap · rose only when a LOGGED actual exceeds it
-  const actualOver = actual != null && actual > cap;
-  const color =
-    actualOver || ratio > 1 ? '#fb7185' : ratio >= 0.95 ? '#f59e0b' : '#2dd4bf';
-
-  const needle = pt(Math.min(ratio, 1));
+  const under = cap - cur;
+  const label =
+    under > 0.05 ? `${under.toFixed(1)} mi under this week's ${cap.toFixed(1)} mi cap`
+    : cur - cap > 0.05 ? `${(cur - cap).toFixed(1)} mi OVER the cap — pull it back`
+    : `right at the ${cap.toFixed(1)} mi cap`;
 
   return (
-    <div className="flex flex-col items-center gap-1">
-      <svg
-        viewBox="0 0 200 115"
-        className="w-48 h-auto"
-        aria-label={`${current} mi vs ${cap} mi cap`}
-      >
-        {/* Track — full upper semicircle */}
-        <path
-          d={`M ${startPt.x} ${startPt.y} A ${R} ${R} 0 0 1 ${endPt.x} ${endPt.y}`}
-          fill="none"
-          stroke="#334155"
-          strokeWidth={SW}
-          strokeLinecap="round"
-        />
-
-        {/* Fill — portion driven by today's distance */}
-        {ratio > 0 && (
-          <path
-            d={fillPath(ratio)}
-            fill="none"
-            stroke={color}
-            strokeWidth={SW}
-            strokeLinecap="round"
-          />
-        )}
-
-        {/* Needle from center to arc point */}
-        <line
-          x1={CX} y1={CY}
-          x2={needle.x} y2={needle.y}
-          stroke={color}
-          strokeWidth={2.5}
-          strokeLinecap="round"
-          opacity={0.85}
-        />
-        <circle cx={CX} cy={CY} r={4} fill={color} />
-
-        {/* End-point labels */}
-        <text x={startPt.x} y={CY + 14} textAnchor="middle"
-          fontSize={9} fill="#64748b" fontFamily="Space Grotesk, sans-serif">0</text>
-        <text x={endPt.x} y={CY + 14} textAnchor="middle"
-          fontSize={9} fill="#64748b" fontFamily="Space Grotesk, sans-serif">{cap}</text>
+    <div className="flex flex-col items-center gap-0.5">
+      <svg viewBox="0 0 200 120" className="w-[232px] max-w-full block" aria-label={`${cur} mi vs ${cap} mi cap`}>
+        <path d="M16,104 A84,84 0 0 1 184,104" fill="none" stroke="#1e293b" strokeWidth="12" strokeLinecap="round" />
+        <path d="M16,104 A84,84 0 0 1 184,104" fill="none" stroke={color} strokeWidth="12" strokeLinecap="round"
+          strokeDasharray={dash} opacity={done ? 1 : 0.38}
+          style={{ transition: 'stroke-dasharray .5s ease, opacity .3s ease' }} />
+        <line x1="100" y1="104" x2={nx} y2={ny} stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" />
+        <circle cx="100" cy="104" r="5" fill="#0b1220" stroke="#334155" strokeWidth="2" />
+        <text x="16" y="118" fill="#64748b" fontSize="9" fontFamily="Space Grotesk, sans-serif" textAnchor="middle">0</text>
+        <text x="184" y="118" fill="#64748b" fontSize="9" fontFamily="Space Grotesk, sans-serif" textAnchor="middle">{cap}</text>
       </svg>
-
-      <p className="text-xs text-slate-500 tabular-nums">
-        {current} mi / {cap} mi cap
-      </p>
+      <span className="font-display text-xs text-slate-400 tabular-nums">{label}</span>
+      <span className="font-display text-[10.5px] tracking-[0.1em] uppercase text-slate-700">nothing exceeds the cap</span>
     </div>
   );
 }

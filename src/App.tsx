@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import type { GlobalState, RaceResult, RawSettings, RunEntry, RunState, SyncStatus } from './lib/types';
 import {
   getStoredCode, setStoredCode,
@@ -12,10 +12,12 @@ import {
   debounce,
 } from './lib/storage';
 import { hasSupabase } from './lib/supabase';
-import { getAward, todayStr, PLAN_START_DATE } from './config/plan';
-import { resolveEffectivePlan } from './lib/planOverlay';
-import { defaultSettings } from './lib/settings';
+import { getAward, todayStr, PLAN_START_DATE, HR } from './config/plan';
+import { resolveEffectivePlan, planTotalMiles } from './lib/planOverlay';
+import { defaultSettings, effectiveSettings } from './lib/settings';
 import { FLAGS } from './config/flags';
+import { HOME_BLOCKS, STUB_IDS, blockMeta, type BlockId } from './config/homeBlocks';
+import { sanitizeOrder, sanitizeHidden } from './lib/layout';
 import type { PlanDay } from './lib/types';
 import {
   trailing30Longest, nextLongFrom, painFreeStreak,
@@ -26,16 +28,20 @@ import { enforceGateConsistency } from './lib/speed';
 import { computeTodaySpeed } from './lib/todaySpeed';
 import AccessCodeModal from './components/AccessCodeModal';
 import SettingsPanel from './components/SettingsPanel';
+import LayoutEditor from './components/LayoutEditor';
 import RaceLog from './components/RaceLog';
 import TodayCard from './components/TodayCard';
+import WeekProgress from './components/WeekProgress';
+import HipSpeedStatus from './components/HipSpeedStatus';
+import PainLogger from './components/PainLogger';
 import WeekAccordion from './components/WeekAccordion';
-import StatsRow from './components/StatsRow';
 import AwardTracker from './components/AwardTracker';
 import GuardrailPanel from './components/GuardrailPanel';
 import ResearchFooter from './components/ResearchFooter';
 import BackupRestore from './components/BackupRestore';
 import SpeedPlan from './components/SpeedPlan';
 import GenerateWeek from './components/GenerateWeek';
+import StubCard from './components/StubCard';
 
 const PLAN_END = '2026-08-14';
 
@@ -53,6 +59,17 @@ export default function App() {
   const settings = globals.settings ?? null;
   const { plan } = resolveEffectivePlan(settings, runState, today);
   const award = getAward(settings);
+  const blockTotalTarget = planTotalMiles(plan);
+
+  // Effective (safety-clamped) HR band for display.
+  const eff = settings ? effectiveSettings(settings, runState, today).eff : null;
+  const hrBand = eff ? `${eff.hrEasyMin}–${eff.hrEasyMax}` : `${HR.easyMin}–${HR.easyMax}`;
+  const hrHardCap = eff ? eff.hrHardCap : HR.hardCap;
+  const pfNeeded = eff ? eff.pfNeeded : 4;
+
+  // Home layout (Stage G). With no settings yet, stubs are hidden by default.
+  const layoutOrder = sanitizeOrder(settings?.layoutOrder, HOME_BLOCKS);
+  const layoutOff = sanitizeHidden(settings?.layoutOff ?? STUB_IDS, HOME_BLOCKS);
 
   const todayDay = plan.dateToDay.get(today) ?? null;
   const todayWeek = plan.dateToWeek.get(today) ?? null;
@@ -173,6 +190,11 @@ export default function App() {
       });
     },
     [accessCode],
+  );
+
+  const saveLayout = useCallback(
+    (order: BlockId[], off: BlockId[]) => updateSettings({ layoutOrder: order, layoutOff: off }),
+    [updateSettings],
   );
 
   // "Rebuild upcoming plan": discard any confirmed draft future weeks and
@@ -311,11 +333,94 @@ export default function App() {
   }
 
   const syncLabel =
-    !hasSupabase ? 'Local only — add Supabase to sync'
-    : syncStatus === 'syncing' ? 'Syncing…'
-    : syncStatus === 'offline' ? 'Offline — will sync on reconnect'
-    : syncStatus === 'error' ? 'Sync error'
-    : null;
+    !hasSupabase ? 'local only'
+    : syncStatus === 'syncing' ? 'syncing…'
+    : syncStatus === 'offline' ? 'offline — will sync'
+    : syncStatus === 'error' ? 'sync error'
+    : 'synced';
+  const syncTone =
+    !hasSupabase || syncStatus === 'offline' ? 'text-amber-600'
+    : syncStatus === 'error' ? 'text-rose-500' : 'text-slate-600';
+
+  // Day-of-block label for the header subtitle.
+  let dayIdx = 0;
+  for (const d of plan.allDates) if (d <= today) dayIdx++;
+  const isPre = today < plan.bonusDay.date;
+  const isPost = today > PLAN_END;
+  const dayOfBlock = isPost ? 'block complete' : isPre ? 'starts soon' : `day ${dayIdx}`;
+
+  function renderBlock(id: BlockId): ReactNode {
+    const meta = blockMeta(id);
+    if (!meta) return null;
+    if (!meta.real) return <StubCard meta={meta} />;
+    switch (id) {
+      case 'today':
+        return (
+          <TodayCard
+            today={today} day={todayDay} week={todayWeek} entry={runState[today]}
+            onUpdate={updateEntry} planStart={plan.bonusDay.date} planEnd={PLAN_END}
+            nextLong={nextLong} trailingLongest={trailingLongest}
+            hrBand={hrBand} hrHardCap={hrHardCap} todaySpeed={todaySpeed}
+          />
+        );
+      case 'week':
+        return <WeekProgress runState={runState} plan={plan} today={today} week={todayWeek} blockTotalTarget={blockTotalTarget} />;
+      case 'hipspeed':
+        return <HipSpeedStatus speedState={globals.speedState} hipHold={flare || breach} flare={flare} streak={streak} pfNeeded={pfNeeded} />;
+      case 'pain':
+        return (
+          <PainLogger
+            today={today} entry={runState[today]} painCap={globals.painCap} speedState={globals.speedState}
+            onUpdate={updateEntry}
+            morningCheckDate={morningCheckDate}
+            morningPainDuring={morningCheckDate ? (runState[morningCheckDate]?.painDuring ?? 0) : 0}
+            onMorningAnswer={settled => {
+              if (!morningCheckDate) return;
+              // Never overwrite an already-answered morning value.
+              if (runState[morningCheckDate]?.painNextAM != null) return;
+              updateEntry(morningCheckDate, { painNextAM: morningAnswer(settled, runState[morningCheckDate]?.painDuring ?? 0) });
+            }}
+          />
+        );
+      case 'speed':
+        return <SpeedPlan runState={runState} globals={globals} today={today} onUpdateGlobals={updateGlobals} />;
+      case 'weeks':
+        return (
+          <div className="space-y-2">
+            <BonusDayCard day={plan.bonusDay} entry={runState[plan.bonusDay.date]} today={today} onUpdate={updateEntry} />
+            {plan.weeks.map(week => (
+              <WeekAccordion
+                key={week.weekNum} week={week} runState={runState} today={today}
+                defaultOpen={week.allDays.some(d => d.date === today)}
+                onUpdate={updateEntry} painCap={globals.painCap} speedState={globals.speedState}
+              />
+            ))}
+          </div>
+        );
+      case 'nextweek':
+        return <GenerateWeek runState={runState} globals={globals} today={today} settings={settings} onUpdateGlobals={updateGlobals} />;
+      case 'races':
+        return FLAGS.RACE_LOG ? (
+          <RaceLog
+            races={races} adaptive={settings?.adaptive ?? true}
+            onSaveRace={r => updateRaces([...races, r])}
+            onSetAdaptive={v => updateSettings({ adaptive: v })}
+          />
+        ) : null;
+      case 'guardrails':
+        return <GuardrailPanel capPct={eff ? eff.capPct : 110} hrBand={hrBand} hrHardCap={hrHardCap} />;
+      case 'award':
+        return <AwardTracker runState={runState} plan={plan} award={award} />;
+      case 'backup':
+        return <BackupRestore runState={runState} globals={globals} onRestore={handleRestore} />;
+      case 'evidence':
+        return <ResearchFooter hrBand={hrBand} hrMax={eff ? eff.hrMax : HR.hrmax} />;
+      default:
+        return null;
+    }
+  }
+
+  const visibleOrder = layoutOrder.filter(id => !layoutOff.includes(id));
 
   return (
     <>
@@ -329,196 +434,75 @@ export default function App() {
           onChange={updateSettings}
           onFullReset={handleFullReset}
           onClose={() => setSettingsOpen(false)}
+          layoutSection={
+            <LayoutEditor
+              layoutOrder={settings?.layoutOrder}
+              layoutOff={settings?.layoutOff}
+              onChange={saveLayout}
+            />
+          }
         />
       )}
 
-      <div className="min-h-screen bg-ink text-slate-200">
-        <div className="max-w-[480px] mx-auto px-4 pb-20 pt-6 space-y-4">
+      <div className="min-h-screen bg-ink text-slate-200 pb-[env(safe-area-inset-bottom)]">
+        <div className="max-w-[480px] mx-auto px-3 sm:px-4 pb-16 pt-[22px] flex flex-col gap-3.5">
 
-          {/* Header */}
-          <header className="flex items-start justify-between mb-2">
-            <div>
-              <h1 className="font-display text-xl font-semibold text-slate-100 tracking-tight">
-                Bulletproof Base
-              </h1>
-              <p className="text-xs text-slate-600 mt-0.5">
-                7-week XC base · {PLAN_START_DATE} → {PLAN_END}
-              </p>
-            </div>
-            <div className="flex items-start gap-2.5">
-              <div className="text-right">
-                {syncLabel && (
-                  <p className={`text-[10px] ${
-                    !hasSupabase || syncStatus === 'offline' ? 'text-amber-600'
-                    : syncStatus === 'error' ? 'text-rose-500'
-                    : 'text-slate-600'
-                  }`}>
-                    {syncLabel}
-                  </p>
-                )}
+          {/* Header (pinned) */}
+          <header className="flex flex-col gap-[5px] px-1 pb-1">
+            <div className="flex items-center justify-between gap-3">
+              <h1 className="font-display text-[22px] font-bold tracking-tight text-slate-100">Bulletproof Base</h1>
+              <div className="flex items-center gap-2.5">
                 {accessCode && (
-                  <p className="text-[10px] text-slate-700 mt-0.5">
-                    code: <span className="font-mono">{accessCode}</span>
-                  </p>
+                  <span className="font-display text-[10.5px] font-semibold tracking-[0.14em] text-slate-500">
+                    CODE {accessCode.toUpperCase()}
+                  </span>
+                )}
+                {FLAGS.SETTINGS_UI && (
+                  <button
+                    onClick={() => setSettingsOpen(true)} aria-label="Settings"
+                    className="shrink-0 grid place-items-center w-8 h-8 rounded-[9px] border border-border text-slate-400 hover:text-slate-200 hover:border-slate-600 transition"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="3" />
+                      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                    </svg>
+                  </button>
                 )}
               </div>
-              {FLAGS.SETTINGS_UI && (
-                <button
-                  onClick={() => setSettingsOpen(true)}
-                  aria-label="Settings"
-                  className="shrink-0 grid place-items-center w-8 h-8 rounded-[9px] border border-border
-                             text-slate-400 hover:text-slate-200 hover:border-slate-600 transition"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                  </svg>
-                </button>
-              )}
+            </div>
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="text-xs text-slate-500">
+                {plan.weeks.length}-week XC base · {PLAN_START_DATE} → {PLAN_END} · <span className="text-slate-400">{dayOfBlock}</span>
+              </p>
+              <span className={`text-[10.5px] whitespace-nowrap ${syncTone}`}>{syncLabel}</span>
             </div>
           </header>
 
-          {/* Flare / hold banner — guardrail copy, not a diagnosis */}
-          {breach && (
-            <div className="rounded-xl border border-rose-900/60 bg-rose-950/30 px-4 py-3 space-y-1">
-              <p className="text-sm text-rose-300 font-display font-semibold">
-                Hip flared. Hold this week, don't advance. Tell your PT.
-              </p>
-              <p className="text-[11px] text-rose-400/70 leading-relaxed">
-                {flare
-                  ? 'Two pain days inside 7 — speed state forced to 8 (deload). Easy/rest only until it settles.'
-                  : `Pain above your ${globals.painCap}/10 cap logged in the last 7 days. One more inside the window triggers a deload.`}
+          {/* Flare / breach banner (pinned) — two-tone: rose flare, amber single breach */}
+          {flare ? (
+            <div className="rounded-2xl border border-rose-500/30 bg-rose-500/[0.08] px-4 py-3.5 flex flex-col gap-[5px]">
+              <span className="font-display text-[10.5px] font-semibold tracking-[0.12em] text-rose-400">FLARE · DELOAD ACTIVE</span>
+              <p className="m-0 text-[13px] leading-relaxed text-slate-200">
+                We've eased your plan to protect your hip. This is normal — this week repeats at reduced volume. Check in with your PT.
               </p>
             </div>
-          )}
+          ) : breach ? (
+            <div className="rounded-2xl border border-amber-500/25 bg-amber-500/[0.07] px-4 py-3.5 flex flex-col gap-[5px]">
+              <span className="font-display text-[10.5px] font-semibold tracking-[0.12em] text-amber-400">ONE PAIN DAY LOGGED</span>
+              <p className="m-0 text-[13px] leading-relaxed text-slate-300">
+                Hold this week rather than advance. One more pain day above your {globals.painCap}/10 cap inside 7 days eases the plan into a deload. Tell your PT.
+              </p>
+            </div>
+          ) : null}
 
-          {/* Morning-after check — one tap, only when yesterday logged pain */}
-          {morningCheckDate && (
-            <MorningCheck
-              date={morningCheckDate}
-              painDuring={runState[morningCheckDate]?.painDuring ?? 0}
-              onAnswer={settled => {
-                // Never overwrite an already-answered morning value (guards a
-                // sync race between the prompt tap and a remote pull).
-                if (runState[morningCheckDate]?.painNextAM != null) return;
-                updateEntry(morningCheckDate, {
-                  painNextAM: morningAnswer(settled, runState[morningCheckDate]?.painDuring ?? 0),
-                });
-              }}
-            />
-          )}
-
-          {/* Today hero */}
-          <TodayCard
-            today={today}
-            day={todayDay}
-            week={todayWeek}
-            entry={runState[today]}
-            onUpdate={updateEntry}
-            planStart={plan.bonusDay.date}
-            planEnd={PLAN_END}
-            nextLong={nextLong}
-            trailingLongest={trailingLongest}
-            painCap={globals.painCap}
-            speedState={globals.speedState}
-            todaySpeed={todaySpeed}
-          />
-
-          {/* Stats row */}
-          <StatsRow runState={runState} today={today} nextLong={nextLong} />
-
-          {/* Bonus day + week accordions */}
-          <div className="space-y-2">
-            <BonusDayCard
-              day={plan.bonusDay}
-              entry={runState[plan.bonusDay.date]}
-              today={today}
-              onUpdate={updateEntry}
-            />
-            {plan.weeks.map(week => (
-              <WeekAccordion
-                key={week.weekNum}
-                week={week}
-                runState={runState}
-                today={today}
-                defaultOpen={week.allDays.some(d => d.date === today)}
-                onUpdate={updateEntry}
-                painCap={globals.painCap}
-                speedState={globals.speedState}
-              />
-            ))}
-          </div>
-
-          {/* v2: speed permission machine + safe future-week generator */}
-          <SpeedPlan
-            runState={runState}
-            globals={globals}
-            today={today}
-            onUpdateGlobals={updateGlobals}
-          />
-          <GenerateWeek
-            runState={runState}
-            globals={globals}
-            today={today}
-            settings={settings}
-            onUpdateGlobals={updateGlobals}
-          />
-
-          {FLAGS.RACE_LOG && (
-            <RaceLog
-              races={races}
-              adaptive={settings?.adaptive ?? true}
-              onSaveRace={r => updateRaces([...races, r])}
-              onSetAdaptive={v => updateSettings({ adaptive: v })}
-            />
-          )}
-          <AwardTracker runState={runState} plan={plan} award={award} />
-          <GuardrailPanel />
-          <BackupRestore runState={runState} globals={globals} onRestore={handleRestore} />
-          <ResearchFooter />
+          {/* Reorderable blocks — DOM order == stored order == visual order */}
+          {visibleOrder.map(id => (
+            <div key={id}>{renderBlock(id)}</div>
+          ))}
 
         </div>
       </div>
     </>
-  );
-}
-
-// ── Morning-after check ──────────────────────────────────────
-// Asks the settle question the morning AFTER a pain day, so painNextAM is
-// recorded accurately (and one-tap) instead of predicted at log time.
-
-function MorningCheck({ date, painDuring, onAnswer }: {
-  date: string;
-  painDuring: number;
-  onAnswer: (settled: boolean) => void;
-}) {
-  const d = new Date(date + 'T12:00:00Z');
-  const label = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()];
-  return (
-    <div className="rounded-xl border border-sky-900/60 bg-sky-950/25 px-4 py-3 flex items-center gap-3">
-      <div className="flex-1 min-w-0">
-        <p className="text-sm text-sky-200 font-display">
-          Did {label}'s hip settle by morning?
-        </p>
-        <p className="text-[11px] text-sky-400/60">
-          You logged {painDuring}/10 during that run.
-        </p>
-      </div>
-      <button
-        onClick={() => onAnswer(true)}
-        className="rounded-lg border border-teal-700 px-3 py-1.5 text-xs text-teal-300
-                   hover:border-teal-500 transition active:scale-95"
-      >
-        Yes
-      </button>
-      <button
-        onClick={() => onAnswer(false)}
-        className="rounded-lg border border-rose-800 px-3 py-1.5 text-xs text-rose-300
-                   hover:border-rose-600 transition active:scale-95"
-      >
-        No
-      </button>
-    </div>
   );
 }
 
