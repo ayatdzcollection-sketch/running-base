@@ -1,5 +1,6 @@
-import type { GlobalState, RaceResult, RunEntry, RunState } from './types';
+import type { GlobalState, RaceResult, RawSettings, RunEntry, RunState } from './types';
 import { migrateGlobalState } from './migrate';
+import { migrateSettings } from './settings';
 import { supabase } from './supabase';
 
 const STATE_KEY = 'bb_run_state';
@@ -7,6 +8,9 @@ const CODE_KEY = 'bb_access_code';
 // v2: global speed-layer state lives under its OWN key so the original
 // run log is never rewritten by the new features.
 const GLOBAL_KEY = 'bb_global_state';
+// v3: local mirrors (design contract). The canonical synced copies live inside
+// bb_global_state (globals.settings / globals.races); these are read-fallbacks.
+const SETTINGS_KEY = 'bb_settings';
 
 // ── Access code ────────────────────────────────────────────
 
@@ -47,6 +51,25 @@ export function loadGlobalLocal(): GlobalState {
 
 export function saveGlobalLocal(state: GlobalState): void {
   localStorage.setItem(GLOBAL_KEY, JSON.stringify(state));
+}
+
+// ── Settings mirror (bb_settings) — canonical copy rides in globals.settings ──
+
+export function loadSettingsLocal(): RawSettings | null {
+  try {
+    const s = localStorage.getItem(SETTINGS_KEY);
+    return migrateSettings(s ? JSON.parse(s) : null, new Date().toISOString());
+  } catch {
+    return null;
+  }
+}
+
+export function saveSettingsLocal(s: RawSettings): void {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+  } catch {
+    /* storage full / unavailable — globals.settings remains the source of truth */
+  }
 }
 
 // Seed: pre-populate history on first use so the app isn't blank.

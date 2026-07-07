@@ -36,10 +36,12 @@ export const CAP_FACTOR = 1.1;
 export const TRAILING_LONGEST = 4.5;
 
 // ── Weekly mileage ─────────────────────────────────────────
-// Each entry is [Mon, Tue, Wed, Thu, Fri(long)] prescribed miles.
-// The Friday number is the week's ceiling — nothing else should exceed it.
-interface WeekConfig {
-  miles: [number, number, number, number, number];
+// Each entry lists prescribed miles for the run days, Mon onward. The LAST
+// element is the long run and the week's ceiling — nothing else exceeds it.
+// (5 elements = the default Mon–Fri week; a shorter/longer array supports the
+// settings `daysPerWeek` knob, long run always last.)
+export interface WeekConfig {
+  miles: number[];
   note?: string;
   isDownWeek?: boolean;
 }
@@ -55,7 +57,7 @@ export const WEEK_CONFIGS: WeekConfig[] = [
 ];
 
 // ── Derived plan (computed from config above) ──────────────
-import type { PlanDay, PlanWeek } from '../lib/types';
+import type { PlanDay, PlanWeek, RawSettings } from '../lib/types';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -80,11 +82,14 @@ export interface BuiltPlan {
   dateToDay: Map<string, PlanDay>;
 }
 
-let _plan: BuiltPlan | null = null;
-
-export function getPlan(): BuiltPlan {
-  if (_plan) return _plan;
-
+/**
+ * Pure plan builder from a list of week configs and a start Monday. The static
+ * plan (getPlan) and any settings-derived plan both flow through this, so a
+ * generated week is structurally indistinguishable from a hand-authored one.
+ * The long run is always the LAST run day of the week; remaining weekday slots
+ * are rest days. Works for 3–6 run days per week.
+ */
+export function buildPlan(weekConfigs: WeekConfig[], planStart: string): BuiltPlan {
   const bonusDay: PlanDay = {
     date: BONUS_DAY_DATE,
     weekNum: 0,
@@ -95,26 +100,31 @@ export function getPlan(): BuiltPlan {
     isDownWeek: false,
   };
 
-  const weeks: PlanWeek[] = WEEK_CONFIGS.map((cfg, i) => {
+  const weeks: PlanWeek[] = weekConfigs.map((cfg, i) => {
     const weekNum = i + 1;
-    const weekStart = addDays(PLAN_START_DATE, i * 7);
-    const weekEnd = addDays(weekStart, 4); // Friday
+    const weekStart = addDays(planStart, i * 7);
+    const runCount = cfg.miles.length;
+    const lastRunIdx = runCount - 1;
+    const weekEnd = addDays(weekStart, lastRunIdx); // long-run day
 
     const runDays: PlanDay[] = cfg.miles.map((miles, j) => ({
       date: addDays(weekStart, j),
       weekNum,
-      dayLabel: DAY_LABELS[j],
+      dayLabel: DAY_LABELS[j] ?? `D${j + 1}`,
       type: 'run' as const,
       prescribed: miles,
-      isLongRun: j === 4,
+      isLongRun: j === lastRunIdx,
       isDownWeek: !!cfg.isDownWeek,
       weekNote: cfg.note,
     }));
 
-    const restDays: PlanDay[] = [5, 6].map(j => ({
+    // Rest days fill the remaining weekday slots after the run days.
+    const restIdx: number[] = [];
+    for (let j = runCount; j <= 6; j++) restIdx.push(j);
+    const restDays: PlanDay[] = restIdx.map(j => ({
       date: addDays(weekStart, j),
       weekNum,
-      dayLabel: DAY_LABELS[j],
+      dayLabel: DAY_LABELS[j] ?? `D${j + 1}`,
       type: 'rest' as const,
       prescribed: null,
       isLongRun: false,
@@ -132,7 +142,7 @@ export function getPlan(): BuiltPlan {
       allDays: [...runDays, ...restDays],
       runDays,
       totalPlanned: cfg.miles.reduce((a, b) => a + b, 0),
-      longRunCap: cfg.miles[4],
+      longRunCap: cfg.miles[lastRunIdx],
       isDownWeek: !!cfg.isDownWeek,
       note: cfg.note,
     };
@@ -155,8 +165,29 @@ export function getPlan(): BuiltPlan {
     }
   }
 
-  _plan = { bonusDay, weeks, allRunDates, allDates, dateToWeek, dateToDay };
+  return { bonusDay, weeks, allRunDates, allDates, dateToWeek, dateToDay };
+}
+
+let _plan: BuiltPlan | null = null;
+
+/** The canonical STATIC plan (WEEK_CONFIGS). Never rewritten. */
+export function getPlan(): BuiltPlan {
+  if (!_plan) _plan = buildPlan(WEEK_CONFIGS, PLAN_START_DATE);
   return _plan;
+}
+
+/**
+ * Award target/window resolved from settings when present, else the static
+ * AWARD constant. Display-only and safety-subordinate — never an engine input.
+ */
+export function getAward(settings: RawSettings | null | undefined): typeof AWARD {
+  if (!settings) return AWARD;
+  return {
+    target: settings.goalMiles,
+    safePlanDelivery: settings.safeDelivery,
+    windowStart: AWARD.windowStart,
+    windowEnd: AWARD.windowEnd,
+  };
 }
 
 /** Today's YYYY-MM-DD in local time */

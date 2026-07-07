@@ -1,16 +1,20 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { GlobalState, RunEntry, RunState, SyncStatus } from './lib/types';
+import type { GlobalState, RawSettings, RunEntry, RunState, SyncStatus } from './lib/types';
 import {
   getStoredCode, setStoredCode,
   loadLocal, saveLocal,
   loadGlobalLocal, saveGlobalLocal,
+  loadSettingsLocal, saveSettingsLocal,
   applySeed, mergeStates, mergeGlobalStates,
   pullFromSupabase, upsertEntry, upsertMany,
   pullGlobalFromSupabase, upsertGlobalToSupabase,
   debounce,
 } from './lib/storage';
 import { hasSupabase } from './lib/supabase';
-import { getPlan, todayStr, PLAN_START_DATE } from './config/plan';
+import { getAward, todayStr, PLAN_START_DATE } from './config/plan';
+import { resolveEffectivePlan } from './lib/planOverlay';
+import { defaultSettings } from './lib/settings';
+import { FLAGS } from './config/flags';
 import type { PlanDay } from './lib/types';
 import {
   trailing30Longest, nextLongFrom, painFreeStreak,
@@ -18,6 +22,7 @@ import {
 } from './lib/metrics';
 import { morningAnswer } from './lib/subjective';
 import AccessCodeModal from './components/AccessCodeModal';
+import SettingsPanel from './components/SettingsPanel';
 import TodayCard from './components/TodayCard';
 import WeekAccordion from './components/WeekAccordion';
 import StatsRow from './components/StatsRow';
@@ -31,7 +36,6 @@ import GenerateWeek from './components/GenerateWeek';
 const PLAN_END = '2026-08-14';
 
 export default function App() {
-  const plan = getPlan();
   const today = todayStr();
 
   const [accessCode, setAccessCode] = useState<string | null>(getStoredCode);
@@ -39,6 +43,12 @@ export default function App() {
   // v2 global speed-layer state — separate key, additive migration on load.
   const [globals, setGlobals] = useState<GlobalState>(loadGlobalLocal);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // v3: settings drive the plan. null = pure static plan (original behavior).
+  const settings = globals.settings ?? null;
+  const { plan } = resolveEffectivePlan(settings, runState, today);
+  const award = getAward(settings);
 
   const todayDay = plan.dateToDay.get(today) ?? null;
   const todayWeek = plan.dateToWeek.get(today) ?? null;
@@ -140,6 +150,50 @@ export default function App() {
     [accessCode],
   );
 
+  // ── Settings (v3) — canonical copy in globals.settings, bb_settings mirror ──
+  const updateSettings = useCallback(
+    (patch: Partial<RawSettings>) => {
+      setGlobals(prev => {
+        const base = prev.settings ?? defaultSettings(new Date().toISOString());
+        const nextSettings: RawSettings = { ...base, ...patch, updated_at: new Date().toISOString() };
+        saveSettingsLocal(nextSettings);
+        const next: GlobalState = { ...prev, settings: nextSettings, updated_at: new Date().toISOString() };
+        saveGlobalLocal(next);
+        if (accessCode && hasSupabase) debouncedGlobalUpsert.current(next, accessCode);
+        return next;
+      });
+    },
+    [accessCode],
+  );
+
+  // "Rebuild upcoming plan": discard any confirmed draft future weeks and
+  // re-materialize settings so the future regenerates cleanly. Completed weeks
+  // stay locked and logged runs are never touched (both handled downstream).
+  const handleFullReset = useCallback(() => {
+    setGlobals(prev => {
+      const base = prev.settings ?? defaultSettings(new Date().toISOString());
+      const nextSettings: RawSettings = { ...base, updated_at: new Date().toISOString() };
+      saveSettingsLocal(nextSettings);
+      const next: GlobalState = {
+        ...prev, settings: nextSettings, acceptedWeeks: {}, updated_at: new Date().toISOString(),
+      };
+      saveGlobalLocal(next);
+      if (accessCode && hasSupabase) debouncedGlobalUpsert.current(next, accessCode);
+      return next;
+    });
+    setSettingsOpen(false);
+  }, [accessCode]);
+
+  // One-time adoption of a bb_settings mirror (e.g. from the design prototype)
+  // when globals has no settings yet — additive, never overwrites existing.
+  useEffect(() => {
+    if (globals.settings == null) {
+      const mirror = loadSettingsLocal();
+      if (mirror) updateSettings(mirror);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Auto-enforcement (§3, §4) ─────────────────────────────
   // 1. Two pain-cap breaches in 7 days → forced state 8 (flare/deload).
   // 2. While hills are unlocked (state ≥ 5): ANY logged hip pain in the
@@ -205,6 +259,17 @@ export default function App() {
     <>
       {!accessCode && <AccessCodeModal onConfirm={handleCodeConfirm} />}
 
+      {FLAGS.SETTINGS_UI && settingsOpen && (
+        <SettingsPanel
+          raw={settings ?? defaultSettings(new Date().toISOString())}
+          runState={runState}
+          today={today}
+          onChange={updateSettings}
+          onFullReset={handleFullReset}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
       <div className="min-h-screen bg-ink text-slate-200">
         <div className="max-w-[480px] mx-auto px-4 pb-20 pt-6 space-y-4">
 
@@ -218,20 +283,35 @@ export default function App() {
                 7-week XC base · {PLAN_START_DATE} → {PLAN_END}
               </p>
             </div>
-            <div className="text-right">
-              {syncLabel && (
-                <p className={`text-[10px] ${
-                  !hasSupabase || syncStatus === 'offline' ? 'text-amber-600'
-                  : syncStatus === 'error' ? 'text-rose-500'
-                  : 'text-slate-600'
-                }`}>
-                  {syncLabel}
-                </p>
-              )}
-              {accessCode && (
-                <p className="text-[10px] text-slate-700 mt-0.5">
-                  code: <span className="font-mono">{accessCode}</span>
-                </p>
+            <div className="flex items-start gap-2.5">
+              <div className="text-right">
+                {syncLabel && (
+                  <p className={`text-[10px] ${
+                    !hasSupabase || syncStatus === 'offline' ? 'text-amber-600'
+                    : syncStatus === 'error' ? 'text-rose-500'
+                    : 'text-slate-600'
+                  }`}>
+                    {syncLabel}
+                  </p>
+                )}
+                {accessCode && (
+                  <p className="text-[10px] text-slate-700 mt-0.5">
+                    code: <span className="font-mono">{accessCode}</span>
+                  </p>
+                )}
+              </div>
+              {FLAGS.SETTINGS_UI && (
+                <button
+                  onClick={() => setSettingsOpen(true)}
+                  aria-label="Settings"
+                  className="shrink-0 grid place-items-center w-8 h-8 rounded-[9px] border border-border
+                             text-slate-400 hover:text-slate-200 hover:border-slate-600 transition"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  </svg>
+                </button>
               )}
             </div>
           </header>
@@ -317,7 +397,7 @@ export default function App() {
             onUpdateGlobals={updateGlobals}
           />
 
-          <AwardTracker runState={runState} />
+          <AwardTracker runState={runState} plan={plan} award={award} />
           <GuardrailPanel />
           <BackupRestore runState={runState} globals={globals} onRestore={handleRestore} />
           <ResearchFooter />

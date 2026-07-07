@@ -1,0 +1,276 @@
+// ============================================================
+// PLAN SETTINGS — raw (user-typed) vs effective (safety-clamped).
+//
+// The user's raw input is persisted verbatim so they never lose a
+// value. But NOTHING consumes raw directly: every consumer reads
+// effectiveSettings(), whose values are clamped so settings can
+// never raise an HR cap, the long-run cap %, the build rate, or
+// loosen the pain-free streak gate during this base block. Users
+// may make the plan MORE conservative, never less.
+// ============================================================
+
+import type { RawSettings, RunState, SpeedStateNum } from './types';
+import type { WeekConfig } from '../config/plan';
+import { PLAN_START_DATE, WEEK_CONFIGS, HR, AWARD } from '../config/plan';
+import { TUNABLES } from '../config/tunables';
+import {
+  mondayOf, weeklyActuals, trailing30Longest, nextLongFrom, floorToHalf,
+} from './metrics';
+
+const SETTINGS_VERSION = 1 as const;
+
+/** Design/static-plan defaults — the Settings UI's starting values. Note:
+ *  settings === null (never opened) yields the pure static plan; these
+ *  defaults are what populate the form the first time it opens. */
+export function defaultSettings(nowIso: string): RawSettings {
+  const staticTotal = WEEK_CONFIGS[0].miles.reduce((a, b) => a + b, 0);
+  return {
+    version: SETTINGS_VERSION,
+    goalMiles: AWARD.target,
+    safeDelivery: AWARD.safePlanDelivery,
+    daysPerWeek: 5,
+    blockWeeks: WEEK_CONFIGS.length,
+    downEvery: 4,
+    startDate: PLAN_START_DATE,
+    startMpw: Math.round(staticTotal),
+    peakMpw: 30,
+    buildStep: 1,
+    trailingLongest: TUNABLES.TRAILING_FALLBACK,
+    hrEasyMin: HR.easyMin,
+    hrEasyMax: HR.easyMax,
+    hrHardCap: HR.hardCap,
+    hrMax: HR.hrmax,
+    capPct: Math.round(TUNABLES.CAP_FACTOR * 100),
+    pfNeeded: 4,
+    adaptive: true,
+    layoutOrder: [],   // [] = registry default order (Stage G)
+    layoutOff: [],
+    updated_at: nowIso,
+  };
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function num(v: unknown, fallback: number): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Additive, idempotent settings migration. Accepts the design prototype's
+ * shape too — notably layoutOff as Record<string,boolean> (converted to a
+ * string[] of hidden ids). null in → null out (settings absent = static plan).
+ */
+export function migrateSettings(raw: unknown, nowIso: string): RawSettings | null {
+  if (raw == null) return null;
+  if (!isRecord(raw)) return null;
+  const d = defaultSettings(nowIso);
+
+  // layoutOff may arrive as Record<string,boolean> (prototype) or string[].
+  let layoutOff: string[] = [];
+  if (Array.isArray(raw.layoutOff)) {
+    layoutOff = raw.layoutOff.filter(x => typeof x === 'string');
+  } else if (isRecord(raw.layoutOff)) {
+    layoutOff = Object.keys(raw.layoutOff).filter(k => raw.layoutOff && (raw.layoutOff as Record<string, unknown>)[k] === true);
+  }
+  const layoutOrder = Array.isArray(raw.layoutOrder)
+    ? raw.layoutOrder.filter(x => typeof x === 'string')
+    : [];
+
+  return {
+    version: SETTINGS_VERSION,
+    goalMiles: num(raw.goalMiles, d.goalMiles),
+    safeDelivery: num(raw.safeDelivery, d.safeDelivery),
+    daysPerWeek: num(raw.daysPerWeek, d.daysPerWeek),
+    blockWeeks: num(raw.blockWeeks, d.blockWeeks),
+    downEvery: num(raw.downEvery, d.downEvery),
+    startDate: typeof raw.startDate === 'string' ? raw.startDate : d.startDate,
+    startMpw: num(raw.startMpw, d.startMpw),
+    peakMpw: num(raw.peakMpw, d.peakMpw),
+    buildStep: num(raw.buildStep, d.buildStep),
+    trailingLongest: num(raw.trailingLongest, d.trailingLongest),
+    hrEasyMin: num(raw.hrEasyMin, d.hrEasyMin),
+    hrEasyMax: num(raw.hrEasyMax, d.hrEasyMax),
+    hrHardCap: num(raw.hrHardCap, d.hrHardCap),
+    hrMax: num(raw.hrMax, d.hrMax),
+    capPct: num(raw.capPct, d.capPct),
+    pfNeeded: num(raw.pfNeeded, d.pfNeeded),
+    adaptive: raw.adaptive !== false,
+    layoutOrder,
+    layoutOff,
+    updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : nowIso,
+  };
+}
+
+// ── Effective (clamped) settings ─────────────────────────────
+
+export interface ClampNote {
+  field: string;
+  requested: number;
+  applied: number;
+  reason: string;
+}
+
+export type EffectiveSettings = RawSettings;
+
+function clampField(
+  clamps: ClampNote[], field: string, requested: number, applied: number, reason: string,
+): number {
+  if (Math.abs(requested - applied) > 1e-9) clamps.push({ field, requested, applied, reason });
+  return applied;
+}
+
+/**
+ * Clamp raw settings to the base-block safety envelope. Returns the effective
+ * (safe) settings plus human-readable notes for every value that was pulled
+ * back. Lowering a cap is always honored; raising one is clamped.
+ */
+export function effectiveSettings(
+  raw: RawSettings, runState: RunState, today: string,
+): { eff: EffectiveSettings; clamps: ClampNote[] } {
+  const clamps: ClampNote[] = [];
+  const eff: RawSettings = { ...raw };
+
+  // Long-run cap %: never above the Frandsen 110% ceiling. Lower is allowed.
+  const capCeil = Math.round(TUNABLES.CAP_FACTOR * 100);
+  eff.capPct = clampField(clamps, 'capPct', raw.capPct, Math.min(raw.capPct, capCeil),
+    `The long-run cap can't exceed ${capCeil}% of your recent longest — that's the core injury rule (Frandsen 2025).`);
+
+  // HR intensity caps: never above the configured governors. Lower allowed.
+  eff.hrEasyMin = clampField(clamps, 'hrEasyMin', raw.hrEasyMin, Math.min(raw.hrEasyMin, HR.easyMin),
+    `Easy HR floor stays at or below ${HR.easyMin} for base work.`);
+  eff.hrEasyMax = clampField(clamps, 'hrEasyMax', raw.hrEasyMax, Math.min(raw.hrEasyMax, HR.easyMax),
+    `Easy HR ceiling stays at or below ${HR.easyMax} — the aerobic band.`);
+  eff.hrHardCap = clampField(clamps, 'hrHardCap', raw.hrHardCap, Math.min(raw.hrHardCap, HR.hardCap),
+    `Hard-cap HR stays at or below ${HR.hardCap} this block — no training above it.`);
+  // hrMax is physiological, not a safety cap (it's the % denominator); left as
+  // typed within the migrate bounds. Raising it only makes the % read lower.
+
+  // Starting-longest seed: never above one ladder step past your logged longest.
+  const seedCeil = nextLongFrom(trailing30Longest(runState, today));
+  eff.trailingLongest = clampField(clamps, 'trailingLongest', raw.trailingLongest,
+    Math.min(raw.trailingLongest, seedCeil),
+    `Your starting long run can't exceed the safe next step (${seedCeil.toFixed(1)} mi) from your logged runs.`);
+
+  // Starting week volume: never more than +10% over your last sustained week.
+  const weeks = weeklyActuals(runState, today).filter(w => w.weekStart < mondayOf(today));
+  const lastSustained = [...weeks].reverse().find(w => w.miles > 0);
+  const staticW1 = WEEK_CONFIGS[0].miles.reduce((a, b) => a + b, 0);
+  const startCeil = Math.max(lastSustained?.miles ?? 0, staticW1) * TUNABLES.WEEKLY_GROWTH_MAX;
+  eff.startMpw = clampField(clamps, 'startMpw', raw.startMpw, Math.min(raw.startMpw, startCeil),
+    `First week can't jump more than +10% over your last sustained week (${startCeil.toFixed(1)} mi).`);
+
+  // Peak: a ceiling the build aims at; must be at least the start.
+  eff.peakMpw = clampField(clamps, 'peakMpw', raw.peakMpw, Math.max(raw.peakMpw, eff.startMpw),
+    `Peak week can't be below the starting week.`);
+
+  // buildStep is enforced week-by-week in the builder (min with +10%); flag if
+  // the requested absolute step exceeds 10% of the starting week.
+  const stepCeil = eff.startMpw * (TUNABLES.WEEKLY_GROWTH_MAX - 1);
+  if (raw.buildStep > stepCeil + 1e-9) {
+    clamps.push({
+      field: 'buildStep', requested: raw.buildStep, applied: Math.round(stepCeil * 10) / 10,
+      reason: `Weekly growth is capped at +10%; large steps are throttled each week.`,
+    });
+  }
+  // pfNeeded is combined per-target via requiredStreakFor (never below the
+  // built-in requirement), so raw stays as-is here (raising it is safe).
+
+  return { eff, clamps };
+}
+
+/** Per-target pain-free streak requirement: the STRICTER of the user's
+ *  pfNeeded and the built-in per-state requirement. Users can demand more,
+ *  never less. */
+export function requiredStreakFor(target: SpeedStateNum, eff: RawSettings | null): number {
+  const builtin = TUNABLES.REQUIRED_STREAK[target] ?? 4;
+  return Math.max(builtin, eff?.pfNeeded ?? 0);
+}
+
+// ── Build week configs from settings ─────────────────────────
+
+function roundHalf(x: number): number {
+  return Math.round(x / TUNABLES.HALF_STEP) * TUNABLES.HALF_STEP;
+}
+
+/** Split a weekly total into run-day miles: long run last, day-before-long
+ *  lightest, no easy day above the long-run ceiling. The prescribed sum never
+ *  exceeds roundHalf(total) — half-step rounding is trimmed down, never up, so
+ *  the peak-week ceiling genuinely binds. */
+function splitWeek(total: number, long: number, daysPerWeek: number): number[] {
+  const easyCount = Math.max(0, daysPerWeek - 1);
+  const longR = roundHalf(long);
+  if (easyCount === 0) return [longR];
+  const easyBudget = Math.max(roundHalf(total) - longR, 0);
+  const weights: number[] = [];
+  for (let i = 0; i < easyCount; i++) weights.push(i === easyCount - 1 ? 0.7 : 1); // last easy day lighter
+  const wsum = weights.reduce((a, b) => a + b, 0);
+  const easy = weights.map(w => Math.min(roundHalf((easyBudget * w) / wsum), longR));
+  // Trim rounding overshoot from the largest easy day so the total never
+  // exceeds the (rounded) target — keeps peakMpw a true ceiling.
+  let sum = easy.reduce((a, b) => a + b, 0);
+  while (sum > easyBudget + 1e-9) {
+    let idx = 0;
+    for (let i = 1; i < easy.length; i++) if (easy[i] > easy[idx]) idx = i;
+    if (easy[idx] <= 0) break;
+    easy[idx] -= TUNABLES.HALF_STEP;
+    sum -= TUNABLES.HALF_STEP;
+  }
+  easy.push(longR);
+  return easy;
+}
+
+/**
+ * Build WeekConfig[] from effective settings. Structural safety, not advisory:
+ *  • weekly total grows by at most min(buildStep, +10%) per build week
+ *  • never exceeds peakMpw
+ *  • a down week (~27.5% cut) is forced after `downEvery` build weeks; long held
+ *  • the final week is a taper (down)
+ *  • the long run advances only on build weeks via nextLongFrom(prevLong),
+ *    so no week's long run exceeds ~110% of the previous — the cap is baked in.
+ */
+export function buildWeekConfigsFromSettings(eff: EffectiveSettings): WeekConfig[] {
+  const configs: WeekConfig[] = [];
+  const days = Math.round(Math.min(6, Math.max(3, eff.daysPerWeek)));
+  const weeksN = Math.round(Math.min(12, Math.max(1, eff.blockWeeks)));
+  let prevTotal = eff.startMpw;
+  let prevLong = eff.trailingLongest;
+  let buildsSinceDown = 0;
+
+  for (let w = 0; w < weeksN; w++) {
+    let isDown = false;
+    let note: string | undefined;
+    let total: number;
+
+    const isLast = w === weeksN - 1 && weeksN > 1;
+    if (w === 0) {
+      total = eff.startMpw;
+    } else if (isLast) {
+      isDown = true; note = 'taper';
+      total = prevTotal * (1 - TUNABLES.DOWN_WEEK_CUT);
+    } else if (buildsSinceDown >= eff.downEvery) {
+      isDown = true; note = 'down week';
+      total = prevTotal * (1 - TUNABLES.DOWN_WEEK_CUT);
+      buildsSinceDown = 0;
+    } else {
+      const step = Math.min(eff.buildStep, prevTotal * (TUNABLES.WEEKLY_GROWTH_MAX - 1));
+      total = Math.min(prevTotal + step, eff.peakMpw);
+      buildsSinceDown++;
+    }
+
+    let long: number;
+    if (isDown) {
+      long = floorToHalf(prevLong); // held — no ladder step on a down/taper week
+    } else {
+      long = nextLongFrom(prevLong);
+      prevLong = long;
+    }
+
+    total = Math.max(roundHalf(total), long); // a week is never smaller than its long run
+    configs.push({ miles: splitWeek(total, long, days), note, isDownWeek: isDown });
+    prevTotal = total;
+  }
+  return configs;
+}
