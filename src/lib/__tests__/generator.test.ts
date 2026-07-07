@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { generateNextWeek, checkPlannedLongRunConflict } from '../generator';
+import { generateNextWeek, generateWeeks, checkAcceptedWeeks, checkPlannedLongRunConflict } from '../generator';
 import { defaultGlobalState } from '../migrate';
+import { defaultSettings } from '../settings';
 import { validStrides } from '../speed';
-import type { GlobalState, RunState } from '../types';
+import type { GlobalState, ProposedDay, RunState } from '../types';
 
 const NOW = '2026-07-07T12:00:00Z';
 const TODAY = '2026-07-07'; // Tuesday of Week 2
@@ -144,6 +145,103 @@ describe('generate-future-weeks engine (§5)', () => {
     const a = generateNextWeek({ runState: CURRENT_LOG, globals: globals(), today: TODAY });
     const b = generateNextWeek({ runState: CURRENT_LOG, globals: globals(), today: TODAY });
     expect(a).toEqual(b);
+  });
+});
+
+describe('multi-week generation (Stage E)', () => {
+  it('chains consecutive Mondays with a continuous, capped long-run ladder', () => {
+    const { proposals } = generateWeeks({ runState: CURRENT_LOG, globals: globals(), today: TODAY, count: 3 });
+    expect(proposals).toHaveLength(3);
+    expect(proposals.map(p => p.weekStart)).toEqual(['2026-07-13', '2026-07-20', '2026-07-27']);
+    let prev = 0;
+    for (const p of proposals) {
+      const long = p.days[4].miles ?? 0;
+      if (prev > 0) expect(long).toBeLessThanOrEqual(prev * 1.1 + 0.5);
+      prev = long;
+    }
+  });
+
+  it('caps every week-over-week total at ~+10%', () => {
+    const { proposals } = generateWeeks({ runState: CURRENT_LOG, globals: globals(), today: TODAY, count: 4 });
+    for (let i = 1; i < proposals.length; i++) {
+      if (proposals[i].isDownWeek) continue;
+      expect(proposals[i].totalMiles).toBeLessThanOrEqual(proposals[i - 1].totalMiles * 1.1 + 0.5);
+    }
+  });
+
+  it('generates zero hard sessions across all weeks while speed is locked', () => {
+    const { proposals } = generateWeeks({ runState: CURRENT_LOG, globals: globals(), today: TODAY, count: 4 });
+    for (const p of proposals) {
+      expect(p.days.every(d => d.kind !== 'threshold')).toBe(true);
+    }
+  });
+
+  it('skips a week already confirmed in acceptedWeeks (never overwrites it)', () => {
+    const g = globals({ acceptedWeeks: { '2026-07-20': [{ date: '2026-07-20', dayLabel: 'Mon', kind: 'easy', miles: 5, why: 'mine' }] } });
+    const { proposals } = generateWeeks({ runState: CURRENT_LOG, globals: g, today: TODAY, count: 3 });
+    expect(proposals.map(p => p.weekStart)).not.toContain('2026-07-20');
+  });
+
+  it('respects settings: daysPerWeek 4 → 3 rest days, long run last run day', () => {
+    const s = { ...defaultSettings(NOW), daysPerWeek: 4 };
+    const p = generateNextWeek({ runState: CURRENT_LOG, globals: globals(), today: TODAY, settings: s });
+    expect(p.days.filter(d => d.kind === 'rest')).toHaveLength(3);
+    expect(p.days[3].kind).toBe('long');   // Thursday is the last run day
+    expect(p.days[4].kind).toBe('rest');
+  });
+
+  it('respects settings: peakMpw binds the weekly total', () => {
+    const s = { ...defaultSettings(NOW), peakMpw: 15 };
+    const p = generateNextWeek({ runState: CURRENT_LOG, globals: globals(), today: TODAY, settings: s });
+    expect(p.totalMiles).toBeLessThanOrEqual(15 + 1e-9);
+  });
+
+  it('the award/goal is never an input to multi-week generation', () => {
+    const a = generateWeeks({ runState: CURRENT_LOG, globals: globals(), today: TODAY, count: 3 });
+    const b = generateWeeks({ runState: CURRENT_LOG, globals: globals(), today: TODAY, count: 3 });
+    expect(a.proposals).toEqual(b.proposals);
+  });
+});
+
+describe('checkAcceptedWeeks — non-destructive safer suggestions', () => {
+  const futureWeek = (long: number, withThreshold = false): ProposedDay[] => {
+    const days: ProposedDay[] = [
+      { date: '2026-07-20', dayLabel: 'Mon', kind: withThreshold ? 'threshold' : 'easy', miles: 4, why: 'x' },
+      { date: '2026-07-21', dayLabel: 'Tue', kind: 'easy', miles: 4, why: 'x' },
+      { date: '2026-07-22', dayLabel: 'Wed', kind: 'easy', miles: 4, why: 'x' },
+      { date: '2026-07-23', dayLabel: 'Thu', kind: 'easy', miles: 3, why: 'x' },
+      { date: '2026-07-24', dayLabel: 'Fri', kind: 'long', miles: long, why: 'x' },
+    ];
+    return days;
+  };
+
+  it('flags an over-cap long run and suggests a clamped copy (original untouched)', () => {
+    const accepted = { '2026-07-20': futureWeek(8.0) };
+    const before = JSON.stringify(accepted);
+    const conflicts = checkAcceptedWeeks(accepted, CURRENT_LOG, globals(), TODAY);
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].reasons.join(' ')).toMatch(/exceeds/);
+    expect(conflicts[0].suggested.find(d => d.kind === 'long')!.miles).toBe(5.0); // clamped to cap
+    expect(conflicts[0].original.find(d => d.kind === 'long')!.miles).toBe(8.0);  // original kept
+    expect(JSON.stringify(accepted)).toBe(before);                                 // input purity
+  });
+
+  it('flags a hard session while speed is locked and demotes it in the suggestion', () => {
+    const accepted = { '2026-07-20': futureWeek(5.0, true) };
+    const conflicts = checkAcceptedWeeks(accepted, CURRENT_LOG, globals({ speedState: 1 }), TODAY);
+    expect(conflicts[0].reasons.join(' ')).toMatch(/locked|delayed|flared/);
+    expect(conflicts[0].suggested.some(d => d.kind === 'threshold')).toBe(false);
+  });
+
+  it('no conflict for a compliant future week', () => {
+    const accepted = { '2026-07-20': futureWeek(5.0) };
+    expect(checkAcceptedWeeks(accepted, CURRENT_LOG, globals(), TODAY)).toHaveLength(0);
+  });
+
+  it('never flags a locked (logged) week', () => {
+    const accepted = { '2026-07-20': futureWeek(8.0) };
+    const logged: RunState = { ...CURRENT_LOG, '2026-07-20': run('2026-07-20', 4) };
+    expect(checkAcceptedWeeks(accepted, logged, globals(), TODAY)).toHaveLength(0);
   });
 });
 

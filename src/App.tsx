@@ -439,6 +439,7 @@ export default function App() {
             runState={runState}
             globals={globals}
             today={today}
+            settings={settings}
             onUpdateGlobals={updateGlobals}
           />
 
