@@ -121,7 +121,7 @@ const DayRow = memo(function DayRow({ day, entry, onUpdate, isToday, painCap, sp
             {effective.toFixed(1)}
           </span>
         ) : (
-          <span className="text-slate-700 text-sm">—</span>
+          <span className="text-slate-700 text-sm">–</span>
         )}
       </div>
     </div>

@@ -60,7 +60,7 @@ export default function StubCard({ meta }: { meta: BlockMeta }) {
         </span>
       </div>
       {meta.desc && <p className="m-0 text-xs leading-relaxed text-slate-500">{meta.desc}</p>}
-      <p className="m-0 text-[11px] text-slate-600">Enabled from Settings → Home layout. A concept, not active — nothing is recorded or sent.</p>
+      <p className="m-0 text-[11px] text-slate-600">Enabled from Settings → Home layout. A concept, not active. Nothing is recorded or sent.</p>
     </section>
   );
 }

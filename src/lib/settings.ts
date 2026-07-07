@@ -140,15 +140,15 @@ export function effectiveSettings(
   // Long-run cap %: never above the Frandsen 110% ceiling. Lower is allowed.
   const capCeil = Math.round(TUNABLES.CAP_FACTOR * 100);
   eff.capPct = clampField(clamps, 'capPct', raw.capPct, Math.min(raw.capPct, capCeil),
-    `The long-run cap can't exceed ${capCeil}% of your recent longest — that's the core injury rule (Frandsen 2025).`);
+    `The long-run cap can't exceed ${capCeil}% of your recent longest. That's the core injury rule (Frandsen 2025).`);
 
   // HR intensity caps: never above the configured governors. Lower allowed.
   eff.hrEasyMin = clampField(clamps, 'hrEasyMin', raw.hrEasyMin, Math.min(raw.hrEasyMin, HR.easyMin),
     `Easy HR floor stays at or below ${HR.easyMin} for base work.`);
   eff.hrEasyMax = clampField(clamps, 'hrEasyMax', raw.hrEasyMax, Math.min(raw.hrEasyMax, HR.easyMax),
-    `Easy HR ceiling stays at or below ${HR.easyMax} — the aerobic band.`);
+    `Easy HR ceiling stays at or below ${HR.easyMax}, the aerobic band.`);
   eff.hrHardCap = clampField(clamps, 'hrHardCap', raw.hrHardCap, Math.min(raw.hrHardCap, HR.hardCap),
-    `Hard-cap HR stays at or below ${HR.hardCap} this block — no training above it.`);
+    `Hard-cap HR stays at or below ${HR.hardCap} this block. No training above it.`);
   // hrMax is physiological, not a safety cap (it's the % denominator); left as
   // typed within the migrate bounds. Raising it only makes the % read lower.
 

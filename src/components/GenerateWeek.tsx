@@ -54,7 +54,7 @@ export default function GenerateWeek({ runState, globals, today, settings, onUpd
     const merged = { ...globals.acceptedWeeks };
     for (const p of drafts) merged[p.weekStart] = p.days; // manual edits kept verbatim
     onUpdateGlobals({ acceptedWeeks: merged });
-    setSavedMsg(`${drafts.length} week${drafts.length > 1 ? 's' : ''} confirmed — locked into the plan ✓`);
+    setSavedMsg(`${drafts.length} week${drafts.length > 1 ? 's' : ''} confirmed, locked into the plan ✓`);
     setDrafts([]);
   }
 
@@ -206,7 +206,7 @@ function DraftRow({ day, onDec, onInc, overCap, cap }: {
         </div>
       </div>
       <p className={`text-[11px] leading-snug ${overCap ? 'text-rose-400' : 'text-slate-600'}`}>
-        {overCap ? `Above the current ${cap} mi ceiling — your call, but it breaks the cap.` : day.why}
+        {overCap ? `Above the current ${cap} mi ceiling. Your call, but it breaks the cap.` : day.why}
       </p>
     </div>
   );
@@ -229,7 +229,7 @@ function AcceptedWeek({ weekStart, days, onRemove }: {
         <div className="mt-1.5 space-y-0.5">
           {days.map(d => (
             <p key={d.date} className="text-[10px] text-slate-500 tabular-nums">
-              {d.dayLabel} — {d.kind === 'rest' ? 'rest' : `${d.miles ?? '–'} mi ${d.kind}${d.strides ? ' + strides' : ''}`}
+              {d.dayLabel}: {d.kind === 'rest' ? 'rest' : `${d.miles ?? '–'} mi ${d.kind}${d.strides ? ' + strides' : ''}`}
             </p>
           ))}
         </div>

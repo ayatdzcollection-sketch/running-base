@@ -79,7 +79,7 @@ export default function RaceLog({ races, adaptive, onSaveRace, onSetAdaptive }: 
       {hasRace && (
         <div className="flex flex-col gap-2">
           <span className="text-[12.5px] text-slate-400">
-            Last effort — <span className="text-slate-200 font-semibold">{latestLabel}</span>
+            Last effort: <span className="text-slate-200 font-semibold">{latestLabel}</span>
           </span>
           <div className="flex flex-col">
             {preds.map(p => (
@@ -95,7 +95,7 @@ export default function RaceLog({ races, adaptive, onSaveRace, onSetAdaptive }: 
             <div className="flex flex-col gap-0.5">
               <span className="text-[12px] text-slate-400">~{fmtTime(fiveKPred.paceSecPerMi)} /mi at 5K effort</span>
               <span className="text-[11.5px] leading-snug text-slate-600">
-                ~{fmtTime(fiveKPred.paceSecPerMi + 70)}–{fmtTime(fiveKPred.paceSecPerMi + 120)} /mi easy — reference only; you run by HR this block
+                ~{fmtTime(fiveKPred.paceSecPerMi + 70)}–{fmtTime(fiveKPred.paceSecPerMi + 120)} /mi easy. Reference only; you run by HR this block
               </span>
             </div>
           )}
@@ -162,8 +162,8 @@ export default function RaceLog({ races, adaptive, onSaveRace, onSetAdaptive }: 
         {infoOpen && (
           <p className="m-0 text-[11.5px] leading-relaxed text-sky-300/90 bg-sky-500/[0.06] border border-sky-500/20 rounded-lg px-2.5 py-1.5">
             When on, a new race updates your goal projection and the paces used in blocks AFTER this
-            base phase. It never raises the HR cap or the long-run cap, and never unlocks speed —
-            those gates always win.
+            base phase. It never raises the HR cap or the long-run cap, and never unlocks speed.
+            Those gates always win.
           </p>
         )}
       </div>

@@ -58,7 +58,7 @@ export default function TodayCard({
       <div className="card text-center py-8 space-y-2">
         <p className="text-2xl">🏁</p>
         <p className="font-display text-xl font-semibold text-slate-200">Block complete</p>
-        <p className="text-slate-500 text-sm">7 weeks done. XC season — go.</p>
+        <p className="text-slate-500 text-sm">7 weeks done. XC season. Go.</p>
       </div>
     );
   }
@@ -169,7 +169,7 @@ export default function TodayCard({
       {/* Calm clamp reason when the plan ran ahead of recent volume */}
       {clamped && (
         <div className="rounded-xl bg-amber-500/[0.07] border border-amber-500/25 px-3 py-2.5 text-[12.5px] leading-relaxed text-slate-400">
-          <span className="text-amber-300 font-semibold">Ceiling paused — rebuilding.</span>{' '}
+          <span className="text-amber-300 font-semibold">Ceiling paused. Rebuilding.</span>{' '}
           Your recent longest is {trailingLongest} mi, so today's ceiling is {cap} mi. The ceiling
           rises again as easy days come back in. Nothing is lost.
         </div>

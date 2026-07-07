@@ -41,7 +41,7 @@ export const HOME_BLOCKS: BlockMeta[] = [
   { id: 'backup',     label: 'Backup / restore',     real: true,  hideable: true,  safetyCritical: false },
   { id: 'evidence',   label: 'Evidence',             real: true,  hideable: true,  safetyCritical: false },
   // ── Proposed blocks (Stage H) — polished stubs, hidden by default ──
-  { id: 'notes',   label: 'Daily notes',         real: false, hideable: true, safetyCritical: false, desc: 'Free-text note per run — how it felt, terrain, weather.' },
+  { id: 'notes',   label: 'Daily notes',         real: false, hideable: true, safetyCritical: false, desc: 'Free-text note per run: how it felt, terrain, weather.' },
   { id: 'checkin', label: 'Weekly check-in',     real: false, hideable: true, safetyCritical: false, desc: 'Sleep, soreness, and RPE trend to catch overload early.' },
   { id: 'shoes',   label: 'Shoe mileage',        real: false, hideable: true, safetyCritical: false, desc: 'Rotate pairs and retire them at a mileage threshold.' },
   { id: 'coach',   label: 'Coach / PT thread',   real: false, hideable: true, safetyCritical: false, desc: 'Shared notes and clearance sign-off with your coach.' },

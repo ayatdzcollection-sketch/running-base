@@ -44,7 +44,7 @@ export default function HipSpeedStatus({ speedState, hipHold, flare, streak, pfN
         </div>
         <span className="text-[11.5px] text-slate-500">
           {flare
-            ? 'Progression paused — the plan repeats until the hip settles.'
+            ? 'Progression paused. The plan repeats until the hip settles.'
             : `State ${speedState} of 7${nextStateName ? ` · next: ${nextStateName}` : ' · top of the base ladder'}`}
         </span>
       </div>
@@ -64,10 +64,10 @@ export default function HipSpeedStatus({ speedState, hipHold, flare, streak, pfN
         </div>
         <span className="text-xs text-slate-400">
           {flare
-            ? 'Streak paused — restarts when the hip settles.'
+            ? 'Streak paused. Restarts when the hip settles.'
             : streak >= pfNeeded
-              ? `Pain-free runs ${pfNeeded} / ${pfNeeded} — next step ready`
-              : `Pain-free runs ${streak} / ${pfNeeded} — unlocks the next step`}
+              ? `Pain-free runs ${pfNeeded} / ${pfNeeded} · next step ready`
+              : `Pain-free runs ${streak} / ${pfNeeded} · unlocks the next step`}
         </span>
       </div>
     </section>

@@ -132,7 +132,7 @@ export function buildPlan(weekConfigs: WeekConfig[], planStart: string): BuiltPl
       weekNote: cfg.note,
     }));
 
-    const baseLabel = `Week ${weekNum} — ${fmtDate(weekStart)}–${fmtDate(weekEnd)}`;
+    const baseLabel = `Week ${weekNum} · ${fmtDate(weekStart)}–${fmtDate(weekEnd)}`;
 
     return {
       weekNum,

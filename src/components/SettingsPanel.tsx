@@ -30,7 +30,7 @@ const GROUPS: GroupDef[] = [
     summary: s => `${Math.round(s.goalMiles)} mi · safe ${Math.round(s.safeDelivery)}`,
     fields: [
       { key: 'goalMiles', label: 'Season mileage goal', unit: 'mi', min: 100, max: 300, step: 5,
-        info: 'Your season mileage target. It only moves the award marker — it never pushes daily runs above the cap.' },
+        info: 'Your season mileage target. It only moves the award marker. It never pushes daily runs above the cap.' },
       { key: 'safeDelivery', label: 'Safe plan delivers', unit: 'mi', min: 60, max: 300, step: 1,
         info: "What the safe plan realistically adds up to. Sets where the amber 'safe' line sits on the award bar." },
     ],
@@ -205,7 +205,7 @@ export default function SettingsPanel({
                         )}
                         {clamp && (
                           <p className="m-0 text-[11.5px] leading-relaxed text-amber-300/90 bg-amber-500/[0.06] border border-amber-500/20 rounded-lg px-2.5 py-1.5">
-                            Applied {fmt(clamp.applied, f.step)}{f.unit ? ` ${f.unit}` : ''} — {clamp.reason}
+                            Applied {fmt(clamp.applied, f.step)}{f.unit ? ` ${f.unit}` : ''}: {clamp.reason}
                           </p>
                         )}
                       </div>
@@ -224,7 +224,7 @@ export default function SettingsPanel({
           <span className="text-[11px] leading-relaxed text-slate-500">
             Changing a setting already reshapes upcoming weeks. This clears any confirmed draft
             weeks and regenerates the future cleanly from these settings. Type{' '}
-            <span className="font-mono text-slate-400">reset</span> to confirm — completed weeks stay
+            <span className="font-mono text-slate-400">reset</span> to confirm. Completed weeks stay
             locked and your logged runs are never deleted.
           </span>
           <div className="flex gap-2">

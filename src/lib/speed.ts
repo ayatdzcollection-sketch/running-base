@@ -159,7 +159,7 @@ export function evaluateReadiness(
     key: 'flare',
     label: 'No active flare (2 pain days in 7)',
     ok: !flared,
-    detail: flared ? 'flare window active — deload first' : 'clear',
+    detail: flared ? 'flare window active. Deload first' : 'clear',
   });
 
   // 6. Clearance gates on gated transitions (general model, hip-safe intact)
@@ -235,7 +235,7 @@ export const SPEED_TYPES: SpeedType[] = [
     name: 'Buildups',
     unlockState: 2,
     lowDose: true,
-    trains: 'Economy, coordination — near-zero fatigue',
+    trains: 'Economy, coordination (near-zero fatigue)',
     maxFreq: '2/wk',
     fastVolume: '~2 min total fast',
     downgrade: 'Any hip pain',
@@ -261,7 +261,7 @@ export const SPEED_TYPES: SpeedType[] = [
     maxFreq: '3/wk',
     fastVolume: '~4–5 min total fast',
     downgrade: 'Pain, glycolytic fatigue',
-    plain: '4–8 × 20–30s (cap 35s), full recovery. Still low-dose — flat ground only.',
+    plain: '4–8 × 20–30s (cap 35s), full recovery. Still low-dose, flat ground only.',
   },
   {
     key: 'hills',
@@ -274,7 +274,7 @@ export const SPEED_TYPES: SpeedType[] = [
     downgrade: 'ANY anterior-hip pain → hills lock + state drops to 4',
     plain:
       'Short, low grade, 4–6 × 8–15s. Caution: uphill running increases hip-flexor / iliopsoas ' +
-      'recruitment (Yokozawa, Fujii & Ae, J Biomech 2007) — the exact tissue you are recovering. ' +
+      'recruitment (Yokozawa, Fujii & Ae, J Biomech 2007). The exact tissue you are recovering. ' +
       'Hills are NOT your safe entry to speed: flat comes first, and hills wait for the hip to ' +
       'prove itself and for PT sign-off.',
     requires: ['hipSafe', 'ptSpeed'],
@@ -289,7 +289,7 @@ export const SPEED_TYPES: SpeedType[] = [
     maxFreq: '1/wk',
     fastVolume: '≤10% of weekly miles',
     downgrade: "Pain, HR won't settle, high easy-pace RPE",
-    plain: '3–5 × 5 min at threshold with 60–90s jog. The first real workout — earn it.',
+    plain: '3–5 × 5 min at threshold with 60–90s jog. The first real workout. Earn it.',
   },
   {
     key: 'tempo',
@@ -311,7 +311,7 @@ export const SPEED_TYPES: SpeedType[] = [
     maxFreq: '1/wk',
     fastVolume: 'Small',
     downgrade: 'Any flare, sleep/soreness spike',
-    plain: 'Reps of 3–5 min. Needs PT intensity clearance — the top of the ladder.',
+    plain: 'Reps of 3–5 min. Needs PT intensity clearance. The top of the ladder.',
     requires: ['ptIntensity'],
     extraGateLabel: 'PT intensity clearance',
   },

@@ -84,12 +84,12 @@ export function generateNextWeek({ runState, globals, today, settings }: Generat
   let baseVolume: number;
   if (!lastSustained) {
     baseVolume = 5 * t30 * 0.8; // no history at all — conservative floor
-    notes.push('No logged history — starting from a conservative floor.');
+    notes.push('No logged history. Starting from a conservative floor.');
   } else if (!lastWeek || lastWeek.weekStart < lastFullWeekStart) {
     // Missed last week: resume near the last sustained week. Never make up miles.
     baseVolume = lastSustained.miles;
     notes.push(
-      `You missed last week, so this resumes near your last sustained week (${lastSustained.miles.toFixed(1)} mi) — missed miles are never made up.`,
+      `You missed last week, so this resumes near your last sustained week (${lastSustained.miles.toFixed(1)} mi). Missed miles are never made up.`,
     );
   } else {
     // Nudge toward the recent trend, capped at +10% over last week. No leaps.
@@ -124,7 +124,7 @@ export function generateNextWeek({ runState, globals, today, settings }: Generat
   const long = flare ? floorToHalf(t30) : nextLongFrom(t30);
   notes.push(
     flare
-      ? `Long run clamped to your recent longest (${long} mi) — no ladder step during a flare.`
+      ? `Long run clamped to your recent longest (${long} mi). No ladder step during a flare.`
       : `Long run = ${long} mi: the largest half-mile step within ~110% of your trailing-30-day longest (${t30} mi).`,
   );
 
@@ -135,7 +135,7 @@ export function generateNextWeek({ runState, globals, today, settings }: Generat
   const longPct = long / weekTotal;
   if (longPct > TUNABLES.LONG_RUN_WEEK_PCT_FLAG) {
     warnings.push(
-      `Long run is ${(longPct * 100).toFixed(0)}% of the projected week (heuristic flag at 30% — weak evidence; your call).`,
+      `Long run is ${(longPct * 100).toFixed(0)}% of the projected week (heuristic flag at 30%, weak evidence; your call).`,
     );
   }
 
@@ -156,21 +156,21 @@ export function generateNextWeek({ runState, globals, today, settings }: Generat
       days.push({
         date, dayLabel, kind: 'long', miles: long,
         why: flare
-          ? 'Held at recent longest — flares settle with load reduction, not loading through.'
+          ? 'Held at recent longest. Flares settle with load reduction, not loading through.'
           : 'Ceiling from the trailing-30-day rule; the ladder only steps when the data earns it.',
       });
     } else if (i > lastRunIdx) {
       days.push({
         date, dayLabel, kind: 'rest', miles: null,
-        why: i === lastRunIdx + 1 ? 'Off. Let it absorb. Mobility / PT homework if cleared.' : 'Off — base-first structure keeps full rest days.',
+        why: i === lastRunIdx + 1 ? 'Off. Let it absorb. Mobility / PT homework if cleared.' : 'Off. Base-first structure keeps full rest days.',
       });
     } else {
       const m = Math.min(easyMiles[i], long); // no weekday run above the long-run ceiling
       days.push({
         date, dayLabel, kind: 'easy', miles: m,
         why: flareEasyOnly
-          ? 'Easy only — deload week. HR 140–150, hard cap 155.'
-          : 'Easy aerobic volume. HR 140–150, hard cap 155 — the base does the work.',
+          ? 'Easy only. Deload week. HR 140–150, hard cap 155.'
+          : 'Easy aerobic volume. HR 140–150, hard cap 155. The base does the work.',
       });
     }
   }
@@ -191,8 +191,8 @@ export function generateNextWeek({ runState, globals, today, settings }: Generat
   } else if (effectiveState < 7 || delayed) {
     notes.push(
       delayed
-        ? `Speed is delayed until ${globals.delayUntil} — zero hard sessions generated.`
-        : 'No hard intervals, hills, VO₂, or race-pace generated — speed state keeps them locked.',
+        ? `Speed is delayed until ${globals.delayUntil}. Zero hard sessions generated.`
+        : 'No hard intervals, hills, VO₂, or race-pace generated. Speed state keeps them locked.',
     );
   }
 
@@ -205,10 +205,10 @@ export function generateNextWeek({ runState, globals, today, settings }: Generat
     for (const i of strideDays) {
       if (days[i].kind === 'easy') {
         days[i].strides = spec;
-        days[i].why += ` Optional: ${spec.reps} × ${spec.durationS}s strides, full recovery — add-on, skip if anything niggles.`;
+        days[i].why += ` Optional: ${spec.reps} × ${spec.durationS}s strides, full recovery. Add-on, skip if anything niggles.`;
       }
     }
-    notes.push('Strides offered (optional): reps ≤ 8, ≤ 35s, ≥ 60s recovery — anything beyond that is a hidden anaerobic session and gets rejected.');
+    notes.push('Strides offered (optional): reps ≤ 8, ≤ 35s, ≥ 60s recovery. Anything beyond that is a hidden anaerobic session and gets rejected.');
   }
 
   weekTotal = days.reduce((s, d) => s + (d.miles ?? 0), 0);
@@ -303,11 +303,11 @@ export function checkAcceptedWeeks(
     }
     if (fastDay && (state < 6 || delayed || flare)) {
       reasons.push('A hard session is planned but speed is currently locked, delayed, or flared.');
-      suggested = suggested.map(d => (d.kind === 'threshold' ? { ...d, kind: 'easy' as const, why: 'Demoted to easy — speed is not unlocked yet.' } : d));
+      suggested = suggested.map(d => (d.kind === 'threshold' ? { ...d, kind: 'easy' as const, why: 'Demoted to easy. Speed is not unlocked yet.' } : d));
     }
     if (fastDay && longDay && Math.abs(daysBetween(fastDay.date, longDay.date)) < 2) {
       reasons.push('A hard session sits within 48h of the long run.');
-      suggested = suggested.map(d => (d.kind === 'threshold' ? { ...d, kind: 'easy' as const, why: 'Demoted to easy — too close to the long run.' } : d));
+      suggested = suggested.map(d => (d.kind === 'threshold' ? { ...d, kind: 'easy' as const, why: 'Demoted to easy. Too close to the long run.' } : d));
     }
 
     if (reasons.length) out.push({ weekStart: ws, original: days, suggested, reasons });
@@ -326,7 +326,7 @@ export function checkPlannedLongRunConflict(
   return {
     message:
       `The existing plan's long run (${plannedLong} mi) exceeds the current safe ceiling (${cap} mi). ` +
-      `Original plan preserved — confirm below to use the safer version.`,
+      `Original plan preserved. Confirm below to use the safer version.`,
     saferValue: cap,
   };
 }

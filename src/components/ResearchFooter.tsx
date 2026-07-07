@@ -13,8 +13,8 @@ export default function ResearchFooter({ hrBand, hrMax }: Props) {
       <Cite
         strength="MODERATE"
         source="Frandsen et al., Br J Sports Med 2025;59(17):1203–1210 (PMID 40623829)"
-        finding="Single-session spike — the load-bearing rule. 5,205 runners, 18 months: overuse-injury rate rose once a run passed ~110% of the trailing-30-day longest, while week-to-week ratio showed no association."
-        caveat="Cohort mean age 45.8 — a reasonable extrapolation to a teen, not a direct match."
+        finding="Single-session spike: the load-bearing rule. 5,205 runners, 18 months: overuse-injury rate rose once a run passed ~110% of the trailing-30-day longest, while week-to-week ratio showed no association."
+        caveat="Cohort mean age 45.8, a reasonable extrapolation to a teen, not a direct match."
       />
 
       <Cite
@@ -34,7 +34,7 @@ export default function ResearchFooter({ hrBand, hrMax }: Props) {
       <Cite
         strength="MODERATE (mechanistic)"
         source="Yokozawa, Fujii & Ae, J Biomech 2007;40:3467–3475"
-        finding="Uphill running raises hip-flexor / iliopsoas recruitment — the exact tissue being recovered. Hills therefore stay locked behind flat strides, a hip-safe flag, and PT sign-off."
+        finding="Uphill running raises hip-flexor / iliopsoas recruitment, the exact tissue being recovered. Hills therefore stay locked behind flat strides, a hip-safe flag, and PT sign-off."
         caveat="Biomechanics study, not an injury trial."
       />
 
@@ -42,7 +42,7 @@ export default function ResearchFooter({ hrBand, hrMax }: Props) {
         strength="MODERATE (extrapolated)"
         source="Silbernagel et al., Am J Sports Med 2007;35(6):897–906"
         finding="Pain-monitoring: loading pain up to ~5/10 is tolerable if it settles by next morning and doesn't rise week to week (Achilles/patellar evidence)."
-        caveat="Extrapolated to iliopsoas — we run a tighter 3/10 default."
+        caveat="Extrapolated to iliopsoas. We run a tighter 3/10 default."
       />
 
       <Cite
@@ -54,7 +54,7 @@ export default function ResearchFooter({ hrBand, hrMax }: Props) {
 
       <Cite
         strength="CONSENSUS"
-        source="Easy by HR — standard zone physiology"
+        source="Easy by HR, standard zone physiology"
         finding={`${hrBand} bpm is roughly ${Math.round((parseInt(hrBand) / hrMax) * 100)}–${Math.round((parseInt(hrBand.split('–')[1] || hrBand) / hrMax) * 100)}% of an estimated HRmax ~${hrMax}, below the first ventilatory threshold.`}
         caveat="Estimated, not lab-measured; pair with the conversational-effort check."
       />
@@ -62,8 +62,8 @@ export default function ResearchFooter({ hrBand, hrMax }: Props) {
       <Cite
         strength="MODERATE"
         source="Riegel race-time model · Runner's World 1977 / Athletics 1981"
-        finding="Projects times across distances via T₂ = T₁ × (D₂/D₁)^1.06 — about 80% accurate, best within one order of magnitude. Used to set paces for later blocks, not this block's runs."
-        caveat="A fitness ceiling, not a promise — needs a genuine all-out effort; youth projections applied cautiously."
+        finding="Projects times across distances via T₂ = T₁ × (D₂/D₁)^1.06, about 80% accurate, best within one order of magnitude. Used to set paces for later blocks, not this block's runs."
+        caveat="A fitness ceiling, not a promise. Needs a genuine all-out effort; youth projections applied cautiously."
       />
 
       <p className="pt-2 border-t border-border text-slate-700">

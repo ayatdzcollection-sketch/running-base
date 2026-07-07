@@ -33,8 +33,8 @@ export interface TodaySpeedRow {
 // Design copy per low-dose rung.
 const DETAIL: Record<string, string> = {
   buildups: 'End the run with 4–6 relaxed buildups to ~80%.',
-  shortStrides: 'After the run — 4 × 10s on flat grass, full recovery.',
-  flatStrides: 'After the run — 6 × 20s at mile-race feel, full recovery.',
+  shortStrides: 'After the run: 4 × 10s on flat grass, full recovery.',
+  flatStrides: 'After the run: 6 × 20s at mile-race feel, full recovery.',
 };
 
 function acceptedDay(acceptedWeeks: GlobalState['acceptedWeeks'], date: string): ProposedDay | null {

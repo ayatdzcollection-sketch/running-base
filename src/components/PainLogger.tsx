@@ -52,7 +52,7 @@ export default function PainLogger({
           <div className="h-px bg-[#101a2c]" />
           <div className="flex items-center gap-2.5 flex-wrap">
             <span className="text-[12.5px] text-slate-400 flex-1 min-w-[180px]">
-              Morning check — did {morningLabel}'s hip settle overnight? <span className="text-slate-600">(logged {morningPainDuring}/10)</span>
+              Morning check: did {morningLabel}'s hip settle overnight? <span className="text-slate-600">(logged {morningPainDuring}/10)</span>
             </span>
             <div className="flex gap-1.5">
               <button

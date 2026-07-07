@@ -22,7 +22,7 @@ export default function CapGauge({ current, cap, actual }: Props) {
   const under = cap - cur;
   const label =
     under > 0.05 ? `${under.toFixed(1)} mi under this week's ${cap.toFixed(1)} mi cap`
-    : cur - cap > 0.05 ? `${(cur - cap).toFixed(1)} mi OVER the cap — pull it back`
+    : cur - cap > 0.05 ? `${(cur - cap).toFixed(1)} mi OVER the cap. Pull it back`
     : `right at the ${cap.toFixed(1)} mi cap`;
 
   return (
@@ -30,7 +30,7 @@ export default function CapGauge({ current, cap, actual }: Props) {
       <svg viewBox="0 0 200 120" className="w-[232px] max-w-full block" aria-label={`${cur} mi vs ${cap} mi cap`}>
         <path d="M16,104 A84,84 0 0 1 184,104" fill="none" stroke="#1e293b" strokeWidth="12" strokeLinecap="round" />
         <path d="M16,104 A84,84 0 0 1 184,104" fill="none" stroke={color} strokeWidth="12" strokeLinecap="round"
-          strokeDasharray={dash} opacity={done ? 1 : 0.38}
+          strokeDasharray={dash} opacity={done ? 1 : 0.62}
           style={{ transition: 'stroke-dasharray .5s ease, opacity .3s ease' }} />
         <line x1="100" y1="104" x2={nx} y2={ny} stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" />
         <circle cx="100" cy="104" r="5" fill="#0b1220" stroke="#334155" strokeWidth="2" />

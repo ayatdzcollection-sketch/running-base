@@ -32,7 +32,7 @@ export default function AccessCodeModal({ onConfirm }: Props) {
 
         {/* Security disclaimer */}
         <div className="rounded-lg bg-rose-950/40 border border-rose-900/50 p-3 text-xs text-rose-300 leading-relaxed">
-          <strong className="text-rose-200">Heads up — this is convenience, not real security.</strong>{' '}
+          <strong className="text-rose-200">Heads up. This is convenience, not real security.</strong>{' '}
           The database key is embedded in the page (that's normal for Supabase static
           sites). Anyone who guesses your code can read your log. Fine for a training
           journal; don't use a password you care about.

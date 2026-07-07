@@ -20,8 +20,8 @@ const CHIP: Record<TypeStatus, string> = {
 };
 
 function unlockLine(t: SpeedType, status: TypeStatus): string {
-  if (status === 'allowed') return `Available now — ${t.maxFreq}, ${t.fastVolume}`;
-  if (status === 'delayed') return 'Unlocked, but on a delay window — resumes when the delay passes';
+  if (status === 'allowed') return `Available now: ${t.maxFreq}, ${t.fastVolume}`;
+  if (status === 'delayed') return 'Unlocked, but on a delay window. Resumes when the delay passes';
   const gate = t.extraGateLabel ? ` + ${t.extraGateLabel}` : '';
   return `Unlocks at speed state ${t.unlockState}${gate}`;
 }
@@ -50,7 +50,7 @@ export default function SpeedPlan({ runState, globals, today, onUpdateGlobals }:
   return (
     <section data-block="speed" className="card !rounded-2xl px-2 py-1.5 flex flex-col">
       <div className="flex items-baseline justify-between gap-2.5 px-2.5 pt-2 pb-2">
-        <span className="font-display text-[10.5px] font-semibold tracking-[0.12em] text-slate-500">SPEED PLAN — WHAT UNLOCKS NEXT</span>
+        <span className="font-display text-[10.5px] font-semibold tracking-[0.12em] text-slate-500">SPEED PLAN · WHAT UNLOCKS NEXT</span>
         <span className={`tag ${flare ? 'tag-rose' : 'tag-amber'} text-[10px]`}>state {state}</span>
       </div>
 
@@ -119,7 +119,7 @@ export default function SpeedPlan({ runState, globals, today, onUpdateGlobals }:
                     {readiness.items.map(item => (
                       <li key={item.key} className="flex items-start gap-2 text-[11px]">
                         <span className={item.ok ? 'text-teal-400' : 'text-rose-400'}>{item.ok ? '✓' : '✗'}</span>
-                        <span className="text-slate-500">{item.label} <span className="text-slate-700">— {item.detail}</span></span>
+                        <span className="text-slate-500">{item.label} <span className="text-slate-700">· {item.detail}</span></span>
                       </li>
                     ))}
                   </ul>

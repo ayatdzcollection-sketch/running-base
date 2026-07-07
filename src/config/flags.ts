@@ -21,10 +21,11 @@ export const FLAGS = {
   RACE_LOG: true,
   /**
    * Race-adaptive TRAINING (paces feeding prescriptions). HARD OFF this base
-   * block. Even when the user's `settings.adaptive` preference is on, effective
-   * adaptive behavior = `adaptive && RACE_ADAPTIVE_TRAINING`, so it stays inert.
-   * TODO(next block): only enable inside a post-base block that has its own
-   * design + the same safety gates; never let it raise a cap or unlock speed.
+   * block. Note: `settings.adaptive` is a persisted user PREFERENCE only — no
+   * engine path reads it, so race data cannot affect training regardless of
+   * this flag. When a post-base block is built, it must gate on this flag AND
+   * keep the same safety gates: race paces may inform easy/workout paces in
+   * that later block, never raise a cap or unlock a speed state.
    */
   RACE_ADAPTIVE_TRAINING: false,
 

@@ -49,7 +49,7 @@ export default function WeekProgress({ runState, plan, today, week, blockTotalTa
     <section data-block="week" className="card !rounded-2xl px-[18px] py-4 flex flex-col gap-[11px]">
       <div className="flex justify-between items-baseline gap-2.5">
         <span className="font-display text-[10.5px] font-semibold tracking-[0.12em] text-slate-500">
-          {isCurrent ? `THIS WEEK — ${curWeek.weekNum} OF ${plan.weeks.length}` : 'THE BLOCK'}
+          {isCurrent ? `THIS WEEK · ${curWeek.weekNum} OF ${plan.weeks.length}` : 'THE BLOCK'}
         </span>
         <span className="text-[11.5px] text-slate-500">
           {runsLeft} run day{runsLeft === 1 ? '' : 's'} left

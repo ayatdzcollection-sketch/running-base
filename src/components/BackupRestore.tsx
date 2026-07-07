@@ -18,7 +18,7 @@ export default function BackupRestore({ runState, globals, onRestore }: Props) {
     const text = JSON.stringify(buildBackup(runState, globals), null, 2);
     navigator.clipboard.writeText(text).then(
       () => setMsg('Copied to clipboard ✓'),
-      () => setMsg('Copy failed — select and copy the text above manually'),
+      () => setMsg('Copy failed. Select and copy the text above manually'),
     );
   }
 
@@ -30,7 +30,7 @@ export default function BackupRestore({ runState, globals, onRestore }: Props) {
       setMsg('Restored ✓ (Supabase sync will happen in background)');
       setImportText('');
     } catch {
-      setMsg('Invalid format — paste the full exported JSON.');
+      setMsg('Invalid format. Paste the full exported JSON.');
     }
   }
 
@@ -48,7 +48,7 @@ export default function BackupRestore({ runState, globals, onRestore }: Props) {
       {open && (
         <div className="px-2.5 pb-3 space-y-3 border-t border-[#101a2c] pt-3">
           <p className="text-[11.5px] leading-relaxed text-slate-500">
-            Safety net — export copies your log (runs + speed-plan state) as JSON; paste it back to
+            Safety net: export copies your log (runs + speed-plan state) as JSON; paste it back to
             restore. Useful when switching devices or for an offline backup; old-format exports still
             restore fine.
           </p>

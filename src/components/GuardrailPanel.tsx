@@ -6,7 +6,7 @@ interface Props {
 
 const RULES = (capPct: number, hrBand: string, hrHardCap: number) => [
   { title: 'Long-run cap', body: `No single run exceeds ${capPct}% of your longest in the last 30 days. The gauge is the cap.` },
-  { title: 'HR ceiling, not pace', body: `${hrBand} bpm, hard cap ${hrHardCap}. If the talk test fails, slow down — pace is irrelevant this block.` },
+  { title: 'HR ceiling, not pace', body: `${hrBand} bpm, hard cap ${hrHardCap}. If the talk test fails, slow down. Pace is irrelevant this block.` },
   { title: 'No speed until cleared', body: 'Every rung of the ladder waits for pain-free runs, not motivation.' },
   { title: 'Flare = repeat, not push', body: 'Any flare eases the plan back a week. Repeating a week is the plan working, not failing.' },
 ];

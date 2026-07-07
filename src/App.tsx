@@ -335,7 +335,7 @@ export default function App() {
   const syncLabel =
     !hasSupabase ? 'local only'
     : syncStatus === 'syncing' ? 'syncing…'
-    : syncStatus === 'offline' ? 'offline — will sync'
+    : syncStatus === 'offline' ? 'offline, will sync'
     : syncStatus === 'error' ? 'sync error'
     : 'synced';
   const syncTone =
@@ -483,7 +483,7 @@ export default function App() {
             <div className="rounded-2xl border border-rose-500/30 bg-rose-500/[0.08] px-4 py-3.5 flex flex-col gap-[5px]">
               <span className="font-display text-[10.5px] font-semibold tracking-[0.12em] text-rose-400">FLARE · DELOAD ACTIVE</span>
               <p className="m-0 text-[13px] leading-relaxed text-slate-200">
-                We've eased your plan to protect your hip. This is normal — this week repeats at reduced volume. Check in with your PT.
+                We've eased your plan to protect your hip. This is normal. This week repeats at reduced volume. Check in with your PT.
               </p>
             </div>
           ) : breach ? (
@@ -579,7 +579,7 @@ function BonusDayCard({ day, entry, today, onUpdate }: BonusProps) {
       <div className="w-12 text-right shrink-0">
         {effective != null
           ? <span className="font-display text-sm tabular-nums text-teal-400">{Number(effective).toFixed(1)}</span>
-          : <span className="text-slate-700 text-sm">—</span>}
+          : <span className="text-slate-700 text-sm">–</span>}
       </div>
     </div>
   );

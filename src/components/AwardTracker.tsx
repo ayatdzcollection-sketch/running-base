@@ -54,7 +54,7 @@ export default function AwardTracker({ runState, plan, award }: Props) {
           </div>
         </div>
         <div
-          className="h-full rounded-full bg-teal-600/50 transition-all"
+          className="h-full rounded-full bg-teal-400/60 transition-all"
           style={{ width: `${pct * 100}%` }}
         />
       </div>
@@ -71,7 +71,7 @@ export default function AwardTracker({ runState, plan, award }: Props) {
 
       <p className="text-[11px] text-slate-600 leading-relaxed border-t border-border pt-2">
         Safe plan delivers ~{Math.round(award.safePlanDelivery)} mi in this window (dashed marker).
-        Closing the gap needs pushing past 30 mpw with no down weeks — the exact load that flares
+        Closing the gap needs pushing past 30 mpw with no down weeks, the exact load that flares
         the hip.{' '}
         <strong className="text-slate-500">Not the priority. Don't chase it.</strong>
       </p>

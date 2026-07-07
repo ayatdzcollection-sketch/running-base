@@ -49,7 +49,7 @@ export default function LayoutEditor({ layoutOrder, layoutOff, onChange }: Props
       {open && (
         <div className="px-3.5 pb-2">
           <span className="block text-[11px] leading-relaxed text-slate-600 pt-0.5 pb-1.5">
-            Reorder blocks or hide them. Greyed rows are proposed — not built yet.
+            Reorder blocks or hide them. Greyed rows are proposed, not built yet.
           </span>
           <div aria-live="polite" className="sr-only">{announce}</div>
           {order.map((id, i) => {
