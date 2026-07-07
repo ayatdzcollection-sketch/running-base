@@ -437,7 +437,7 @@ export default function App() {
           layoutSection={
             <LayoutEditor
               layoutOrder={settings?.layoutOrder}
-              layoutOff={settings?.layoutOff}
+              layoutOff={settings?.layoutOff ?? STUB_IDS}
               onChange={saveLayout}
             />
           }

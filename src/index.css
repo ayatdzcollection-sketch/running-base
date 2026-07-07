@@ -13,6 +13,7 @@
     margin: 0;
     background: #020617;
     color: #e2e8f0;
+    -webkit-font-smoothing: antialiased;
   }
   /* Remove number input spinners */
   input[type='number']::-webkit-inner-spin-button,
@@ -23,14 +24,25 @@
     -moz-appearance: textfield;
     appearance: textfield;
   }
+  /* Calm, consistent focus ring (design uses a sky outline). */
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid #38bdf8;
+    outline-offset: 2px;
+  }
+  button:active { transform: scale(0.985); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+  }
 }
 
 @layer components {
   .card {
-    @apply bg-[#0a101e] border border-[#1e293b] rounded-xl p-4;
+    @apply bg-[#0a101e] border border-[#1e293b] rounded-2xl p-4;
   }
   .tag {
-    @apply inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-medium;
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold;
     font-family: 'Space Grotesk', system-ui, sans-serif;
   }
   .tag-teal  { @apply bg-teal-950/60  text-teal-400  border border-teal-900/40;  }
