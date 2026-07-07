@@ -22,6 +22,7 @@ import {
 } from './lib/metrics';
 import { morningAnswer } from './lib/subjective';
 import { enforceGateConsistency } from './lib/speed';
+import { computeTodaySpeed } from './lib/todaySpeed';
 import AccessCodeModal from './components/AccessCodeModal';
 import SettingsPanel from './components/SettingsPanel';
 import TodayCard from './components/TodayCard';
@@ -53,6 +54,11 @@ export default function App() {
 
   const todayDay = plan.dateToDay.get(today) ?? null;
   const todayWeek = plan.dateToWeek.get(today) ?? null;
+
+  // Today's optional speed dose (Stage D) — display-only, low-dose add-on.
+  const todaySpeed = FLAGS.TODAY_SPEED
+    ? computeTodaySpeed({ runState, globals, today, plan, acceptedWeeks: globals.acceptedWeeks })
+    : null;
 
   // ── Live derived safety metrics (§2, §3) ─────────────────
   // Today's ceiling comes from the 30 days BEFORE today (excludes today's
@@ -234,6 +240,30 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streak]);
 
+  // Maintain lastLongRunDate / lastFastSessionDate from the plan + log. These
+  // feed the 48h long-run spacing used by the generator; previously unwritten.
+  useEffect(() => {
+    let lastLong: string | null = null;
+    let lastFast: string | null = null;
+    const acc = globals.acceptedWeeks ?? {};
+    const accByDate = new Map<string, string>(); // date → kind
+    for (const days of Object.values(acc)) for (const d of days) accByDate.set(d.date, d.kind);
+    for (const [date, e] of Object.entries(runState)) {
+      if (date > today || !(e.done || e.miles_actual != null)) continue;
+      const planDay = plan.dateToDay.get(date);
+      const kind = accByDate.get(date);
+      const isLong = kind === 'long' || (!kind && planDay?.isLongRun);
+      const isFast = kind === 'threshold';
+      if (isLong && (!lastLong || date > lastLong)) lastLong = date;
+      if (isFast && (!lastFast || date > lastFast)) lastFast = date;
+    }
+    const patch: Partial<GlobalState> = {};
+    if (lastLong && lastLong !== globals.lastLongRunDate) patch.lastLongRunDate = lastLong;
+    if (lastFast && lastFast !== globals.lastFastSessionDate) patch.lastFastSessionDate = lastFast;
+    if (Object.keys(patch).length) updateGlobals(patch);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runState, today]);
+
   // ── Restore from export (v1 or v2 backup) ─────────────────
   const handleRestore = useCallback(
     (imported: RunState, importedGlobals: GlobalState | null) => {
@@ -370,6 +400,7 @@ export default function App() {
             trailingLongest={trailingLongest}
             painCap={globals.painCap}
             speedState={globals.speedState}
+            todaySpeed={todaySpeed}
           />
 
           {/* Stats row */}

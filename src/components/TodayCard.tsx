@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { PlanDay, PlanWeek, RunEntry } from '../lib/types';
+import type { TodaySpeedRow } from '../lib/todaySpeed';
 import CapGauge from './CapGauge';
 import SubjectiveRow from './SubjectiveRow';
 
@@ -17,11 +18,13 @@ interface Props {
   trailingLongest: number;
   painCap: number;
   speedState: number;
+  /** Today's optional speed dose (Stage D); null = nothing shown. */
+  todaySpeed?: TodaySpeedRow | null;
 }
 
 export default function TodayCard({
   today, day, entry, onUpdate, planStart, planEnd,
-  nextLong, trailingLongest, painCap, speedState,
+  nextLong, trailingLongest, painCap, speedState, todaySpeed,
 }: Props) {
   const [localMiles, setLocalMiles] = useState(
     entry?.miles_actual != null ? String(entry.miles_actual) : ''
@@ -145,6 +148,29 @@ export default function TodayCard({
         <span className="text-rose-300 font-semibold">HR governor:</span>{' '}
         keep 140–150 bpm · hard cap 155 · talk-test not enough
       </div>
+
+      {/* Today's optional speed dose (Stage D) */}
+      {todaySpeed && (
+        <div className={`flex items-center gap-3 rounded-xl px-3 py-2.5 ${
+          todaySpeed.dose === 'low'
+            ? 'bg-teal-500/[0.06] border border-teal-500/20'
+            : 'bg-card-alt border border-border'}`}>
+          <span className={`shrink-0 inline-flex items-center px-2 py-0.5 rounded-full font-display
+            text-[9.5px] font-semibold tracking-wider ${
+            todaySpeed.dose === 'low'
+              ? 'bg-teal-500/[0.12] text-teal-300 border border-teal-500/30'
+              : 'bg-slate-500/10 text-slate-500 border border-border'}`}>
+            {todaySpeed.dose === 'low' ? 'OPTIONAL' : 'N/A'}
+          </span>
+          <div className="min-w-0 flex flex-col">
+            <span className={`font-display text-[12.5px] font-semibold ${
+              todaySpeed.dose === 'low' ? 'text-slate-200' : 'text-slate-400'}`}>
+              {todaySpeed.name}
+            </span>
+            <span className="text-[11.5px] leading-snug text-slate-500">{todaySpeed.detail}</span>
+          </div>
+        </div>
+      )}
 
       {/* Gauge + actions */}
       <div className="flex flex-col sm:flex-row items-center gap-6">
