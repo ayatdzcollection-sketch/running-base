@@ -30,6 +30,8 @@ export function defaultGlobalState(nowIso: string): GlobalState {
     delayUntil: null,
     readiness: {},
     acceptedWeeks: {},
+    settings: null,   // v3: null = pure static plan (original behavior)
+    races: [],        // v3: display-only race log
     updated_at: nowIso,
   };
 }
@@ -58,6 +60,9 @@ export function migrateGlobalState(raw: unknown, nowIso: string): GlobalState {
   out.painCap = Number.isFinite(cap) && cap >= 0 && cap <= 10 ? cap : defaults.painCap;
   if (!isRecord(out.readiness)) out.readiness = {};
   if (!isRecord(out.acceptedWeeks)) out.acceptedWeeks = {};
+  // v3 additive fields — clamp corrupt shapes without discarding valid data.
+  if (!Array.isArray(out.races)) out.races = [];
+  if (out.settings !== null && !isRecord(out.settings)) out.settings = null;
 
   // Stamp version LAST so a partially-old object still gets every key above.
   const ver = Number(out.schemaVersion);

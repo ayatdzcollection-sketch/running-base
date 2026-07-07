@@ -4,7 +4,7 @@ import {
   getStoredCode, setStoredCode,
   loadLocal, saveLocal,
   loadGlobalLocal, saveGlobalLocal,
-  applySeed, mergeStates,
+  applySeed, mergeStates, mergeGlobalStates,
   pullFromSupabase, upsertEntry, upsertMany,
   pullGlobalFromSupabase, upsertGlobalToSupabase,
   debounce,
@@ -81,17 +81,18 @@ export default function App() {
         setSyncStatus('offline');
       });
 
-    // Global state: latest updated_at wins, exactly like run entries.
+    // Global state: field-aware merge, so a newer remote speed-layer blob can't
+    // clobber locally-newer settings/races/acceptedWeeks. Push the union back.
     pullGlobalFromSupabase(accessCode)
       .then(remote => {
         if (!remote) return;
         setGlobals(prev => {
-          if (remote.updated_at > prev.updated_at) {
-            saveGlobalLocal(remote);
-            return remote;
-          }
-          upsertGlobalToSupabase(prev, accessCode).catch(console.error);
-          return prev;
+          const merged = mergeGlobalStates(prev, remote);
+          saveGlobalLocal(merged);
+          // Non-destructive: pushing the merged union back is idempotent and
+          // ensures the server ends up with both devices' data.
+          upsertGlobalToSupabase(merged, accessCode).catch(console.error);
+          return merged;
         });
       })
       .catch(err => console.warn('Global state pull failed:', err));

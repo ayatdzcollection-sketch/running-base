@@ -63,6 +63,52 @@ export interface GlobalState {
   /** Confirmed generator output, keyed by week start (Mon, YYYY-MM-DD).
    *  Additive — the static plan config is never rewritten. */
   acceptedWeeks: Record<string, ProposedDay[]>;
+  // ── v3 additive (all optional; null/absent = original behavior) ──
+  /** User plan settings (Stage B). null = pure static plan. */
+  settings?: RawSettings | null;
+  /** Logged race results (Stage F). Display-only — never an engine input. */
+  races?: RaceResult[];
+  updated_at: string;
+}
+
+// ── v3: plan settings (raw, as typed by the user) ────────────
+// Every consumer reads the CLAMPED effective view (see lib/settings.ts);
+// raw is persisted verbatim so the user never loses their input.
+export interface RawSettings {
+  version: 1;
+  // award (display-only, safety-subordinate)
+  goalMiles: number;
+  safeDelivery: number;
+  // plan shape
+  daysPerWeek: number;   // run days/week (3–6)
+  blockWeeks: number;    // 4–12
+  downEvery: number;     // down week after N build weeks (3–4)
+  startDate: string;     // Monday YYYY-MM-DD
+  startMpw: number;      // first week's miles
+  peakMpw: number;       // ceiling the build aims at
+  buildStep: number;     // absolute mpw added per build week
+  trailingLongest: number; // "starting longest run" seed for the long-run ladder
+  // governors (steppers allow a wide range; effectiveSettings clamps to safe)
+  hrEasyMin: number;
+  hrEasyMax: number;
+  hrHardCap: number;
+  hrMax: number;
+  capPct: number;        // long-run cap as % of trailing-30 longest
+  pfNeeded: number;      // pain-free streak to unlock the next speed step
+  adaptive: boolean;     // race-adaptive preference (inert this block; see FLAGS)
+  // home layout
+  layoutOrder: string[]; // block ids in display order
+  layoutOff: string[];   // hidden block ids
+  updated_at: string;
+}
+
+// ── v3: race results (display-only projections) ──────────────
+export interface RaceResult {
+  id: string;
+  date: string;          // YYYY-MM-DD or short label
+  distanceMi: number;
+  timeSec: number;
+  label?: string;
   updated_at: string;
 }
 

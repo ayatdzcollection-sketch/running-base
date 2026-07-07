@@ -1,4 +1,4 @@
-import type { GlobalState, RunEntry, RunState } from './types';
+import type { GlobalState, RaceResult, RunEntry, RunState } from './types';
 import { migrateGlobalState } from './migrate';
 import { supabase } from './supabase';
 
@@ -93,7 +93,7 @@ function preserveSubjective(winner: RunEntry, loser: RunEntry): RunEntry {
   for (const f of V2_SUBJECTIVE_FIELDS) {
     if (winner[f] == null && loser[f] != null) {
       if (out === winner) out = { ...winner };
-      (out as Record<string, unknown>)[f] = loser[f];
+      (out as unknown as Record<string, unknown>)[f] = loser[f];
     }
   }
   return out;
@@ -111,6 +111,39 @@ export function mergeStates(local: RunState, remote: RunEntry[]): RunState {
     // else: local is newer-or-equal — keep it (already field-complete).
   }
   return merged;
+}
+
+// ── Global-state merge: field-aware, not whole-blob last-write-wins ──
+// The base blob is the newer of the two, but settings, races, and
+// acceptedWeeks reconcile per-field so a newer speed-layer blob can never
+// clobber locally-newer settings, and neither device loses race/accepted
+// data the other hasn't seen. Same non-destructive spirit as mergeStates.
+
+function mergeRacesById(local: RaceResult[], remote: RaceResult[]): RaceResult[] {
+  const byId = new Map<string, RaceResult>();
+  for (const r of local) byId.set(r.id, r);
+  for (const r of remote) {
+    const ex = byId.get(r.id);
+    if (!ex || r.updated_at > ex.updated_at) byId.set(r.id, r);
+  }
+  return [...byId.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+export function mergeGlobalStates(local: GlobalState, remote: GlobalState): GlobalState {
+  const base: GlobalState = remote.updated_at > local.updated_at ? { ...remote } : { ...local };
+
+  // settings: newest settings.updated_at wins, independent of the blob winner.
+  const ls = local.settings ?? null;
+  const rs = remote.settings ?? null;
+  base.settings = ls && rs ? (rs.updated_at > ls.updated_at ? rs : ls) : (ls ?? rs);
+
+  // races: merge by id, newest updated_at per id.
+  base.races = mergeRacesById(local.races ?? [], remote.races ?? []);
+
+  // acceptedWeeks: union of week keys; local wins ties (local edits are freshest).
+  base.acceptedWeeks = { ...(remote.acceptedWeeks ?? {}), ...(local.acceptedWeeks ?? {}) };
+
+  return base;
 }
 
 // ── Supabase row mapping (v2 columns are snake_case) ───────

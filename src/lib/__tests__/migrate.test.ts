@@ -45,6 +45,28 @@ describe('additive migration (§1 — prove it is safe)', () => {
     expect(g.futureField).toBe('keep me');
   });
 
+  it('fills v3 settings (null) and races ([]) without touching other keys', () => {
+    const g = migrateGlobalState({ speedState: 3 }, NOW);
+    expect(g.settings ?? null).toBeNull();
+    expect(g.races).toEqual([]);
+    expect(g.speedState).toBe(3);
+  });
+
+  it('preserves a populated settings/races blob and clamps corrupt shapes', () => {
+    const raw = {
+      settings: { version: 1, goalMiles: 200 },
+      races: [{ id: 'a', date: '2026-06-20', distanceMi: 3.1, timeSec: 1170, updated_at: NOW }],
+    };
+    const g = migrateGlobalState(raw, NOW);
+    expect((g.settings as { goalMiles: number }).goalMiles).toBe(200);
+    expect(g.races?.length).toBe(1);
+    // corrupt shapes reset, not discarded-wholesale
+    const bad = migrateGlobalState({ settings: 'nope', races: 'nope', speedState: 2 }, NOW);
+    expect(bad.settings ?? null).toBeNull();
+    expect(bad.races).toEqual([]);
+    expect(bad.speedState).toBe(2);
+  });
+
   it('a populated acceptedWeeks + delayUntil survive migration unchanged', () => {
     const accepted = {
       '2026-07-13': [
