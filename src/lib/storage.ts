@@ -76,13 +76,39 @@ export function applySeed(existing: RunState): RunState {
 
 // ── Merge: most-recent updated_at wins per date ────────────
 
+// v2 subjective fields the legacy-column Supabase fallback cannot carry.
+// (upsertEntry drops to legacy columns when the v2 SQL migration hasn't run,
+// so a remote row can come back NEWER but stripped of these.)
+const V2_SUBJECTIVE_FIELDS = ['rpe', 'painDuring', 'painNextAM', 'didStrides', 'strideNote'] as const;
+
+/**
+ * When a newer remote row wins, keep any v2 subjective value the local row has
+ * that the winner lacks. This makes the merge FIELD-preserving: a legacy-path
+ * sync can never silently drop logged pain/effort data. Core fields (done,
+ * miles_actual) always sync, so only the subjective fields need protecting.
+ * Safe direction: we bias toward keeping logged pain, never losing it.
+ */
+function preserveSubjective(winner: RunEntry, loser: RunEntry): RunEntry {
+  let out: RunEntry = winner;
+  for (const f of V2_SUBJECTIVE_FIELDS) {
+    if (winner[f] == null && loser[f] != null) {
+      if (out === winner) out = { ...winner };
+      (out as Record<string, unknown>)[f] = loser[f];
+    }
+  }
+  return out;
+}
+
 export function mergeStates(local: RunState, remote: RunEntry[]): RunState {
   const merged: RunState = { ...local };
   for (const row of remote) {
     const existing = merged[row.date];
-    if (!existing || row.updated_at > existing.updated_at) {
+    if (!existing) {
       merged[row.date] = row;
+    } else if (row.updated_at > existing.updated_at) {
+      merged[row.date] = preserveSubjective(row, existing);
     }
+    // else: local is newer-or-equal — keep it (already field-complete).
   }
   return merged;
 }

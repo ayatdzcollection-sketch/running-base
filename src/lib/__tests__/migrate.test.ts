@@ -45,6 +45,18 @@ describe('additive migration (§1 — prove it is safe)', () => {
     expect(g.futureField).toBe('keep me');
   });
 
+  it('a populated acceptedWeeks + delayUntil survive migration unchanged', () => {
+    const accepted = {
+      '2026-07-13': [
+        { date: '2026-07-13', dayLabel: 'Mon', kind: 'easy', miles: 4.5, why: 'x' },
+        { date: '2026-07-17', dayLabel: 'Fri', kind: 'long', miles: 5.0, why: 'y' },
+      ],
+    };
+    const g = migrateGlobalState({ acceptedWeeks: accepted, delayUntil: '2026-07-20' }, NOW);
+    expect(g.acceptedWeeks).toEqual(accepted);
+    expect(g.delayUntil).toBe('2026-07-20');
+  });
+
   it('never downgrades a future schemaVersion', () => {
     const g = migrateGlobalState({ schemaVersion: 99 }, NOW);
     expect(g.schemaVersion).toBe(99);

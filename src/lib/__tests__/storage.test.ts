@@ -59,4 +59,21 @@ describe('merge & seed still protect existing data', () => {
     const seeded = applySeed(existing);
     expect(seeded['2026-06-29'].miles_actual).toBe(4.2);
   });
+
+  it('a newer remote row stripped of v2 fields keeps local subjective data', () => {
+    const local: RunState = {
+      '2026-07-06': {
+        date: '2026-07-06', done: true, miles_actual: 4.5, updated_at: '2026-07-06T12:00:00Z',
+        rpe: 4, painDuring: 2,
+      },
+    };
+    // Legacy-column fallback path: newer updated_at, no subjective columns.
+    const remote = [
+      { date: '2026-07-06', done: true, miles_actual: 5, updated_at: '2026-07-06T20:00:00Z' },
+    ];
+    const merged = mergeStates(local, remote);
+    expect(merged['2026-07-06'].miles_actual).toBe(5); // newer core wins
+    expect(merged['2026-07-06'].painDuring).toBe(2);    // local pain preserved
+    expect(merged['2026-07-06'].rpe).toBe(4);
+  });
 });
