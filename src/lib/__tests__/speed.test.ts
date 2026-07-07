@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { canSetState, evaluateReadiness, typeStatus, SPEED_TYPES, validStrides } from '../speed';
+import { canSetState, evaluateReadiness, typeStatus, SPEED_TYPES, validStrides, enforceGateConsistency } from '../speed';
 import { defaultGlobalState } from '../migrate';
+import { defaultSettings } from '../settings';
 import type { GlobalState, RunState, SpeedStateNum } from '../types';
 
 const NOW = '2026-07-07T12:00:00Z';
@@ -121,6 +122,43 @@ describe('speed type gating', () => {
     expect(hills.plain).toMatch(/iliopsoas/);
     expect(hills.plain).toMatch(/Yokozawa/);
     expect(hills.downgrade).toMatch(/drops to 4/);
+  });
+});
+
+describe('gate consistency — downgrade when a clearance is revoked', () => {
+  it('state 5 → 4 when the hip clearance is incomplete', () => {
+    expect(enforceGateConsistency(globals({ speedState: 5, hipSafeFlag: false, ptClearedSpeed: true }))).toEqual({ speedState: 4 });
+    expect(enforceGateConsistency(globals({ speedState: 5, hipSafeFlag: true, ptClearedSpeed: false }))).toEqual({ speedState: 4 });
+    expect(enforceGateConsistency(globals({ speedState: 5, hipSafeFlag: true, ptClearedSpeed: true }))).toBeNull();
+  });
+  it('state 7 → 6 when only PT intensity clearance is missing', () => {
+    expect(enforceGateConsistency(globals({
+      speedState: 7, hipSafeFlag: true, ptClearedSpeed: true, ptClearedIntensity: false,
+    }))).toEqual({ speedState: 6 });
+  });
+  it('state 7 drops all the way to 4 if the hip clearance is missing', () => {
+    expect(enforceGateConsistency(globals({
+      speedState: 7, hipSafeFlag: false, ptClearedSpeed: true, ptClearedIntensity: true,
+    }))).toEqual({ speedState: 4 });
+  });
+  it('never touches flare (state 8) or a consistent low state', () => {
+    expect(enforceGateConsistency(globals({ speedState: 8, hipSafeFlag: false }))).toBeNull();
+    expect(enforceGateConsistency(globals({ speedState: 3 }))).toBeNull();
+  });
+});
+
+describe('pfNeeded setting can only tighten the streak gate', () => {
+  it('a stricter pfNeeded blocks an otherwise-ready upward move', () => {
+    const strict = { ...defaultSettings(NOW), pfNeeded: 5 };
+    expect(canSetState(2, painFreeRuns(4), globals(), TODAY).allowed).toBe(true);          // built-in (3)
+    expect(canSetState(2, painFreeRuns(4), globals(), TODAY, strict).allowed).toBe(false); // needs 5
+    expect(canSetState(2, painFreeRuns(5), globals(), TODAY, strict).allowed).toBe(true);  // meets 5
+  });
+  it('a laxer pfNeeded cannot drop below the built-in requirement', () => {
+    const lax = { ...defaultSettings(NOW), pfNeeded: 1 };
+    // Built-in requirement for state 5 is 4; pfNeeded 1 cannot loosen it.
+    const report = evaluateReadiness(5, painFreeRuns(2), globals({ speedState: 4 }), TODAY, lax);
+    expect(report.items.find(i => i.key === 'streak')?.ok).toBe(false);
   });
 });
 

@@ -21,6 +21,7 @@ import {
   flareActive, recentBreach, addDaysStr, pendingMorningCheck,
 } from './lib/metrics';
 import { morningAnswer } from './lib/subjective';
+import { enforceGateConsistency } from './lib/speed';
 import AccessCodeModal from './components/AccessCodeModal';
 import SettingsPanel from './components/SettingsPanel';
 import TodayCard from './components/TodayCard';
@@ -195,15 +196,25 @@ export default function App() {
   }, []);
 
   // ── Auto-enforcement (§3, §4) ─────────────────────────────
-  // 1. Two pain-cap breaches in 7 days → forced state 8 (flare/deload).
-  // 2. While hills are unlocked (state ≥ 5): ANY logged hip pain in the
-  //    last 7 days locks hills and drops the state to 4 (Yokozawa caution).
+  // Priority order, single effect to avoid render loops:
+  //  1. Two pain-cap breaches in 7 days → forced state 8 (flare/deload) — wins.
+  //  2. A clearance revoked under the current state → downgrade to the safe
+  //     pre-gate state (hills need hip-safe + PT speed; structured needs PT
+  //     intensity).
+  //  3. While hills are unlocked (state ≥ 5): ANY logged hip pain in the last
+  //     7 days locks hills and drops the state to 4 (Yokozawa caution).
   useEffect(() => {
     if (flare && globals.speedState !== 8) {
       updateGlobals({ speedState: 8, painFreeEasyRunStreak: 0 });
       return;
     }
-    if (!flare && globals.speedState >= 5 && globals.speedState !== 8) {
+    if (flare) return;
+    const gatePatch = enforceGateConsistency(globals);
+    if (gatePatch) {
+      updateGlobals(gatePatch);
+      return;
+    }
+    if (globals.speedState >= 5) {
       const from = addDaysStr(today, -7);
       const anyHipPain = Object.values(runState).some(
         e => e.date > from && e.date <= today &&
@@ -212,7 +223,7 @@ export default function App() {
       if (anyHipPain) updateGlobals({ speedState: 4 });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flare, globals.speedState, runState, today]);
+  }, [flare, globals.speedState, globals.hipSafeFlag, globals.ptClearedSpeed, globals.ptClearedIntensity, runState, today]);
 
   // Keep the synced streak snapshot roughly current (display/debug only —
   // the live value is always recomputed from the log).
@@ -335,11 +346,14 @@ export default function App() {
             <MorningCheck
               date={morningCheckDate}
               painDuring={runState[morningCheckDate]?.painDuring ?? 0}
-              onAnswer={settled =>
+              onAnswer={settled => {
+                // Never overwrite an already-answered morning value (guards a
+                // sync race between the prompt tap and a remote pull).
+                if (runState[morningCheckDate]?.painNextAM != null) return;
                 updateEntry(morningCheckDate, {
                   painNextAM: morningAnswer(settled, runState[morningCheckDate]?.painDuring ?? 0),
-                })
-              }
+                });
+              }}
             />
           )}
 

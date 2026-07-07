@@ -17,15 +17,24 @@ export default function SpeedPlan({ runState, globals, today, onUpdateGlobals }:
   const [open, setOpen] = useState(false);
   const [showChecklist, setShowChecklist] = useState(false);
 
+  const settings = globals.settings ?? null;
   const state = globals.speedState;
   const streak = painFreeStreak(runState, globals.painCap);
   const upTarget = Math.min(state + 1, 8) as SpeedStateNum;
-  const readiness = state < 8 ? evaluateReadiness(upTarget, runState, globals, today) : null;
-  const up = state < 7 ? canSetState(upTarget, runState, globals, today) : null;
+  const readiness = state < 8 ? evaluateReadiness(upTarget, runState, globals, today, settings) : null;
+  const up = state < 7 ? canSetState(upTarget, runState, globals, today, settings) : null;
 
   function setState(target: SpeedStateNum) {
-    const check = canSetState(target, runState, globals, today);
+    const check = canSetState(target, runState, globals, today, settings);
     if (check.allowed) onUpdateGlobals({ speedState: target });
+  }
+
+  // Turning a clearance ON is a safety decision — confirm it reflects real PT
+  // sign-off. Turning OFF applies immediately; the app effect then downgrades
+  // the state if a gate is now unmet.
+  function setClearance(key: 'hipSafeFlag' | 'ptClearedSpeed' | 'ptClearedIntensity', v: boolean) {
+    if (v && !window.confirm('Only turn this on after your PT has explicitly cleared it. Confirm?')) return;
+    onUpdateGlobals({ [key]: v });
   }
 
   return (
@@ -132,19 +141,19 @@ export default function SpeedPlan({ runState, globals, today, onUpdateGlobals }:
               label="Hip-safe flag"
               hint="you + PT agree the hip tolerates load"
               value={globals.hipSafeFlag}
-              onChange={v => onUpdateGlobals({ hipSafeFlag: v })}
+              onChange={v => setClearance('hipSafeFlag', v)}
             />
             <GateToggle
               label="PT cleared speed"
               hint="needed with hip-safe for hills (4→5)"
               value={globals.ptClearedSpeed}
-              onChange={v => onUpdateGlobals({ ptClearedSpeed: v })}
+              onChange={v => setClearance('ptClearedSpeed', v)}
             />
             <GateToggle
               label="PT cleared intensity"
               hint="needed for structured speed (6→7)"
               value={globals.ptClearedIntensity}
-              onChange={v => onUpdateGlobals({ ptClearedIntensity: v })}
+              onChange={v => setClearance('ptClearedIntensity', v)}
             />
             <label className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
               <span>

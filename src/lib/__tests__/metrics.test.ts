@@ -170,6 +170,15 @@ describe('pendingMorningCheck (one-tap settle prompt)', () => {
     };
     expect(pendingMorningCheck(state, '2026-07-07')).toBe('2026-07-06');
   });
+
+  it('cannot re-prompt (overwrite) once painNextAM is set — even to a settled 0', () => {
+    // Invariant: the morning prompt only fires when painNextAM is still null,
+    // so a tap can never overwrite an existing morning answer.
+    const settled: RunState = { '2026-07-06': run('2026-07-06', 4, { painDuring: 3, painNextAM: 0 }) };
+    const notSettled: RunState = { '2026-07-06': run('2026-07-06', 4, { painDuring: 3, painNextAM: 4 }) };
+    expect(pendingMorningCheck(settled, '2026-07-07')).toBeNull();
+    expect(pendingMorningCheck(notSettled, '2026-07-07')).toBeNull();
+  });
 });
 
 describe('weeklyActuals', () => {

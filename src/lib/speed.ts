@@ -5,9 +5,42 @@
 // State 8 (flare/deload) is an override that supersedes all.
 // ============================================================
 
-import type { GlobalState, RunState, SpeedStateNum } from './types';
+import type { GlobalState, RawSettings, RunState, SpeedStateNum } from './types';
 import { TUNABLES } from '../config/tunables';
 import { painFreeStreak, flareActive, mondayOf, addDaysStr } from './metrics';
+import { requiredStreakFor } from './settings';
+
+// ── General restriction model ────────────────────────────────
+// A gate is a named clearance that must be satisfied on top of the speed
+// state. Modeled as a general list (not hard-coded to the hip case) so the
+// same machinery covers hills (hip-safe + PT speed) and structured speed (PT
+// intensity), and could cover other restrictions later. Hip safeguards stay.
+
+export type GateReq = 'hipSafe' | 'ptSpeed' | 'ptIntensity';
+
+const GATE_LABELS: Record<GateReq, string> = {
+  hipSafe: 'hip-safe flag',
+  ptSpeed: 'PT speed clearance',
+  ptIntensity: 'PT intensity clearance',
+};
+
+export function gateSatisfied(requires: GateReq[] | undefined, g: GlobalState): boolean {
+  if (!requires || requires.length === 0) return true;
+  return requires.every(r =>
+    r === 'hipSafe' ? g.hipSafeFlag
+    : r === 'ptSpeed' ? g.ptClearedSpeed
+    : g.ptClearedIntensity);
+}
+
+function gateLabel(requires: GateReq[]): string {
+  return requires.map(r => GATE_LABELS[r]).join(' + ');
+}
+
+/** Extra clearances required to ENTER a given speed state (beyond readiness). */
+export const STATE_GATES: Partial<Record<SpeedStateNum, GateReq[]>> = {
+  5: ['hipSafe', 'ptSpeed'],   // intro hills — hip-flexor caution (Yokozawa 2007)
+  7: ['ptIntensity'],          // structured speed
+};
 
 export const SPEED_STATE_NAMES: Record<SpeedStateNum, string> = {
   1: 'Base only',
@@ -74,13 +107,15 @@ export function evaluateReadiness(
   runState: RunState,
   globals: GlobalState,
   today: string,
+  settings: RawSettings | null = null,
 ): ReadinessReport {
   const items: ReadinessItem[] = [];
   const painCap = globals.painCap;
 
-  // 1. Pain-free easy-run streak
+  // 1. Pain-free easy-run streak — the STRICTER of the built-in requirement
+  //    and the user's pfNeeded setting (settings can only tighten it).
   const streak = painFreeStreak(runState, painCap);
-  const required = TUNABLES.REQUIRED_STREAK[target] ?? 4;
+  const required = requiredStreakFor(target, settings);
   items.push({
     key: 'streak',
     label: `Pain-free easy-run streak ≥ ${required}`,
@@ -127,21 +162,15 @@ export function evaluateReadiness(
     detail: flared ? 'flare window active — deload first' : 'clear',
   });
 
-  // 6. Injury gates on the two gated transitions
-  if (target === 5) {
+  // 6. Clearance gates on gated transitions (general model, hip-safe intact)
+  const gates = STATE_GATES[target];
+  if (gates) {
     items.push({
-      key: 'hipGate',
-      label: 'Hills gate: hip-safe flag + PT cleared speed',
-      ok: globals.hipSafeFlag && globals.ptClearedSpeed,
-      detail: `hipSafe ${globals.hipSafeFlag ? '✓' : '✗'} · PT speed ${globals.ptClearedSpeed ? '✓' : '✗'}`,
-    });
-  }
-  if (target === 7) {
-    items.push({
-      key: 'intensityGate',
-      label: 'Structured gate: PT cleared intensity',
-      ok: globals.ptClearedIntensity,
-      detail: globals.ptClearedIntensity ? 'cleared' : 'not cleared',
+      key: 'clearanceGate',
+      label: `Clearance: ${gateLabel(gates)}`,
+      ok: gateSatisfied(gates, globals),
+      detail: gates.map(r =>
+        `${GATE_LABELS[r]} ${gateSatisfied([r], globals) ? '✓' : '✗'}`).join(' · '),
     });
   }
 
@@ -154,15 +183,31 @@ export function canSetState(
   runState: RunState,
   globals: GlobalState,
   today: string,
+  settings: RawSettings | null = null,
 ): { allowed: boolean; reason: string } {
   const current = globals.speedState;
   if (target === current) return { allowed: true, reason: 'no change' };
   if (target < current || target === 8) return { allowed: true, reason: 'downgrades are always allowed' };
   if (target > current + 1) return { allowed: false, reason: 'advance one state at a time' };
-  const report = evaluateReadiness(target, runState, globals, today);
+  const report = evaluateReadiness(target, runState, globals, today, settings);
   return report.allGreen
     ? { allowed: true, reason: 'readiness all green' }
     : { allowed: false, reason: report.items.filter(i => !i.ok).map(i => i.label).join(' · ') };
+}
+
+/**
+ * When a clearance is revoked out from under the current state, return the
+ * downgrade patch the app must apply. Flare (state 8) is left untouched — it's
+ * the strongest override. Hills need hip-safe + PT speed; structured needs PT
+ * intensity. Missing the hip clearance drops to 4 (the pre-hills state);
+ * missing only intensity drops to 6.
+ */
+export function enforceGateConsistency(globals: GlobalState): Partial<GlobalState> | null {
+  const s = globals.speedState;
+  if (s === 8) return null;
+  if (s >= 5 && !gateSatisfied(STATE_GATES[5], globals)) return { speedState: 4 };
+  if (s >= 7 && !gateSatisfied(STATE_GATES[7], globals)) return { speedState: 6 };
+  return null;
 }
 
 // ── Speed type catalogue ─────────────────────────────────────
@@ -179,8 +224,8 @@ export interface SpeedType {
   fastVolume: string;
   downgrade: string;
   plain: string;            // one plain-English line
-  /** extra gate beyond speedState (hills: hip-safe; VO₂/race: PT intensity) */
-  extraGate?: (g: GlobalState) => boolean;
+  /** extra clearances beyond speedState (general restriction model) */
+  requires?: GateReq[];
   extraGateLabel?: string;
 }
 
@@ -232,7 +277,7 @@ export const SPEED_TYPES: SpeedType[] = [
       'recruitment (Yokozawa, Fujii & Ae, J Biomech 2007) — the exact tissue you are recovering. ' +
       'Hills are NOT your safe entry to speed: flat comes first, and hills wait for the hip to ' +
       'prove itself and for PT sign-off.',
-    extraGate: g => g.hipSafeFlag && g.ptClearedSpeed,
+    requires: ['hipSafe', 'ptSpeed'],
     extraGateLabel: 'hip-safe flag + PT speed clearance',
   },
   {
@@ -267,7 +312,7 @@ export const SPEED_TYPES: SpeedType[] = [
     fastVolume: 'Small',
     downgrade: 'Any flare, sleep/soreness spike',
     plain: 'Reps of 3–5 min. Needs PT intensity clearance — the top of the ladder.',
-    extraGate: g => g.ptClearedIntensity,
+    requires: ['ptIntensity'],
     extraGateLabel: 'PT intensity clearance',
   },
   {
@@ -280,7 +325,7 @@ export const SPEED_TYPES: SpeedType[] = [
     fastVolume: 'Small',
     downgrade: 'Pain, form breakdown',
     plain: 'Goal-pace work. Needs PT intensity clearance and a settled hip.',
-    extraGate: g => g.ptClearedIntensity,
+    requires: ['ptIntensity'],
     extraGateLabel: 'PT intensity clearance',
   },
 ];
@@ -288,7 +333,7 @@ export const SPEED_TYPES: SpeedType[] = [
 export function typeStatus(t: SpeedType, globals: GlobalState, today: string): TypeStatus {
   if (globals.speedState === 8) return 'locked';                    // flare overrides all
   if (globals.speedState < t.unlockState) return 'locked';
-  if (t.extraGate && !t.extraGate(globals)) return 'locked';
+  if (!gateSatisfied(t.requires, globals)) return 'locked';
   if (globals.delayUntil && globals.delayUntil > today) return 'delayed';
   return 'allowed';
 }
