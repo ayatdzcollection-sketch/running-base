@@ -1,18 +1,21 @@
 import { useState } from 'react';
-import type { RunState } from '../lib/types';
+import type { GlobalState, RunState } from '../lib/types';
+import { buildBackup, parseBackup } from '../lib/storage';
 
 interface Props {
   runState: RunState;
-  onRestore: (state: RunState) => void;
+  globals: GlobalState;
+  onRestore: (state: RunState, globals: GlobalState | null) => void;
 }
 
-export default function BackupRestore({ runState, onRestore }: Props) {
+export default function BackupRestore({ runState, globals, onRestore }: Props) {
   const [open, setOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [msg, setMsg] = useState('');
 
   function exportData() {
-    const text = JSON.stringify(runState, null, 2);
+    // v2 envelope: run log + global speed-layer state in one blob.
+    const text = JSON.stringify(buildBackup(runState, globals), null, 2);
     navigator.clipboard.writeText(text).then(
       () => setMsg('Copied to clipboard ✓'),
       () => setMsg('Copy failed — select and copy the text above manually'),
@@ -21,9 +24,9 @@ export default function BackupRestore({ runState, onRestore }: Props) {
 
   function importData() {
     try {
-      const parsed = JSON.parse(importText);
-      if (typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('bad format');
-      onRestore(parsed as RunState);
+      // Accepts both the new envelope and the original flat export.
+      const { runs, globals: importedGlobals } = parseBackup(importText);
+      onRestore(runs, importedGlobals);
       setMsg('Restored ✓ (Supabase sync will happen in background)');
       setImportText('');
     } catch {
@@ -44,8 +47,8 @@ export default function BackupRestore({ runState, onRestore }: Props) {
       {open && (
         <div className="mt-3 space-y-3 border-t border-border pt-3">
           <p className="text-xs text-slate-600">
-            Safety net — Supabase is the primary sync. Export copies your log as
-            JSON; import reads it back. Useful if you switch Supabase projects or want an offline backup.
+            Safety net — Supabase is the primary sync. Export copies your log (runs + speed-plan
+            state) as JSON; import reads it back, and old-format exports still restore fine.
           </p>
 
           <button

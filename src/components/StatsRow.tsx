@@ -4,10 +4,12 @@ import { BLOCK_TOTAL_MILES } from '../config/plan';
 
 interface Props {
   runState: RunState;
-  today: string;
+  today: string; // kept for API compatibility
+  /** Live long-run ceiling from trailing-30-day actuals. */
+  nextLong: number;
 }
 
-export default function StatsRow({ runState, today }: Props) {
+export default function StatsRow({ runState, nextLong }: Props) {
   const plan = getPlan();
 
   // Effective miles per day
@@ -27,9 +29,7 @@ export default function StatsRow({ runState, today }: Props) {
     }
   }
 
-  // Current week cap
-  const currentWeek = plan.dateToWeek.get(today);
-  const weekCap = currentWeek?.longRunCap;
+  // Long-run ceiling is live-computed from actuals (was the static Friday number)
 
   // Completed run days
   let completedDays = 0;
@@ -54,9 +54,9 @@ export default function StatsRow({ runState, today }: Props) {
         accent="teal"
       />
       <Stat
-        label="Week cap"
-        value={weekCap ? `${weekCap} mi` : '—'}
-        sub="long run"
+        label="Next long"
+        value={`${nextLong} mi`}
+        sub="live ceiling"
         accent="amber"
       />
       <Stat

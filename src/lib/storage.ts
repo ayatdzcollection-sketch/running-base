@@ -1,8 +1,12 @@
-import type { RunEntry, RunState } from './types';
+import type { GlobalState, RunEntry, RunState } from './types';
+import { migrateGlobalState } from './migrate';
 import { supabase } from './supabase';
 
 const STATE_KEY = 'bb_run_state';
 const CODE_KEY = 'bb_access_code';
+// v2: global speed-layer state lives under its OWN key so the original
+// run log is never rewritten by the new features.
+const GLOBAL_KEY = 'bb_global_state';
 
 // ── Access code ────────────────────────────────────────────
 
@@ -27,6 +31,22 @@ export function loadLocal(): RunState {
 
 export function saveLocal(state: RunState): void {
   localStorage.setItem(STATE_KEY, JSON.stringify(state));
+}
+
+export function loadGlobalLocal(): GlobalState {
+  let raw: unknown = null;
+  try {
+    const s = localStorage.getItem(GLOBAL_KEY);
+    raw = s ? JSON.parse(s) : null;
+  } catch {
+    raw = null;
+  }
+  // Additive + idempotent: only fills missing keys, never wipes.
+  return migrateGlobalState(raw, new Date().toISOString());
+}
+
+export function saveGlobalLocal(state: GlobalState): void {
+  localStorage.setItem(GLOBAL_KEY, JSON.stringify(state));
 }
 
 // Seed: pre-populate history on first use so the app isn't blank.
@@ -67,33 +87,189 @@ export function mergeStates(local: RunState, remote: RunEntry[]): RunState {
   return merged;
 }
 
+// ── Supabase row mapping (v2 columns are snake_case) ───────
+
+interface RunRow {
+  date: string;
+  done: boolean;
+  miles_actual: number | null;
+  updated_at: string;
+  rpe?: number | null;
+  pain_during?: number | null;
+  pain_next_am?: number | null;
+  did_strides?: boolean | null;
+  stride_note?: string | null;
+}
+
+function rowToEntry(r: RunRow): RunEntry {
+  const e: RunEntry = {
+    date: r.date,
+    done: r.done,
+    miles_actual: r.miles_actual,
+    updated_at: r.updated_at,
+  };
+  // Only attach v2 fields when present so pre-migration rows stay lean.
+  if (r.rpe != null) e.rpe = r.rpe;
+  if (r.pain_during != null) e.painDuring = r.pain_during;
+  if (r.pain_next_am != null) e.painNextAM = r.pain_next_am;
+  if (r.did_strides != null) e.didStrides = r.did_strides;
+  if (r.stride_note != null) e.strideNote = r.stride_note;
+  return e;
+}
+
+function entryToRow(e: RunEntry, code: string, includeV2: boolean): Record<string, unknown> {
+  const row: Record<string, unknown> = {
+    date: e.date,
+    done: e.done,
+    miles_actual: e.miles_actual,
+    updated_at: e.updated_at,
+    access_code: code,
+  };
+  if (includeV2) {
+    row.rpe = e.rpe ?? null;
+    row.pain_during = e.painDuring ?? null;
+    row.pain_next_am = e.painNextAM ?? null;
+    row.did_strides = e.didStrides ?? null;
+    row.stride_note = e.strideNote ?? null;
+  }
+  return row;
+}
+
+/** True once we know the v2 columns exist server-side; starts optimistic. */
+let v2ColumnsAvailable = true;
+
+function isMissingColumnError(err: unknown): boolean {
+  const e = err as { code?: string; message?: string } | null;
+  if (!e) return false;
+  return e.code === 'PGRST204' || e.code === '42703' ||
+    /column .* does not exist|could not find .* column/i.test(e.message ?? '');
+}
+
+function isMissingTableError(err: unknown): boolean {
+  const e = err as { code?: string; message?: string } | null;
+  if (!e) return false;
+  return e.code === 'PGRST205' || e.code === '42P01' ||
+    /relation .* does not exist|could not find the table/i.test(e.message ?? '');
+}
+
 // ── Supabase I/O ───────────────────────────────────────────
 
 export async function pullFromSupabase(code: string): Promise<RunEntry[]> {
   if (!supabase) return [];
+  // select('*') is resilient: works whether or not the additive SQL
+  // migration has been applied yet.
   const { data, error } = await supabase
     .from('runs')
-    .select('date, done, miles_actual, updated_at')
+    .select('*')
     .eq('access_code', code);
   if (error) throw error;
-  return (data ?? []) as RunEntry[];
+  return ((data ?? []) as RunRow[]).map(rowToEntry);
 }
 
 export async function upsertEntry(entry: RunEntry, code: string): Promise<void> {
   if (!supabase) return;
+  if (v2ColumnsAvailable) {
+    const { error } = await supabase
+      .from('runs')
+      .upsert(entryToRow(entry, code, true), { onConflict: 'date,access_code' });
+    if (!error) return;
+    if (!isMissingColumnError(error)) throw error;
+    // v2 SQL migration not applied yet — fall back to legacy columns so the
+    // core log keeps syncing. Subjective fields stay safe in localStorage.
+    v2ColumnsAvailable = false;
+    console.warn('Supabase runs table missing v2 columns — run the additive migration SQL. Falling back to legacy columns.');
+  }
   const { error } = await supabase
     .from('runs')
-    .upsert({ ...entry, access_code: code }, { onConflict: 'date,access_code' });
+    .upsert(entryToRow(entry, code, false), { onConflict: 'date,access_code' });
   if (error) throw error;
 }
 
 export async function upsertMany(entries: RunEntry[], code: string): Promise<void> {
   if (!supabase) return;
-  const rows = entries.map(e => ({ ...e, access_code: code }));
+  if (v2ColumnsAvailable) {
+    const { error } = await supabase
+      .from('runs')
+      .upsert(entries.map(e => entryToRow(e, code, true)), { onConflict: 'date,access_code' });
+    if (!error) return;
+    if (!isMissingColumnError(error)) throw error;
+    v2ColumnsAvailable = false;
+    console.warn('Supabase runs table missing v2 columns — run the additive migration SQL. Falling back to legacy columns.');
+  }
   const { error } = await supabase
     .from('runs')
-    .upsert(rows, { onConflict: 'date,access_code' });
+    .upsert(entries.map(e => entryToRow(e, code, false)), { onConflict: 'date,access_code' });
   if (error) throw error;
+}
+
+// ── Global state sync (new athlete_state table, jsonb blob) ─
+
+export async function pullGlobalFromSupabase(code: string): Promise<GlobalState | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('athlete_state')
+    .select('state, updated_at')
+    .eq('access_code', code)
+    .maybeSingle();
+  if (error) {
+    if (isMissingTableError(error)) {
+      console.warn('athlete_state table missing — global speed-layer state is local-only until the migration SQL runs.');
+      return null;
+    }
+    throw error;
+  }
+  if (!data?.state) return null;
+  const remote = migrateGlobalState(data.state, data.updated_at ?? new Date().toISOString());
+  return remote;
+}
+
+export async function upsertGlobalToSupabase(state: GlobalState, code: string): Promise<void> {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from('athlete_state')
+    .upsert(
+      { access_code: code, state, updated_at: state.updated_at },
+      { onConflict: 'access_code' },
+    );
+  if (error) {
+    if (isMissingTableError(error)) return; // degrade silently to local-only
+    throw error;
+  }
+}
+
+// ── Backup format (v2 adds globals; v1 flat RunState still restores) ──
+
+export interface BackupV2 {
+  format: 'bulletproof-base-backup';
+  schemaVersion: number;
+  runs: RunState;
+  globals: GlobalState;
+}
+
+export function buildBackup(runs: RunState, globals: GlobalState): BackupV2 {
+  return { format: 'bulletproof-base-backup', schemaVersion: globals.schemaVersion, runs, globals };
+}
+
+export interface ParsedBackup {
+  runs: RunState;
+  globals: GlobalState | null;
+}
+
+/** Accepts both the v2 envelope and the original flat RunState export. */
+export function parseBackup(text: string): ParsedBackup {
+  const parsed = JSON.parse(text);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('bad format');
+  }
+  if (parsed.format === 'bulletproof-base-backup' && typeof parsed.runs === 'object') {
+    return {
+      runs: parsed.runs as RunState,
+      globals: parsed.globals
+        ? migrateGlobalState(parsed.globals, new Date().toISOString())
+        : null,
+    };
+  }
+  return { runs: parsed as RunState, globals: null };
 }
 
 // ── Simple debounce ────────────────────────────────────────

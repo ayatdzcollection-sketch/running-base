@@ -1,9 +1,10 @@
 interface Props {
-  current: number;  // today's prescribed miles
-  cap: number;      // week's long-run cap (Friday miles)
+  current: number;         // today's target miles (clamped to the live ceiling)
+  cap: number;             // live nextLong ceiling from trailing-30-day actuals
+  actual?: number | null;  // logged actual — rose if it exceeds the cap
 }
 
-export default function CapGauge({ current, cap }: Props) {
+export default function CapGauge({ current, cap, actual }: Props) {
   const CX = 100;
   const CY = 100;
   const R = 80;
@@ -28,8 +29,10 @@ export default function CapGauge({ current, cap }: Props) {
     return `M ${startPt.x} ${startPt.y} A ${R} ${R} 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)}`;
   }
 
+  // teal below cap · amber at cap · rose only when a LOGGED actual exceeds it
+  const actualOver = actual != null && actual > cap;
   const color =
-    ratio > 1 ? '#fb7185' : ratio >= 0.95 ? '#f59e0b' : '#2dd4bf';
+    actualOver || ratio > 1 ? '#fb7185' : ratio >= 0.95 ? '#f59e0b' : '#2dd4bf';
 
   const needle = pt(Math.min(ratio, 1));
 

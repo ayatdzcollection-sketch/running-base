@@ -1,18 +1,27 @@
 import { useState, useEffect } from 'react';
 import type { PlanDay, PlanWeek, RunEntry } from '../lib/types';
 import CapGauge from './CapGauge';
+import SubjectiveRow from './SubjectiveRow';
 
 interface Props {
   today: string;
   day: PlanDay | null;
+  /** kept for API compatibility; the ceiling now comes from nextLong */
   week: PlanWeek | null;
   entry: RunEntry | undefined;
   onUpdate: (date: string, updates: Partial<RunEntry>) => void;
   planStart: string;
   planEnd: string;
+  /** Live ceiling computed from trailing-30-day actuals (§2). */
+  nextLong: number;
+  trailingLongest: number;
+  painCap: number;
 }
 
-export default function TodayCard({ today, day, week, entry, onUpdate, planStart, planEnd }: Props) {
+export default function TodayCard({
+  today, day, entry, onUpdate, planStart, planEnd,
+  nextLong, trailingLongest, painCap,
+}: Props) {
   const [localMiles, setLocalMiles] = useState(
     entry?.miles_actual != null ? String(entry.miles_actual) : ''
   );
@@ -90,7 +99,12 @@ export default function TodayCard({ today, day, week, entry, onUpdate, planStart
 
   // ── Run day ──────────────────────────────────────────────
   const prescribed = day.prescribed ?? 0;
-  const cap = week?.longRunCap ?? prescribed;
+  // Live ceiling from trailing-30-day actuals (§2) — replaces the
+  // hard-coded Friday number. Clamp the displayed target if the static
+  // plan runs ahead of what recent volume supports.
+  const cap = nextLong;
+  const clamped = prescribed > cap;
+  const target = clamped ? cap : prescribed;
   const isLong = day.isLongRun;
 
   const fmtDay = `${day.dayLabel} ${fmtDateShort(today)}`;
@@ -109,13 +123,21 @@ export default function TodayCard({ today, day, week, entry, onUpdate, planStart
       {/* Distance */}
       <div className="flex items-end gap-3">
         <span className="font-display text-5xl font-semibold tabular-nums text-slate-100">
-          {prescribed}
+          {target}
         </span>
         <span className="font-display text-xl text-slate-400 mb-1">mi</span>
         {isLong && (
-          <span className="text-xs text-amber-400/80 mb-2 ml-1">← week ceiling</span>
+          <span className="text-xs text-amber-400/80 mb-2 ml-1">← ceiling {cap} mi</span>
         )}
       </div>
+
+      {/* Calm clamp reason when the plan ran ahead of recent volume */}
+      {clamped && (
+        <p className="text-xs text-sky-300/90 bg-sky-950/30 border border-sky-900/40 rounded-lg px-3 py-2 leading-relaxed">
+          Your recent longest is {trailingLongest} mi, so today's ceiling is {cap} mi.
+          The ladder is paused until you rebuild. That's the rule working, not a downgrade.
+        </p>
+      )}
 
       {/* HR reminder */}
       <div className="rounded-lg bg-ink border border-border px-3 py-2 text-xs text-slate-400 leading-relaxed">
@@ -125,7 +147,7 @@ export default function TodayCard({ today, day, week, entry, onUpdate, planStart
 
       {/* Gauge + actions */}
       <div className="flex flex-col sm:flex-row items-center gap-6">
-        <CapGauge current={prescribed} cap={cap} />
+        <CapGauge current={target} cap={cap} actual={entry?.miles_actual} />
         <div className="flex-1 w-full space-y-3">
           <MilesRow
             localMiles={localMiles}
@@ -134,10 +156,13 @@ export default function TodayCard({ today, day, week, entry, onUpdate, planStart
             onMilesChange={setLocalMiles}
             onFocus={() => setFocused(true)}
             onBlur={handleBlur}
-            prescribed={prescribed}
+            prescribed={target}
           />
         </div>
       </div>
+
+      {/* Optional subjective log — the tendon governor */}
+      <SubjectiveRow date={today} entry={entry} painCap={painCap} onUpdate={onUpdate} />
     </div>
   );
 }

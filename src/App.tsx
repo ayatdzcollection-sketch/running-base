@@ -1,15 +1,21 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { RunEntry, RunState, SyncStatus } from './lib/types';
+import type { GlobalState, RunEntry, RunState, SyncStatus } from './lib/types';
 import {
   getStoredCode, setStoredCode,
   loadLocal, saveLocal,
+  loadGlobalLocal, saveGlobalLocal,
   applySeed, mergeStates,
   pullFromSupabase, upsertEntry, upsertMany,
+  pullGlobalFromSupabase, upsertGlobalToSupabase,
   debounce,
 } from './lib/storage';
 import { hasSupabase } from './lib/supabase';
 import { getPlan, todayStr, PLAN_START_DATE } from './config/plan';
 import type { PlanDay } from './lib/types';
+import {
+  trailing30Longest, nextLongFrom, painFreeStreak,
+  flareActive, recentBreach, addDaysStr,
+} from './lib/metrics';
 import AccessCodeModal from './components/AccessCodeModal';
 import TodayCard from './components/TodayCard';
 import WeekAccordion from './components/WeekAccordion';
@@ -18,6 +24,8 @@ import AwardTracker from './components/AwardTracker';
 import GuardrailPanel from './components/GuardrailPanel';
 import ResearchFooter from './components/ResearchFooter';
 import BackupRestore from './components/BackupRestore';
+import SpeedPlan from './components/SpeedPlan';
+import GenerateWeek from './components/GenerateWeek';
 
 const PLAN_END = '2026-08-14';
 
@@ -27,10 +35,21 @@ export default function App() {
 
   const [accessCode, setAccessCode] = useState<string | null>(getStoredCode);
   const [runState, setRunState] = useState<RunState>(() => applySeed(loadLocal()));
+  // v2 global speed-layer state — separate key, additive migration on load.
+  const [globals, setGlobals] = useState<GlobalState>(loadGlobalLocal);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
 
   const todayDay = plan.dateToDay.get(today) ?? null;
   const todayWeek = plan.dateToWeek.get(today) ?? null;
+
+  // ── Live derived safety metrics (§2, §3) ─────────────────
+  // Today's ceiling comes from the 30 days BEFORE today (excludes today's
+  // own log, so an over-cap actual reads rose instead of raising its own cap).
+  const trailingLongest = trailing30Longest(runState, today, false);
+  const nextLong = nextLongFrom(trailingLongest);
+  const streak = painFreeStreak(runState, globals.painCap);
+  const flare = flareActive(runState, today, globals.painCap);
+  const breach = recentBreach(runState, today, globals.painCap);
 
   // ── Initial Supabase pull on mount / code change ─────────
   useEffect(() => {
@@ -59,13 +78,33 @@ export default function App() {
         console.warn('Supabase pull failed (offline?):', err);
         setSyncStatus('offline');
       });
+
+    // Global state: latest updated_at wins, exactly like run entries.
+    pullGlobalFromSupabase(accessCode)
+      .then(remote => {
+        if (!remote) return;
+        setGlobals(prev => {
+          if (remote.updated_at > prev.updated_at) {
+            saveGlobalLocal(remote);
+            return remote;
+          }
+          upsertGlobalToSupabase(prev, accessCode).catch(console.error);
+          return prev;
+        });
+      })
+      .catch(err => console.warn('Global state pull failed:', err));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessCode]);
 
-  // ── Debounced network write (stable ref) ─────────────────
+  // ── Debounced network writes (stable refs) ───────────────
   const debouncedUpsert = useRef(
     debounce((entry: RunEntry, code: string) => {
       upsertEntry(entry, code).catch(console.error);
+    }, 1500),
+  );
+  const debouncedGlobalUpsert = useRef(
+    debounce((state: GlobalState, code: string) => {
+      upsertGlobalToSupabase(state, code).catch(console.error);
     }, 1500),
   );
 
@@ -85,17 +124,66 @@ export default function App() {
     [accessCode],
   );
 
-  // ── Restore from export ───────────────────────────────────
+  // ── Update global state (partial, additive) ───────────────
+  const updateGlobals = useCallback(
+    (patch: Partial<GlobalState>) => {
+      setGlobals(prev => {
+        const next: GlobalState = { ...prev, ...patch, updated_at: new Date().toISOString() };
+        saveGlobalLocal(next);
+        if (accessCode && hasSupabase) debouncedGlobalUpsert.current(next, accessCode);
+        return next;
+      });
+    },
+    [accessCode],
+  );
+
+  // ── Auto-enforcement (§3, §4) ─────────────────────────────
+  // 1. Two pain-cap breaches in 7 days → forced state 8 (flare/deload).
+  // 2. While hills are unlocked (state ≥ 5): ANY logged hip pain in the
+  //    last 7 days locks hills and drops the state to 4 (Yokozawa caution).
+  useEffect(() => {
+    if (flare && globals.speedState !== 8) {
+      updateGlobals({ speedState: 8, painFreeEasyRunStreak: 0 });
+      return;
+    }
+    if (!flare && globals.speedState >= 5 && globals.speedState !== 8) {
+      const from = addDaysStr(today, -7);
+      const anyHipPain = Object.values(runState).some(
+        e => e.date > from && e.date <= today &&
+          ((e.painDuring ?? 0) > 0 || (e.painNextAM ?? 0) > 0),
+      );
+      if (anyHipPain) updateGlobals({ speedState: 4 });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flare, globals.speedState, runState, today]);
+
+  // Keep the synced streak snapshot roughly current (display/debug only —
+  // the live value is always recomputed from the log).
+  useEffect(() => {
+    if (globals.painFreeEasyRunStreak !== streak) {
+      updateGlobals({ painFreeEasyRunStreak: streak });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streak]);
+
+  // ── Restore from export (v1 or v2 backup) ─────────────────
   const handleRestore = useCallback(
-    (imported: RunState) => {
+    (imported: RunState, importedGlobals: GlobalState | null) => {
       const merged = mergeStates(runState, Object.values(imported));
       setRunState(merged);
       saveLocal(merged);
       if (accessCode && hasSupabase) {
         upsertMany(Object.values(merged), accessCode).catch(console.error);
       }
+      if (importedGlobals && importedGlobals.updated_at > globals.updated_at) {
+        setGlobals(importedGlobals);
+        saveGlobalLocal(importedGlobals);
+        if (accessCode && hasSupabase) {
+          upsertGlobalToSupabase(importedGlobals, accessCode).catch(console.error);
+        }
+      }
     },
-    [runState, accessCode],
+    [runState, globals, accessCode],
   );
 
   function handleCodeConfirm(code: string) {
@@ -145,6 +233,20 @@ export default function App() {
             </div>
           </header>
 
+          {/* Flare / hold banner — guardrail copy, not a diagnosis */}
+          {breach && (
+            <div className="rounded-xl border border-rose-900/60 bg-rose-950/30 px-4 py-3 space-y-1">
+              <p className="text-sm text-rose-300 font-display font-semibold">
+                Hip flared. Hold this week, don't advance. Tell your PT.
+              </p>
+              <p className="text-[11px] text-rose-400/70 leading-relaxed">
+                {flare
+                  ? 'Two pain days inside 7 — speed state forced to 8 (deload). Easy/rest only until it settles.'
+                  : `Pain above your ${globals.painCap}/10 cap logged in the last 7 days. One more inside the window triggers a deload.`}
+              </p>
+            </div>
+          )}
+
           {/* Today hero */}
           <TodayCard
             today={today}
@@ -154,10 +256,13 @@ export default function App() {
             onUpdate={updateEntry}
             planStart={plan.bonusDay.date}
             planEnd={PLAN_END}
+            nextLong={nextLong}
+            trailingLongest={trailingLongest}
+            painCap={globals.painCap}
           />
 
           {/* Stats row */}
-          <StatsRow runState={runState} today={today} />
+          <StatsRow runState={runState} today={today} nextLong={nextLong} />
 
           {/* Bonus day + week accordions */}
           <div className="space-y-2">
@@ -175,13 +280,28 @@ export default function App() {
                 today={today}
                 defaultOpen={week.allDays.some(d => d.date === today)}
                 onUpdate={updateEntry}
+                painCap={globals.painCap}
               />
             ))}
           </div>
 
+          {/* v2: speed permission machine + safe future-week generator */}
+          <SpeedPlan
+            runState={runState}
+            globals={globals}
+            today={today}
+            onUpdateGlobals={updateGlobals}
+          />
+          <GenerateWeek
+            runState={runState}
+            globals={globals}
+            today={today}
+            onUpdateGlobals={updateGlobals}
+          />
+
           <AwardTracker runState={runState} />
           <GuardrailPanel />
-          <BackupRestore runState={runState} onRestore={handleRestore} />
+          <BackupRestore runState={runState} globals={globals} onRestore={handleRestore} />
           <ResearchFooter />
 
         </div>

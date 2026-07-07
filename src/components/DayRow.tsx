@@ -1,15 +1,17 @@
 import { useState, useEffect, memo } from 'react';
 import type { PlanDay, RunEntry } from '../lib/types';
+import SubjectiveRow from './SubjectiveRow';
 
 interface Props {
   day: PlanDay;
   entry: RunEntry | undefined;
   onUpdate: (date: string, updates: Partial<RunEntry>) => void;
   isToday: boolean;
+  painCap: number;
 }
 
 // memo prevents re-render of sibling rows when one field changes
-const DayRow = memo(function DayRow({ day, entry, onUpdate, isToday }: Props) {
+const DayRow = memo(function DayRow({ day, entry, onUpdate, isToday, painCap }: Props) {
   const [localMiles, setLocalMiles] = useState(
     entry?.miles_actual != null ? String(entry.miles_actual) : ''
   );
@@ -41,10 +43,11 @@ const DayRow = memo(function DayRow({ day, entry, onUpdate, isToday }: Props) {
 
   return (
     <div
-      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg
+      className={`px-3 py-2.5 rounded-lg
                   ${isToday ? 'bg-teal-950/30 ring-1 ring-teal-800/40' : 'hover:bg-white/[0.02]'}
                   transition-colors`}
     >
+    <div className="flex items-center gap-3">
       {/* Day label */}
       <div className="w-8 shrink-0">
         <span className={`font-display text-xs font-medium
@@ -120,6 +123,12 @@ const DayRow = memo(function DayRow({ day, entry, onUpdate, isToday }: Props) {
           <span className="text-slate-700 text-sm">—</span>
         )}
       </div>
+    </div>
+
+    {/* Optional subjective log — collapsed by default, never forced */}
+    {!isRest && (done || entry?.miles_actual != null || isToday) && (
+      <SubjectiveRow date={day.date} entry={entry} painCap={painCap} onUpdate={onUpdate} />
+    )}
     </div>
   );
 });
