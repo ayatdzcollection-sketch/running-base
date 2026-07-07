@@ -14,7 +14,7 @@ import { getPlan, todayStr, PLAN_START_DATE } from './config/plan';
 import type { PlanDay } from './lib/types';
 import {
   trailing30Longest, nextLongFrom, painFreeStreak,
-  flareActive, recentBreach, addDaysStr,
+  flareActive, recentBreach, addDaysStr, pendingMorningCheck,
 } from './lib/metrics';
 import AccessCodeModal from './components/AccessCodeModal';
 import TodayCard from './components/TodayCard';
@@ -50,6 +50,7 @@ export default function App() {
   const streak = painFreeStreak(runState, globals.painCap);
   const flare = flareActive(runState, today, globals.painCap);
   const breach = recentBreach(runState, today, globals.painCap);
+  const morningCheckDate = pendingMorningCheck(runState, today);
 
   // ── Initial Supabase pull on mount / code change ─────────
   useEffect(() => {
@@ -247,6 +248,21 @@ export default function App() {
             </div>
           )}
 
+          {/* Morning-after check — one tap, only when yesterday logged pain */}
+          {morningCheckDate && (
+            <MorningCheck
+              date={morningCheckDate}
+              painDuring={runState[morningCheckDate]?.painDuring ?? 0}
+              onAnswer={settled =>
+                updateEntry(morningCheckDate, {
+                  painNextAM: settled
+                    ? 0
+                    : Math.min(10, (runState[morningCheckDate]?.painDuring ?? 0) + 1),
+                })
+              }
+            />
+          )}
+
           {/* Today hero */}
           <TodayCard
             today={today}
@@ -259,6 +275,7 @@ export default function App() {
             nextLong={nextLong}
             trailingLongest={trailingLongest}
             painCap={globals.painCap}
+            speedState={globals.speedState}
           />
 
           {/* Stats row */}
@@ -281,6 +298,7 @@ export default function App() {
                 defaultOpen={week.allDays.some(d => d.date === today)}
                 onUpdate={updateEntry}
                 painCap={globals.painCap}
+                speedState={globals.speedState}
               />
             ))}
           </div>
@@ -307,6 +325,45 @@ export default function App() {
         </div>
       </div>
     </>
+  );
+}
+
+// ── Morning-after check ──────────────────────────────────────
+// Asks the settle question the morning AFTER a pain day, so painNextAM is
+// recorded accurately (and one-tap) instead of predicted at log time.
+
+function MorningCheck({ date, painDuring, onAnswer }: {
+  date: string;
+  painDuring: number;
+  onAnswer: (settled: boolean) => void;
+}) {
+  const d = new Date(date + 'T12:00:00Z');
+  const label = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()];
+  return (
+    <div className="rounded-xl border border-sky-900/60 bg-sky-950/25 px-4 py-3 flex items-center gap-3">
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-sky-200 font-display">
+          Did {label}'s hip settle by morning?
+        </p>
+        <p className="text-[11px] text-sky-400/60">
+          You logged {painDuring}/10 during that run.
+        </p>
+      </div>
+      <button
+        onClick={() => onAnswer(true)}
+        className="rounded-lg border border-teal-700 px-3 py-1.5 text-xs text-teal-300
+                   hover:border-teal-500 transition active:scale-95"
+      >
+        Yes
+      </button>
+      <button
+        onClick={() => onAnswer(false)}
+        className="rounded-lg border border-rose-800 px-3 py-1.5 text-xs text-rose-300
+                   hover:border-rose-600 transition active:scale-95"
+      >
+        No
+      </button>
+    </div>
   );
 }
 

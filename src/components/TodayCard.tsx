@@ -16,11 +16,12 @@ interface Props {
   nextLong: number;
   trailingLongest: number;
   painCap: number;
+  speedState: number;
 }
 
 export default function TodayCard({
   today, day, entry, onUpdate, planStart, planEnd,
-  nextLong, trailingLongest, painCap,
+  nextLong, trailingLongest, painCap, speedState,
 }: Props) {
   const [localMiles, setLocalMiles] = useState(
     entry?.miles_actual != null ? String(entry.miles_actual) : ''
@@ -161,8 +162,15 @@ export default function TodayCard({
         </div>
       </div>
 
-      {/* Optional subjective log — the tendon governor */}
-      <SubjectiveRow date={today} entry={entry} painCap={painCap} onUpdate={onUpdate} />
+      {/* Optional subjective log — the tendon governor. Chips inline here. */}
+      <SubjectiveRow
+        date={today}
+        entry={entry}
+        painCap={painCap}
+        speedState={speedState}
+        onUpdate={onUpdate}
+        alwaysOpen
+      />
     </div>
   );
 }

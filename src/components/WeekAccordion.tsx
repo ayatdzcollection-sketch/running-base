@@ -9,9 +9,10 @@ interface Props {
   defaultOpen: boolean;
   onUpdate: (date: string, updates: Partial<RunEntry>) => void;
   painCap: number;
+  speedState: number;
 }
 
-export default function WeekAccordion({ week, runState, today, defaultOpen, onUpdate, painCap }: Props) {
+export default function WeekAccordion({ week, runState, today, defaultOpen, onUpdate, painCap, speedState }: Props) {
   const [open, setOpen] = useState(defaultOpen);
 
   // Compute week totals
@@ -87,6 +88,7 @@ export default function WeekAccordion({ week, runState, today, defaultOpen, onUp
               onUpdate={onUpdate}
               isToday={day.date === today}
               painCap={painCap}
+              speedState={speedState}
             />
           ))}
         </div>

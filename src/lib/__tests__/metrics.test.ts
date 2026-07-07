@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   floorToHalf, nextLongFrom, trailing30Longest, nextLong,
   painFreeStreak, flareActive, recentBreach, nextMonday, mondayOf,
-  weeklyActuals,
+  weeklyActuals, pendingMorningCheck,
 } from '../metrics';
 import type { RunState } from '../types';
 
@@ -139,6 +139,36 @@ describe('date helpers', () => {
     expect(mondayOf('2026-07-07')).toBe('2026-07-06');
     expect(mondayOf('2026-07-06')).toBe('2026-07-06');
     expect(mondayOf('2026-07-12')).toBe('2026-07-06'); // Sunday belongs to the same week
+  });
+});
+
+describe('pendingMorningCheck (one-tap settle prompt)', () => {
+  it('flags yesterday when it logged pain and has no morning value yet', () => {
+    const state: RunState = { '2026-07-06': run('2026-07-06', 4, { painDuring: 4 }) };
+    expect(pendingMorningCheck(state, '2026-07-07')).toBe('2026-07-06');
+  });
+
+  it('does not flag once the morning value is recorded', () => {
+    const state: RunState = { '2026-07-06': run('2026-07-06', 4, { painDuring: 4, painNextAM: 0 }) };
+    expect(pendingMorningCheck(state, '2026-07-07')).toBeNull();
+  });
+
+  it('does not flag pain-free days', () => {
+    const state: RunState = { '2026-07-06': run('2026-07-06', 4, { painDuring: 0 }) };
+    expect(pendingMorningCheck(state, '2026-07-07')).toBeNull();
+  });
+
+  it('ignores pain older than 3 days (no stale nagging)', () => {
+    const state: RunState = { '2026-07-01': run('2026-07-01', 4, { painDuring: 4 }) };
+    expect(pendingMorningCheck(state, '2026-07-07')).toBeNull();
+  });
+
+  it('picks the most recent pending day when several qualify', () => {
+    const state: RunState = {
+      '2026-07-05': run('2026-07-05', 4, { painDuring: 4 }),
+      '2026-07-06': run('2026-07-06', 4, { painDuring: 5 }),
+    };
+    expect(pendingMorningCheck(state, '2026-07-07')).toBe('2026-07-06');
   });
 });
 

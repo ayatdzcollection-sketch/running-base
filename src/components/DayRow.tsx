@@ -8,10 +8,11 @@ interface Props {
   onUpdate: (date: string, updates: Partial<RunEntry>) => void;
   isToday: boolean;
   painCap: number;
+  speedState: number;
 }
 
 // memo prevents re-render of sibling rows when one field changes
-const DayRow = memo(function DayRow({ day, entry, onUpdate, isToday, painCap }: Props) {
+const DayRow = memo(function DayRow({ day, entry, onUpdate, isToday, painCap, speedState }: Props) {
   const [localMiles, setLocalMiles] = useState(
     entry?.miles_actual != null ? String(entry.miles_actual) : ''
   );
@@ -127,7 +128,13 @@ const DayRow = memo(function DayRow({ day, entry, onUpdate, isToday, painCap }: 
 
     {/* Optional subjective log — collapsed by default, never forced */}
     {!isRest && (done || entry?.miles_actual != null || isToday) && (
-      <SubjectiveRow date={day.date} entry={entry} painCap={painCap} onUpdate={onUpdate} />
+      <SubjectiveRow
+        date={day.date}
+        entry={entry}
+        painCap={painCap}
+        speedState={speedState}
+        onUpdate={onUpdate}
+      />
     )}
     </div>
   );

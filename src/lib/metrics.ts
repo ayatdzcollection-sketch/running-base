@@ -131,6 +131,24 @@ export function painFreeStreak(runState: RunState, painCap: number): number {
   return streak;
 }
 
+/**
+ * The most recent prior day (within 3 days) that logged pain during the run
+ * but has no next-morning value yet. Drives the one-tap "did it settle?"
+ * prompt so painNextAM is answered the morning after — accurately — instead
+ * of being predicted at log time. Returns null when nothing is pending.
+ */
+export function pendingMorningCheck(runState: RunState, today: string): string | null {
+  const from = addDaysStr(today, -3);
+  let best: string | null = null;
+  for (const e of Object.values(runState)) {
+    if (e.date >= today || e.date < from) continue;
+    if ((e.painDuring ?? 0) > 0 && e.painNextAM == null) {
+      if (!best || e.date > best) best = e.date;
+    }
+  }
+  return best;
+}
+
 // ── Weekly actuals (calendar weeks Mon–Sun) ──────────────────
 
 export interface WeekActual {
