@@ -12,6 +12,7 @@
 import type { RawSettings, RunState, SpeedStateNum } from './types';
 import type { WeekConfig } from '../config/plan';
 import { PLAN_START_DATE, WEEK_CONFIGS, HR, AWARD } from '../config/plan';
+import { STUB_IDS } from '../config/homeBlocks';
 import { TUNABLES } from '../config/tunables';
 import {
   mondayOf, weeklyActuals, trailing30Longest, nextLongFrom, floorToHalf,
@@ -43,8 +44,8 @@ export function defaultSettings(nowIso: string): RawSettings {
     capPct: Math.round(TUNABLES.CAP_FACTOR * 100),
     pfNeeded: 4,
     adaptive: true,
-    layoutOrder: [],   // [] = registry default order (Stage G)
-    layoutOff: [],
+    layoutOrder: [],            // [] = registry default order (Stage G)
+    layoutOff: [...STUB_IDS],   // proposed stubs are hidden by default
     updated_at: nowIso,
   };
 }
@@ -69,11 +70,14 @@ export function migrateSettings(raw: unknown, nowIso: string): RawSettings | nul
   const d = defaultSettings(nowIso);
 
   // layoutOff may arrive as Record<string,boolean> (prototype) or string[].
-  let layoutOff: string[] = [];
+  // Absent entirely → stubs hidden by default (a fresh layout).
+  let layoutOff: string[];
   if (Array.isArray(raw.layoutOff)) {
     layoutOff = raw.layoutOff.filter(x => typeof x === 'string');
   } else if (isRecord(raw.layoutOff)) {
     layoutOff = Object.keys(raw.layoutOff).filter(k => raw.layoutOff && (raw.layoutOff as Record<string, unknown>)[k] === true);
+  } else {
+    layoutOff = [...STUB_IDS];
   }
   const layoutOrder = Array.isArray(raw.layoutOrder)
     ? raw.layoutOrder.filter(x => typeof x === 'string')
