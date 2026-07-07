@@ -16,6 +16,7 @@ import {
   trailing30Longest, nextLongFrom, painFreeStreak,
   flareActive, recentBreach, addDaysStr, pendingMorningCheck,
 } from './lib/metrics';
+import { morningAnswer } from './lib/subjective';
 import AccessCodeModal from './components/AccessCodeModal';
 import TodayCard from './components/TodayCard';
 import WeekAccordion from './components/WeekAccordion';
@@ -255,9 +256,7 @@ export default function App() {
               painDuring={runState[morningCheckDate]?.painDuring ?? 0}
               onAnswer={settled =>
                 updateEntry(morningCheckDate, {
-                  painNextAM: settled
-                    ? 0
-                    : Math.min(10, (runState[morningCheckDate]?.painDuring ?? 0) + 1),
+                  painNextAM: morningAnswer(settled, runState[morningCheckDate]?.painDuring ?? 0),
                 })
               }
             />

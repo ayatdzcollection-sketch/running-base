@@ -1,5 +1,6 @@
 import { useState, useEffect, memo } from 'react';
 import type { RunEntry } from '../lib/types';
+import { type Chip, chipFor, painForChip } from '../lib/subjective';
 
 interface Props {
   date: string;
@@ -11,20 +12,12 @@ interface Props {
   alwaysOpen?: boolean;
 }
 
-type Chip = 'fine' | 'niggle' | 'hurt';
-
-// Chips are presets over the real 0–10 painDuring field — every threshold
-// (cap breach, two-in-seven flare, week-over-week trend) keeps working
-// because actual numbers are still stored underneath.
-//   Fine   → 0                 (pain-free)
-//   Niggle → painCap           (tolerable, at the ceiling, not a breach)
-//   Hurt   → painCap + 1        (a breach; reveals a slider for the exact value)
-function chipFor(painDuring: number | null | undefined, cap: number): Chip | null {
-  if (painDuring == null) return null;
-  if (painDuring <= 0) return 'fine';
-  if (painDuring <= cap) return 'niggle';
-  return 'hurt';
-}
+// Chips are presets over the real 0–10 painDuring field (see lib/subjective).
+//   Fine   → 0                       (pain-free)
+//   Niggle → reveals 1..cap sub-chips (tolerable, sub-cap; default = mid).
+//            Storing the real sub-cap level preserves the week-over-week
+//            trend signal — a worsening 1→2→3 ache stays visible.
+//   Hurt   → cap + 1                  (a breach; reveals a slider for the exact value)
 
 const CHIP_STYLE: Record<Chip, { on: string; label: string }> = {
   fine:   { on: 'border-teal-600 bg-teal-950/60 text-teal-300',   label: 'Fine' },
@@ -43,13 +36,7 @@ const SubjectiveRow = memo(function SubjectiveRow({
   const hasData = selected != null || entry?.rpe != null || !!entry?.didStrides;
 
   function pick(chip: Chip) {
-    if (chip === selected) { onUpdate(date, { painDuring: null }); return; } // tap again to clear
-    if (chip === 'fine') onUpdate(date, { painDuring: 0 });
-    else if (chip === 'niggle') onUpdate(date, { painDuring: painCap });
-    else onUpdate(date, {
-      painDuring: entry?.painDuring != null && entry.painDuring > painCap
-        ? entry.painDuring : painCap + 1,
-    });
+    onUpdate(date, { painDuring: painForChip(chip, painCap, entry?.painDuring) });
   }
 
   // Collapsible affordance (week-history rows only)
@@ -101,6 +88,26 @@ const SubjectiveRow = memo(function SubjectiveRow({
               </button>
             )}
           </div>
+
+          {/* Niggle: pick the real sub-cap level so a rising ache stays visible */}
+          {selected === 'niggle' && (
+            <div className="flex items-center gap-1.5 text-[11px] text-amber-300/80">
+              <span className="text-slate-600">how much?</span>
+              {Array.from({ length: painCap }, (_, i) => i + 1).map(n => (
+                <button
+                  key={n}
+                  onClick={() => onUpdate(date, { painDuring: n })}
+                  className={`w-6 h-6 rounded-full border tabular-nums transition
+                    ${entry?.painDuring === n
+                      ? 'border-amber-600 bg-amber-950/60 text-amber-300'
+                      : 'border-border text-slate-500 hover:border-slate-500'}`}
+                >
+                  {n}
+                </button>
+              ))}
+              <span className="text-slate-600">/10</span>
+            </div>
+          )}
 
           {/* Exact number only when it matters (Hurt) */}
           {selected === 'hurt' && (
