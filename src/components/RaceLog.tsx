@@ -13,6 +13,7 @@ interface Props {
   races: RaceResult[];
   adaptive: boolean;
   onSaveRace: (r: RaceResult) => void;
+  onDeleteRace: (id: string) => void;
   onSetAdaptive: (v: boolean) => void;
 }
 
@@ -41,7 +42,7 @@ function todayISO(): string {
   return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-');
 }
 
-export default function RaceLog({ races, adaptive, onSaveRace, onSetAdaptive }: Props) {
+export default function RaceLog({ races, adaptive, onSaveRace, onDeleteRace, onSetAdaptive }: Props) {
   const [dist, setDist] = useState('5k');
   const [time, setTime] = useState('');
   const [infoOpen, setInfoOpen] = useState(false);
@@ -78,8 +79,14 @@ export default function RaceLog({ races, adaptive, onSaveRace, onSetAdaptive }: 
 
       {hasRace && (
         <div className="flex flex-col gap-2">
-          <span className="text-[12.5px] text-slate-400">
+          <span className="text-[12.5px] text-slate-400 flex items-center gap-2">
             Last effort: <span className="text-slate-200 font-semibold">{latestLabel}</span>
+            {latest && (
+              <button
+                onClick={() => onDeleteRace(latest.id)}
+                className="ml-auto text-[11px] text-slate-600 hover:text-rose-400 transition"
+              >remove</button>
+            )}
           </span>
           <div className="flex flex-col">
             {preds.map(p => (

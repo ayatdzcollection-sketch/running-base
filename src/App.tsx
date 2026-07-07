@@ -404,6 +404,7 @@ export default function App() {
           <RaceLog
             races={races} adaptive={settings?.adaptive ?? true}
             onSaveRace={r => updateRaces([...races, r])}
+            onDeleteRace={id => updateRaces(races.filter(r => r.id !== id))}
             onSetAdaptive={v => updateSettings({ adaptive: v })}
           />
         ) : null;
