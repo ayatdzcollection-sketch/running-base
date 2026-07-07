@@ -18,6 +18,7 @@
 // ============================================================
 
 import type { GlobalState, ProposedDay, RawSettings, RunState, WeekProposal } from './types';
+import type { AdaptiveModulation } from './adaptive';
 import { TUNABLES } from '../config/tunables';
 import {
   addDaysStr, nextMonday, mondayOf, trailing30Longest, nextLongFrom, floorToHalf,
@@ -46,9 +47,13 @@ export interface GeneratorInput {
    *  only make the week smaller or the cadence more frequent — never raise a cap
    *  or unlock speed (those stay governed by speedState + gates). */
   settings?: RawSettings | null;
+  /** Optional individual adaptation. growthFactor (≤1) scales the positive build
+   *  increment DOWN for a fragile responder; downEvery may only tighten the
+   *  cadence. Absent = population rate. Never loosens any safety floor. */
+  adaptive?: AdaptiveModulation | null;
 }
 
-export function generateNextWeek({ runState, globals, today, settings }: GeneratorInput): WeekProposal {
+export function generateNextWeek({ runState, globals, today, settings, adaptive }: GeneratorInput): WeekProposal {
   const warnings: string[] = [];
   const notes: string[] = [];
   const weekStart = nextMonday(today);
@@ -56,7 +61,9 @@ export function generateNextWeek({ runState, globals, today, settings }: Generat
   // Settings-derived shape (all safety-subordinate; default = current behavior).
   const runDaysN = settings ? Math.round(Math.min(6, Math.max(3, settings.daysPerWeek))) : 5;
   const lastRunIdx = runDaysN - 1;
-  const downEvery = settings ? Math.max(2, Math.round(settings.downEvery)) : TUNABLES.DOWN_WEEK_AFTER_BUILDS;
+  const settingsDownEvery = settings ? Math.max(2, Math.round(settings.downEvery)) : TUNABLES.DOWN_WEEK_AFTER_BUILDS;
+  // Adaptation may only TIGHTEN the cadence (min), never loosen it.
+  const downEvery = adaptive ? Math.min(settingsDownEvery, adaptive.downEvery) : settingsDownEvery;
   const peakCap = settings ? settings.peakMpw : Infinity;
 
   const t30 = trailing30Longest(runState, today);
@@ -98,6 +105,17 @@ export function generateNextWeek({ runState, globals, today, settings }: Generat
     baseVolume = Math.min(nudged * TUNABLES.WEEKLY_GROWTH_MAX, lastWeek.miles * TUNABLES.WEEKLY_GROWTH_MAX);
     notes.push(
       `Volume built from your actuals: last week ${lastWeek.miles.toFixed(1)} mi, recent trend ${trend.toFixed(1)} mi, growth capped at +10%.`,
+    );
+  }
+
+  // ── Individual adaptation (downward-only) ───────────────────
+  // Scale ONLY the positive growth increment over last week. Never pushes a
+  // week below last week and never above the population +10% already applied,
+  // so a fragile responder builds slower and a robust one keeps the capped rate.
+  if (adaptive && lastWeek && baseVolume > lastWeek.miles && adaptive.growthFactor < 0.999) {
+    baseVolume = lastWeek.miles + (baseVolume - lastWeek.miles) * adaptive.growthFactor;
+    notes.push(
+      `Build eased to ${Math.round(adaptive.growthFactor * 100)}% of the normal step, matched to your recent response.`,
     );
   }
 
@@ -235,7 +253,7 @@ export interface MultiWeekResult {
 export function generateWeeks(
   input: GeneratorInput & { count: number },
 ): MultiWeekResult {
-  const { runState, globals, today, settings } = input;
+  const { runState, globals, today, settings, adaptive } = input;
   const count = Math.max(1, Math.min(12, Math.round(input.count)));
   const accepted = globals.acceptedWeeks ?? {};
   const proposals: WeekProposal[] = [];
@@ -245,7 +263,7 @@ export function generateWeeks(
   for (let n = 0; n < count; n++) {
     const ws = nextMonday(cursor);
     if (accepted[ws]) { cursor = addDaysStr(ws, 6); continue; } // skip confirmed weeks
-    const p = generateNextWeek({ runState: scratch, globals, today: cursor, settings });
+    const p = generateNextWeek({ runState: scratch, globals, today: cursor, settings, adaptive });
     proposals.push(p);
     // Simulate this week as completed so the next week ladders from it.
     for (const d of p.days) {

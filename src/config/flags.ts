@@ -17,6 +17,14 @@ export const FLAGS = {
   TODAY_SPEED: true,
   /** Multi-week draft generation + accepted-week conflict checks (Stage E). */
   MULTI_WEEK_GENERATE: true,
+  /**
+   * Individual adaptive engine: personalizes the RATE of progression to the
+   * runner's own response (flare history, pain-settle time, adherence). Safe by
+   * construction — it can only slow the build for a fragile responder, never
+   * exceed the population-capped rate, and never touches the long-run cap, HR
+   * ceiling, pain gate, or speed ladder.
+   */
+  ADAPTIVE_ENGINE: true,
   /** Race log + Riegel projection card (Stage F) — DISPLAY ONLY. */
   RACE_LOG: true,
   /**

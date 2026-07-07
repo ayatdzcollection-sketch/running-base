@@ -11,7 +11,7 @@
 
 export type BlockId =
   | 'today' | 'week' | 'hipspeed' | 'pain' | 'speed' | 'weeks'
-  | 'nextweek' | 'races' | 'guardrails' | 'award' | 'backup' | 'evidence'
+  | 'adaptive' | 'nextweek' | 'races' | 'guardrails' | 'award' | 'backup' | 'evidence'
   // proposed stubs (Stage H):
   | 'notes' | 'checkin' | 'shoes' | 'coach' | 'weather';
 
@@ -32,6 +32,7 @@ export const HOME_BLOCKS: BlockMeta[] = [
   { id: 'week',       label: 'Week progress',        real: true,  hideable: false, safetyCritical: true },
   { id: 'hipspeed',   label: 'Hip + speed status',   real: true,  hideable: false, safetyCritical: true },
   { id: 'pain',       label: 'Pain logger',          real: true,  hideable: false, safetyCritical: true },
+  { id: 'adaptive',   label: 'Training response',    real: true,  hideable: true,  safetyCritical: false },
   { id: 'speed',      label: 'Speed plan',           real: true,  hideable: true,  safetyCritical: false },
   { id: 'weeks',      label: 'The block',            real: true,  hideable: true,  safetyCritical: false },
   { id: 'nextweek',   label: 'Generate future weeks',real: true,  hideable: true,  safetyCritical: false },

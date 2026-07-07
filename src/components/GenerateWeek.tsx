@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { GlobalState, ProposedDay, RawSettings, RunState, WeekProposal } from '../lib/types';
 import { generateWeeks, checkAcceptedWeeks, type AcceptedWeekConflict } from '../lib/generator';
+import type { AdaptiveModulation } from '../lib/adaptive';
 import { nextLong } from '../lib/metrics';
 import { TUNABLES } from '../config/tunables';
 
@@ -9,6 +10,7 @@ interface Props {
   globals: GlobalState;
   today: string;
   settings: RawSettings | null;
+  adaptive: AdaptiveModulation | null;
   onUpdateGlobals: (patch: Partial<GlobalState>) => void;
 }
 
@@ -19,7 +21,7 @@ const COUNTS = [1, 2, 4];
 // Accepted weeks store additively in globals.acceptedWeeks — the static plan is
 // never rewritten, and any accepted week that later conflicts with a safety
 // gate is flagged (never silently changed) with a safer suggestion.
-export default function GenerateWeek({ runState, globals, today, settings, onUpdateGlobals }: Props) {
+export default function GenerateWeek({ runState, globals, today, settings, adaptive, onUpdateGlobals }: Props) {
   const [open, setOpen] = useState(false);
   const [drafts, setDrafts] = useState<WeekProposal[]>([]);
   const [count, setCount] = useState(1);
@@ -31,7 +33,7 @@ export default function GenerateWeek({ runState, globals, today, settings, onUpd
 
   function generate() {
     setSavedMsg('');
-    setDrafts(generateWeeks({ runState, globals, today, settings, count }).proposals);
+    setDrafts(generateWeeks({ runState, globals, today, settings, adaptive, count }).proposals);
   }
 
   function bumpDay(wi: number, di: number, delta: number) {

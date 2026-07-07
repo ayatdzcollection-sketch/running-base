@@ -15,7 +15,7 @@ import { PLAN_START_DATE, WEEK_CONFIGS, HR, AWARD } from '../config/plan';
 import { STUB_IDS } from '../config/homeBlocks';
 import { TUNABLES } from '../config/tunables';
 import {
-  mondayOf, weeklyActuals, trailing30Longest, nextLongFrom, floorToHalf,
+  mondayOf, nextMonday, addDaysStr, weeklyActuals, trailing30Longest, nextLongFrom, floorToHalf,
 } from './metrics';
 
 const SETTINGS_VERSION = 1 as const;
@@ -191,6 +191,45 @@ export function effectiveSettings(
 export function requiredStreakFor(target: SpeedStateNum, eff: RawSettings | null): number {
   const builtin = TUNABLES.REQUIRED_STREAK[target] ?? 4;
   return Math.max(builtin, eff?.pfNeeded ?? 0);
+}
+
+// ── Season reset / transition block ──────────────────────────
+// Reseed a FRESH base block from RECENT ACTUAL training, not the old peak.
+// After a season or a break, fitness and tissue tolerance reflect what the
+// runner has done LATELY, so the restart anchors startMpw to ~80% of the last
+// sustained week and the long-run seed to the trailing-30 longest. Preferences
+// (goal, days/week, block length, governors, layout) carry over unchanged.
+// The caller resets speedState to 1 so speed is RE-EARNED through the ladder,
+// never auto-resumed. No logged run is ever deleted.
+export function resetToRecentActuals(
+  current: RawSettings | null,
+  runState: RunState,
+  today: string,
+  nowIso: string,
+): RawSettings {
+  const base = current ?? defaultSettings(nowIso);
+  // Use COMPLETE weeks only — the partial current week undercounts recent volume
+  // (same reasoning as the generator's trend calculation).
+  const curMonday = mondayOf(today);
+  const complete = today >= addDaysStr(curMonday, 6);
+  const weeks = weeklyActuals(runState, today).filter(
+    w => w.weekStart < curMonday || (w.weekStart === curMonday && complete),
+  );
+  const lastSustained = [...weeks].reverse().find(w => w.miles > 0);
+  // Conservative re-entry: 80% of the last sustained week, floored, and never
+  // above what the settings clamp would already allow.
+  const recent = lastSustained ? lastSustained.miles : 0;
+  const startMpw = recent > 0 ? Math.max(8, Math.round(recent * 0.8)) : Math.min(base.startMpw, 15);
+  const seed = Math.max(2, Math.min(trailing30Longest(runState, today), 15));
+
+  return {
+    ...base,
+    startDate: nextMonday(today),
+    startMpw,
+    peakMpw: Math.max(base.peakMpw, startMpw),
+    trailingLongest: seed,
+    updated_at: nowIso,
+  };
 }
 
 // ── Build week configs from settings ─────────────────────────

@@ -14,7 +14,7 @@ import {
 import { hasSupabase } from './lib/supabase';
 import { getAward, todayStr, PLAN_START_DATE, HR } from './config/plan';
 import { resolveEffectivePlan, planTotalMiles } from './lib/planOverlay';
-import { defaultSettings, effectiveSettings } from './lib/settings';
+import { defaultSettings, effectiveSettings, resetToRecentActuals } from './lib/settings';
 import { FLAGS } from './config/flags';
 import { HOME_BLOCKS, STUB_IDS, blockMeta, type BlockId } from './config/homeBlocks';
 import { sanitizeOrder, sanitizeHidden } from './lib/layout';
@@ -26,7 +26,9 @@ import {
 import { morningAnswer } from './lib/subjective';
 import { enforceGateConsistency } from './lib/speed';
 import { computeTodaySpeed } from './lib/todaySpeed';
+import { computeAdaptiveProfile, toModulation } from './lib/adaptive';
 import AccessCodeModal from './components/AccessCodeModal';
+import AdaptiveInsight from './components/AdaptiveInsight';
 import SettingsPanel from './components/SettingsPanel';
 import LayoutEditor from './components/LayoutEditor';
 import RaceLog from './components/RaceLog';
@@ -78,6 +80,12 @@ export default function App() {
   const todaySpeed = FLAGS.TODAY_SPEED
     ? computeTodaySpeed({ runState, globals, today, plan, acceptedWeeks: globals.acceptedWeeks })
     : null;
+
+  // Individual adaptive profile — personalizes the RATE of progression only.
+  const adaptiveProfile = FLAGS.ADAPTIVE_ENGINE
+    ? computeAdaptiveProfile(runState, globals, today, settings)
+    : null;
+  const adaptiveMod = adaptiveProfile ? toModulation(adaptiveProfile) : null;
 
   // ── Live derived safety metrics (§2, §3) ─────────────────
   // Today's ceiling comes from the 30 days BEFORE today (excludes today's
@@ -214,6 +222,36 @@ export default function App() {
     });
     setSettingsOpen(false);
   }, [accessCode]);
+
+  // Season reset: start a FRESH base block from recent actual training. Reseeds
+  // settings from recent volume (not the old peak), resets speed to base so it
+  // is re-earned through the ladder, and clears confirmed future weeks + delay.
+  // Logged runs are NEVER deleted and completed weeks are never rewritten.
+  const handleSeasonReset = useCallback(() => {
+    setGlobals(prev => {
+      const nowIso = new Date().toISOString();
+      const nextSettings = resetToRecentActuals(prev.settings ?? null, runState, today, nowIso);
+      saveSettingsLocal(nextSettings);
+      const next: GlobalState = {
+        ...prev,
+        settings: nextSettings,
+        speedState: 1,             // speed re-earned, never auto-resumed
+        hipSafeFlag: false,        // clearances re-established with the PT after a break
+        ptClearedSpeed: false,
+        ptClearedIntensity: false,
+        delayUntil: null,
+        acceptedWeeks: {},         // old confirmed future weeks belong to the old block
+        lastFastSessionDate: null,
+        lastLongRunDate: null,
+        painFreeEasyRunStreak: 0,
+        updated_at: nowIso,
+      };
+      saveGlobalLocal(next);
+      if (accessCode && hasSupabase) debouncedGlobalUpsert.current(next, accessCode);
+      return next;
+    });
+    setSettingsOpen(false);
+  }, [runState, today, accessCode]);
 
   // Races (v3) — canonical copy in globals.races, bb_races mirror.
   const races = globals.races ?? [];
@@ -367,6 +405,8 @@ export default function App() {
         return <WeekProgress runState={runState} plan={plan} today={today} week={todayWeek} blockTotalTarget={blockTotalTarget} />;
       case 'hipspeed':
         return <HipSpeedStatus speedState={globals.speedState} hipHold={flare || breach} flare={flare} streak={streak} pfNeeded={pfNeeded} />;
+      case 'adaptive':
+        return adaptiveProfile ? <AdaptiveInsight profile={adaptiveProfile} /> : null;
       case 'pain':
         return (
           <PainLogger
@@ -398,7 +438,7 @@ export default function App() {
           </div>
         );
       case 'nextweek':
-        return <GenerateWeek runState={runState} globals={globals} today={today} settings={settings} onUpdateGlobals={updateGlobals} />;
+        return <GenerateWeek runState={runState} globals={globals} today={today} settings={settings} adaptive={adaptiveMod} onUpdateGlobals={updateGlobals} />;
       case 'races':
         return FLAGS.RACE_LOG ? (
           <RaceLog
@@ -434,6 +474,7 @@ export default function App() {
           today={today}
           onChange={updateSettings}
           onFullReset={handleFullReset}
+          onSeasonReset={handleSeasonReset}
           onClose={() => setSettingsOpen(false)}
           layoutSection={
             <LayoutEditor

@@ -94,19 +94,21 @@ function fmt(v: number, step: number): string {
 }
 
 export default function SettingsPanel({
-  raw, runState, today, onChange, onFullReset, onClose, layoutSection,
+  raw, runState, today, onChange, onFullReset, onSeasonReset, onClose, layoutSection,
 }: {
   raw: RawSettings;
   runState: RunState;
   today: string;
   onChange: (patch: Partial<RawSettings>) => void;
   onFullReset: () => void;
+  onSeasonReset: () => void;
   onClose: () => void;
   layoutSection?: React.ReactNode;
 }) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [infoKey, setInfoKey] = useState<string | null>(null);
   const [resetArm, setResetArm] = useState('');
+  const [seasonArm, setSeasonArm] = useState('');
 
   const { clamps } = effectiveSettings(raw, runState, today);
   const clampByField = new Map<string, ClampNote>();
@@ -242,6 +244,33 @@ export default function SettingsPanel({
                   : 'bg-transparent text-slate-600 border border-border cursor-not-allowed'
               }`}
             >Rebuild</button>
+          </div>
+        </div>
+
+        {/* Season reset — start a fresh base block from RECENT training. */}
+        <div className="rounded-xl border border-border bg-[#0b1220] px-3.5 py-3 flex flex-col gap-2">
+          <span className="text-[12.5px] text-slate-300">Start a new base block</span>
+          <span className="text-[11px] leading-relaxed text-slate-500">
+            After a season or a break, restart base from where you are now. The new block builds
+            from your recent training, not an old peak, and speed resets to base so it is re-earned
+            through the ladder. Type <span className="font-mono text-slate-400">new base</span> to
+            confirm. Your logged runs are kept, and completed weeks are never rewritten.
+          </span>
+          <div className="flex gap-2">
+            <input
+              value={seasonArm} onChange={e => setSeasonArm(e.target.value)}
+              placeholder="type new base"
+              className="flex-1 min-w-0 bg-ink border border-border rounded-[9px] px-3 py-2 text-[12.5px] text-slate-200 font-mono placeholder:text-slate-700 outline-none focus:border-slate-600"
+            />
+            <button
+              disabled={seasonArm.trim().toLowerCase() !== 'new base'}
+              onClick={() => { onSeasonReset(); setSeasonArm(''); }}
+              className={`shrink-0 px-3.5 rounded-[9px] font-display text-[12.5px] font-semibold transition ${
+                seasonArm.trim().toLowerCase() === 'new base'
+                  ? 'bg-sky-500/15 text-sky-300 border border-sky-500/40 cursor-pointer'
+                  : 'bg-transparent text-slate-600 border border-border cursor-not-allowed'
+              }`}
+            >New base</button>
           </div>
         </div>
 
