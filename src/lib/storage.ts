@@ -1,6 +1,7 @@
 import type { GlobalState, RaceResult, RawSettings, RunEntry, RunState } from './types';
 import { migrateGlobalState } from './migrate';
 import { migrateSettings } from './settings';
+import { mergeRaces, PROTO_DIST_MI } from './races';
 import { supabase } from './supabase';
 
 const STATE_KEY = 'bb_run_state';
@@ -11,6 +12,7 @@ const GLOBAL_KEY = 'bb_global_state';
 // v3: local mirrors (design contract). The canonical synced copies live inside
 // bb_global_state (globals.settings / globals.races); these are read-fallbacks.
 const SETTINGS_KEY = 'bb_settings';
+const RACES_KEY = 'bb_races';
 
 // ── Access code ────────────────────────────────────────────
 
@@ -69,6 +71,48 @@ export function saveSettingsLocal(s: RawSettings): void {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
   } catch {
     /* storage full / unavailable — globals.settings remains the source of truth */
+  }
+}
+
+// ── Races mirror (bb_races) — canonical copy rides in globals.races ──
+// Accepts three shapes: the canonical RaceResult[], the design prototype's
+// single object {dist, timeSec, date}, or absent (→ []). Never seeds a race.
+
+let raceIdSeq = 0;
+
+export function loadRacesLocal(): RaceResult[] {
+  let raw: unknown = null;
+  try {
+    const s = localStorage.getItem(RACES_KEY);
+    raw = s ? JSON.parse(s) : null;
+  } catch {
+    return [];
+  }
+  if (Array.isArray(raw)) {
+    return raw.filter(r => r && typeof r === 'object' && 'id' in r) as RaceResult[];
+  }
+  // Prototype single-object shape → one RaceResult.
+  if (raw && typeof raw === 'object') {
+    const p = raw as { dist?: string; timeSec?: number; date?: string };
+    const mi = p.dist ? PROTO_DIST_MI[p.dist] : undefined;
+    if (mi && typeof p.timeSec === 'number') {
+      return [{
+        id: `proto-${raceIdSeq++}`,
+        date: p.date ?? '',
+        distanceMi: mi,
+        timeSec: p.timeSec,
+        updated_at: new Date().toISOString(),
+      }];
+    }
+  }
+  return [];
+}
+
+export function saveRacesLocal(races: RaceResult[]): void {
+  try {
+    localStorage.setItem(RACES_KEY, JSON.stringify(races));
+  } catch {
+    /* globals.races remains the source of truth */
   }
 }
 
@@ -142,16 +186,6 @@ export function mergeStates(local: RunState, remote: RunEntry[]): RunState {
 // clobber locally-newer settings, and neither device loses race/accepted
 // data the other hasn't seen. Same non-destructive spirit as mergeStates.
 
-function mergeRacesById(local: RaceResult[], remote: RaceResult[]): RaceResult[] {
-  const byId = new Map<string, RaceResult>();
-  for (const r of local) byId.set(r.id, r);
-  for (const r of remote) {
-    const ex = byId.get(r.id);
-    if (!ex || r.updated_at > ex.updated_at) byId.set(r.id, r);
-  }
-  return [...byId.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
-}
-
 export function mergeGlobalStates(local: GlobalState, remote: GlobalState): GlobalState {
   const base: GlobalState = remote.updated_at > local.updated_at ? { ...remote } : { ...local };
 
@@ -161,7 +195,7 @@ export function mergeGlobalStates(local: GlobalState, remote: GlobalState): Glob
   base.settings = ls && rs ? (rs.updated_at > ls.updated_at ? rs : ls) : (ls ?? rs);
 
   // races: merge by id, newest updated_at per id.
-  base.races = mergeRacesById(local.races ?? [], remote.races ?? []);
+  base.races = mergeRaces(local.races ?? [], remote.races ?? []);
 
   // acceptedWeeks: union of week keys; local wins ties (local edits are freshest).
   base.acceptedWeeks = { ...(remote.acceptedWeeks ?? {}), ...(local.acceptedWeeks ?? {}) };

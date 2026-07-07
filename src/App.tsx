@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { GlobalState, RawSettings, RunEntry, RunState, SyncStatus } from './lib/types';
+import type { GlobalState, RaceResult, RawSettings, RunEntry, RunState, SyncStatus } from './lib/types';
 import {
   getStoredCode, setStoredCode,
   loadLocal, saveLocal,
   loadGlobalLocal, saveGlobalLocal,
   loadSettingsLocal, saveSettingsLocal,
+  loadRacesLocal, saveRacesLocal,
   applySeed, mergeStates, mergeGlobalStates,
   pullFromSupabase, upsertEntry, upsertMany,
   pullGlobalFromSupabase, upsertGlobalToSupabase,
@@ -25,6 +26,7 @@ import { enforceGateConsistency } from './lib/speed';
 import { computeTodaySpeed } from './lib/todaySpeed';
 import AccessCodeModal from './components/AccessCodeModal';
 import SettingsPanel from './components/SettingsPanel';
+import RaceLog from './components/RaceLog';
 import TodayCard from './components/TodayCard';
 import WeekAccordion from './components/WeekAccordion';
 import StatsRow from './components/StatsRow';
@@ -191,12 +193,31 @@ export default function App() {
     setSettingsOpen(false);
   }, [accessCode]);
 
-  // One-time adoption of a bb_settings mirror (e.g. from the design prototype)
-  // when globals has no settings yet — additive, never overwrites existing.
+  // Races (v3) — canonical copy in globals.races, bb_races mirror.
+  const races = globals.races ?? [];
+  const updateRaces = useCallback(
+    (next: RaceResult[]) => {
+      setGlobals(prev => {
+        saveRacesLocal(next);
+        const g: GlobalState = { ...prev, races: next, updated_at: new Date().toISOString() };
+        saveGlobalLocal(g);
+        if (accessCode && hasSupabase) debouncedGlobalUpsert.current(g, accessCode);
+        return g;
+      });
+    },
+    [accessCode],
+  );
+
+  // One-time adoption of bb_settings / bb_races mirrors (e.g. from the design
+  // prototype) when globals has none yet — additive, never overwrites existing.
   useEffect(() => {
     if (globals.settings == null) {
       const mirror = loadSettingsLocal();
       if (mirror) updateSettings(mirror);
+    }
+    if ((globals.races ?? []).length === 0) {
+      const mirror = loadRacesLocal();
+      if (mirror.length) updateRaces(mirror);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -443,6 +464,14 @@ export default function App() {
             onUpdateGlobals={updateGlobals}
           />
 
+          {FLAGS.RACE_LOG && (
+            <RaceLog
+              races={races}
+              adaptive={settings?.adaptive ?? true}
+              onSaveRace={r => updateRaces([...races, r])}
+              onSetAdaptive={v => updateSettings({ adaptive: v })}
+            />
+          )}
           <AwardTracker runState={runState} plan={plan} award={award} />
           <GuardrailPanel />
           <BackupRestore runState={runState} globals={globals} onRestore={handleRestore} />
