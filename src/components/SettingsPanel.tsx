@@ -47,6 +47,8 @@ const GROUPS: GroupDef[] = [
         info: "How often a lighter 'down' week drops in so your body absorbs the work. Lower = recover more often." },
       { key: 'startDate', label: 'Start date', type: 'date', min: 0, max: 0, step: 0,
         info: 'The Monday week 1 begins. Every date, week, and the award window shifts with it.' },
+      { key: 'xcStartDate', label: 'XC season starts', type: 'date', min: 0, max: 0, step: 0,
+        info: 'When official XC/coach practice begins. From this Monday on, the plan MAINTAINS your mileage (holds it steady, coach drives the work) instead of building toward the peak. Set it just after your base block.' },
     ],
   },
   {
@@ -187,8 +189,8 @@ export default function SettingsPanel({
                           </div>
                           {f.type === 'date' ? (
                             <input
-                              type="date" value={String(raw.startDate)}
-                              onChange={e => onChange({ startDate: e.target.value })}
+                              type="date" value={String(raw[f.key] ?? '')}
+                              onChange={e => onChange({ [f.key]: e.target.value } as Partial<RawSettings>)}
                               className="shrink-0 bg-ink border border-border rounded-[9px] px-2.5 py-2
                                          text-[12.5px] text-slate-200 font-display [color-scheme:dark]"
                             />

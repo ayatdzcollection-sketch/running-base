@@ -134,6 +134,10 @@ export interface RawSettings {
   blockWeeks: number;    // 4–12
   downEvery: number;     // down week after N build weeks (3–4)
   startDate: string;     // Monday YYYY-MM-DD
+  xcStartDate: string;   // Monday official XC/coach season begins. Weeks on/after
+                         // this date MAINTAIN (hold volume near the last build
+                         // level) instead of building toward the peak. Defaults
+                         // just after the base block ends (mid-August).
   startMpw: number;      // first week's miles
   peakMpw: number;       // ceiling the build aims at
   buildStep: number;     // absolute mpw added per build week

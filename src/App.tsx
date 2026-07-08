@@ -418,6 +418,9 @@ export default function App() {
   const isPre = today < plan.bonusDay.date;
   const isPost = today > PLAN_END;
   const dayOfBlock = isPost ? 'block complete' : isPre ? 'starts soon' : `day ${dayIdx}`;
+  // Training phase: summer base until XC/coach season, then maintain.
+  const inXcSeason = !!settings && !!settings.xcStartDate && today >= settings.xcStartDate;
+  const phaseLabel = inXcSeason ? 'XC season · maintain' : 'summer base';
 
   function renderBlock(id: BlockId): ReactNode {
     const meta = blockMeta(id);
@@ -580,7 +583,7 @@ export default function App() {
             </div>
             <div className="flex items-baseline justify-between gap-3">
               <p className="text-xs text-slate-500">
-                {plan.weeks.length}-week XC base · {PLAN_START_DATE} → {PLAN_END} · <span className="text-slate-400">{dayOfBlock}</span>
+                {plan.weeks.length}-week XC base · {PLAN_START_DATE} → {PLAN_END} · <span className="text-slate-400">{dayOfBlock}</span> · <span className={inXcSeason ? 'text-teal-400' : 'text-slate-400'}>{phaseLabel}</span>
               </p>
               <span className={`text-[10.5px] whitespace-nowrap ${syncTone}`}>{syncLabel}</span>
             </div>

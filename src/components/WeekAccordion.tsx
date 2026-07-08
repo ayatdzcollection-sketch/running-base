@@ -50,6 +50,12 @@ export default function WeekAccordion({ week, runState, today, defaultOpen, onUp
           {week.note === 'peak' && (
             <span className="tag tag-amber text-[10px] px-1.5 py-0.5">peak</span>
           )}
+          {week.note === 'handoff' && (
+            <span className="tag tag-amber text-[10px] px-1.5 py-0.5">handoff</span>
+          )}
+          {week.note === 'maintain' && (
+            <span className="tag tag-teal text-[10px] px-1.5 py-0.5">maintain</span>
+          )}
 
           {/* Progress dots */}
           <span className="text-xs text-slate-500 tabular-nums">
