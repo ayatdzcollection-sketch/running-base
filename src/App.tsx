@@ -14,6 +14,7 @@ import {
 import { hasSupabase } from './lib/supabase';
 import { getAward, todayStr, PLAN_START_DATE, HR } from './config/plan';
 import { resolveEffectivePlan, planTotalMiles, isOnBreak } from './lib/planOverlay';
+import { assessPeakFeasibility } from './lib/feasibility';
 import { defaultSettings, effectiveSettings, returnFromBreak } from './lib/settings';
 import { FLAGS } from './config/flags';
 import { HOME_BLOCKS, DEFAULT_HIDDEN_IDS, blockMeta, type BlockId } from './config/homeBlocks';
@@ -93,6 +94,10 @@ export default function App() {
   const eff = settings ? effectiveSettings(settings, runState, today).eff : null;
   const hrBand = eff ? `${eff.hrEasyMin}–${eff.hrEasyMax}` : `${HR.easyMin}–${HR.easyMax}`;
   const hrHardCap = eff ? eff.hrHardCap : HR.hardCap;
+
+  // Is the peak target safely reachable before XC/maintenance? Diagnostic only —
+  // surfaced as a banner so a too-high peak reads as "not reachable" not "broken".
+  const peakFeas = eff ? assessPeakFeasibility(eff) : null;
   const pfNeeded = eff ? eff.pfNeeded : 4;
 
   // Home layout (Stage G). With no settings yet, stubs are hidden by default.
@@ -655,6 +660,20 @@ export default function App() {
               </p>
             </div>
           ) : null}
+
+          {/* Peak-not-reachable banner — makes a too-high peak read as "not
+              reachable before XC", not "broken". Paused during a break/flare. */}
+          {!onBreak && !flare && peakFeas && !peakFeas.feasible && (
+            <button
+              onClick={() => FLAGS.SETTINGS_UI && setSettingsOpen(true)}
+              className="text-left rounded-2xl border border-amber-500/25 bg-amber-500/[0.07] px-4 py-3.5 flex flex-col gap-[5px] hover:border-amber-500/40 transition"
+            >
+              <span className="font-display text-[10.5px] font-semibold tracking-[0.12em] text-amber-400">PEAK NOT REACHABLE BEFORE XC</span>
+              <p className="m-0 text-[13px] leading-relaxed text-slate-300">
+                Peak {peakFeas.targetPeak} mi can't be safely reached by {peakFeas.boundaryDate}. The plan builds to ~{peakFeas.reachedByPlan} mi (safe max ~{peakFeas.maxSafeReachable} mi), then maintains — it won't break any safety cap to force the number. Tap to adjust in Settings.
+              </p>
+            </button>
+          )}
 
           {/* Reorderable blocks — DOM order == stored order == visual order */}
           {visibleOrder.map(id => (

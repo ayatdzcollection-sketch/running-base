@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { RawSettings, RunState } from '../lib/types';
 import { effectiveSettings, returnFromBreak, type ClampNote } from '../lib/settings';
+import { assessPeakFeasibility } from '../lib/feasibility';
 
 // Every knob that shapes the plan, grouped like the design's Settings sheet.
 // Steppers allow the full range the user might type; effectiveSettings() clamps
@@ -115,9 +116,13 @@ export default function SettingsPanel({
   const [resetArm, setResetArm] = useState('');
   const [breakArm, setBreakArm] = useState('');
 
-  const { clamps } = effectiveSettings(raw, runState, today);
+  const { eff, clamps } = effectiveSettings(raw, runState, today);
   const clampByField = new Map<string, ClampNote>();
   for (const c of clamps) clampByField.set(c.field, c);
+
+  // Is the chosen peak safely reachable before XC/maintenance? (Diagnostic only
+  // — the plan never breaks a safety cap to hit it; this just explains the gap.)
+  const peakFeas = assessPeakFeasibility(eff);
 
   const onBreak = !!breakStart && breakStart <= today;
   // Preview what returning from break would seed, so the user sees the new
@@ -220,6 +225,23 @@ export default function SettingsPanel({
                         {clamp && (
                           <p className="m-0 text-[11.5px] leading-relaxed text-amber-300/90 bg-amber-500/[0.06] border border-amber-500/20 rounded-lg px-2.5 py-1.5">
                             Applied {fmt(clamp.applied, f.step)}{f.unit ? ` ${f.unit}` : ''}: {clamp.reason}
+                          </p>
+                        )}
+                        {/* Peak feasibility — target vs safe reachable before XC, plus fixes. */}
+                        {f.key === 'peakMpw' && peakFeas.hasBoundary && !peakFeas.feasible && (
+                          <div className="m-0 flex flex-col gap-1 text-[11.5px] leading-relaxed text-amber-300/90 bg-amber-500/[0.06] border border-amber-500/20 rounded-lg px-2.5 py-1.5">
+                            <span className="font-semibold text-amber-300">
+                              Peak {peakFeas.targetPeak} mi isn't safely reachable before XC ({peakFeas.boundaryDate}). Safe max ~{peakFeas.maxSafeReachable} mi; your plan reaches ~{peakFeas.reachedByPlan} mi, then maintains.
+                            </span>
+                            <span className="text-slate-300/90">{peakFeas.reasons[0]}</span>
+                            <span className="text-slate-400">
+                              Try: {peakFeas.suggestions.join(' · ')}
+                            </span>
+                          </div>
+                        )}
+                        {f.key === 'peakMpw' && peakFeas.hasBoundary && peakFeas.feasible && !peakFeas.delivering && (
+                          <p className="m-0 text-[11.5px] leading-relaxed text-sky-300/90 bg-sky-500/[0.06] border border-sky-500/20 rounded-lg px-2.5 py-1.5">
+                            {peakFeas.targetPeak} mi is safely reachable, but your current build only reaches ~{peakFeas.reachedByPlan} mi before XC. {peakFeas.suggestions[0]}
                           </p>
                         )}
                       </div>
