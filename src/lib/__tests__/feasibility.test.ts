@@ -115,12 +115,12 @@ describe('completed weeks stay locked and logged runs are preserved under an inf
 });
 
 describe('fixes can make a previously infeasible target feasible (under the rules)', () => {
-  it('adding a run day fixes a DISTRIBUTION-limited peak (4 days → 5 days)', () => {
-    const four = assessPeakFeasibility(eff({ peakMpw: 30, daysPerWeek: 4 }));
-    expect(four.feasible).toBe(false);
-    expect(four.limiter).toBe('distribution');
-    const five = assessPeakFeasibility(eff({ peakMpw: 30, daysPerWeek: 5 }));
-    expect(five.feasible).toBe(true);
+  it('adding a run day fixes a DISTRIBUTION-limited peak (3 days → 4 days)', () => {
+    const three = assessPeakFeasibility(eff({ peakMpw: 28, daysPerWeek: 3 }));
+    expect(three.feasible).toBe(false);
+    expect(three.limiter).toBe('distribution');
+    const four = assessPeakFeasibility(eff({ peakMpw: 28, daysPerWeek: 4 }));
+    expect(four.feasible).toBe(true);
   });
 
   it('moving the XC date later fixes a TIME-limited peak (Aug 17 → Oct 19)', () => {
@@ -144,5 +144,95 @@ describe('feasible-but-underdelivering (buildstep floor too low)', () => {
     expect(f.feasible).toBe(true);
     expect(f.delivering).toBe(false);
     expect(f.limiter).toBe('buildstep');
+  });
+});
+
+// ── Run-days as a feasibility route ──────────────────────────
+// The solver probes whether ONE more run day (a higher distribution ceiling)
+// would help. It suggests it only when it genuinely does — never a blanket
+// "add days". Uses RAW settings (no clamp) to control the long-run seed.
+
+function raw(patch: Partial<RawSettings> = {}): RawSettings {
+  return {
+    ...defaultSettings(NOW), startMpw: 20, downEvery: 4, weeksShown: 7, trailingLongest: 4.5,
+    startDate: '2026-06-29', xcStartDate: '2026-08-17', buildStep: 2, daysPerWeek: 4, peakMpw: 32, ...patch,
+  };
+}
+
+describe('run-days route: adding a day is offered only when it actually helps', () => {
+  it('a DISTRIBUTION-limited peak reports a days route that makes it feasible (4d → 5d)', () => {
+    const four = assessPeakFeasibility(raw({ peakMpw: 32, daysPerWeek: 4 }));
+    expect(four.feasible).toBe(false);
+    expect(four.limiter).toBe('distribution');
+    expect(four.daysRoute).not.toBeNull();
+    expect(four.daysRoute!.toDays).toBe(5);
+    expect(four.daysRoute!.feasible).toBe(true);
+    // and actually switching to 5 days is feasible
+    expect(assessPeakFeasibility(raw({ peakMpw: 32, daysPerWeek: 5 })).feasible).toBe(true);
+    // the suggestion text names the route
+    expect(four.suggestions.some(x => /Add a 5th easy day/.test(x))).toBe(true);
+  });
+
+  it('the same target with 5 days reaches a HIGHER safe max than with 4 days', () => {
+    const four = assessPeakFeasibility(raw({ peakMpw: 40, daysPerWeek: 4 }));
+    const five = assessPeakFeasibility(raw({ peakMpw: 40, daysPerWeek: 5 }));
+    expect(five.maxSafeReachable).toBeGreaterThan(four.maxSafeReachable);
+  });
+
+  it('a TIME-limited peak does NOT falsely offer a days route (peak 35, 5 days)', () => {
+    const f = assessPeakFeasibility(raw({ peakMpw: 35, daysPerWeek: 5 }));
+    expect(f.feasible).toBe(false);
+    expect(f.limiter).toBe('time');
+    expect(f.daysRoute).toBeNull();
+    // it honestly says more days won't help
+    expect(f.reasons.some(x => /More run days won't raise this/.test(x))).toBe(true);
+  });
+
+  it('at 6 days there is no further days route to offer (range maxed)', () => {
+    const f = assessPeakFeasibility(raw({ peakMpw: 45, daysPerWeek: 6 }));
+    expect(f.daysRoute).toBeNull();
+  });
+
+  it('assessing the days route never mutates settings', () => {
+    const r = raw({ peakMpw: 32, daysPerWeek: 4 });
+    const snap = JSON.stringify(r);
+    assessPeakFeasibility(r);
+    expect(JSON.stringify(r)).toBe(snap);
+  });
+
+  it('weeksShown does not change the days route (display-only)', () => {
+    const a = assessPeakFeasibility(raw({ peakMpw: 32, daysPerWeek: 4, weeksShown: 7 }));
+    const b = assessPeakFeasibility(raw({ peakMpw: 32, daysPerWeek: 4, weeksShown: 20 }));
+    expect(a.daysRoute?.toDays).toBe(b.daysRoute?.toDays);
+    expect(a.daysRoute?.reachable).toBe(b.daysRoute?.reachable);
+    expect(a.maxSafeReachable).toBe(b.maxSafeReachable);
+  });
+});
+
+describe('switching to more run days distributes safely (engine, not the diagnostic)', () => {
+  it('a 6-day plan keeps every easy day ≤ the long run and does not jump week-over-week', () => {
+    const weeks = resolveEffectivePlan(s({ peakMpw: 35, daysPerWeek: 6 }), scenarioLog(), TODAY).plan.weeks;
+    // Future (settings-sourced) weeks use 6 days; locked W1/W2 keep their static 5-day prescription.
+    for (const w of weeks.filter(x => x.startDate >= '2026-07-13')) {
+      const miles = w.runDays.map(d => d.prescribed ?? 0);
+      const long = miles[miles.length - 1];
+      for (const m of miles) expect(m).toBeLessThanOrEqual(long + 1e-9); // no easy/added day above the long run
+      expect(w.runDays.length).toBe(6);
+    }
+    const t = totals(weeks);
+    let lastBuild = t[1];
+    for (let i = 2; i < weeks.length; i++) {
+      if (weeks[i].isDownWeek) continue;
+      expect(t[i]).toBeLessThanOrEqual(lastBuild * 1.1 + 0.5 + 1e-9); // no uncontrolled jump
+      lastBuild = t[i];
+    }
+  });
+
+  it('changing days/week does not mutate the run log', () => {
+    const log = scenarioLog();
+    const snap = JSON.stringify(log);
+    resolveEffectivePlan(s({ daysPerWeek: 5 }), log, TODAY);
+    resolveEffectivePlan(s({ daysPerWeek: 6 }), log, TODAY);
+    expect(JSON.stringify(log)).toBe(snap);
   });
 });

@@ -670,7 +670,10 @@ export default function App() {
             >
               <span className="font-display text-[10.5px] font-semibold tracking-[0.12em] text-amber-400">PEAK NOT REACHABLE BEFORE XC</span>
               <p className="m-0 text-[13px] leading-relaxed text-slate-300">
-                Peak {peakFeas.targetPeak} mi can't be safely reached by {peakFeas.boundaryDate}. The plan builds to ~{peakFeas.reachedByPlan} mi (safe max ~{peakFeas.maxSafeReachable} mi), then maintains — it won't break any safety cap to force the number. Tap to adjust in Settings.
+                Peak {peakFeas.targetPeak} mi can't be safely reached by {peakFeas.boundaryDate}. The plan builds to ~{peakFeas.reachedByPlan} mi (safe max ~{peakFeas.maxSafeReachable} mi), then maintains — it won't break any safety cap to force the number.
+                {peakFeas.daysRoute
+                  ? ` Adding a ${peakFeas.daysRoute.toDays}${peakFeas.daysRoute.feasible ? 'th day could reach it' : `th day could raise the safe max to ~${peakFeas.daysRoute.reachable} mi`}. Tap to adjust.`
+                  : ' Tap to adjust in Settings.'}
               </p>
             </button>
           )}

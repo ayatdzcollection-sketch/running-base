@@ -233,7 +233,9 @@ export default function SettingsPanel({
                             <span className="font-semibold text-amber-300">
                               Peak {peakFeas.targetPeak} mi isn't safely reachable before XC ({peakFeas.boundaryDate}). Safe max ~{peakFeas.maxSafeReachable} mi; your plan reaches ~{peakFeas.reachedByPlan} mi, then maintains.
                             </span>
-                            <span className="text-slate-300/90">{peakFeas.reasons[0]}</span>
+                            {peakFeas.reasons.map((r, ri) => (
+                              <span key={ri} className="text-slate-300/90">{r}</span>
+                            ))}
                             <span className="text-slate-400">
                               Try: {peakFeas.suggestions.join(' · ')}
                             </span>
