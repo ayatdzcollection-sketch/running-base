@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { RawSettings, RunState } from '../lib/types';
-import { effectiveSettings, resetToRecentActuals, type ClampNote } from '../lib/settings';
+import { effectiveSettings, returnFromBreak, type ClampNote } from '../lib/settings';
 
 // Every knob that shapes the plan, grouped like the design's Settings sheet.
 // Steppers allow the full range the user might type; effectiveSettings() clamps
@@ -37,12 +37,12 @@ const GROUPS: GroupDef[] = [
   },
   {
     id: 'schedule', title: 'Schedule',
-    summary: s => `${s.daysPerWeek} days · ${s.blockWeeks} wks`,
+    summary: s => `${s.daysPerWeek} days · window ${s.weeksShown} wks`,
     fields: [
       { key: 'daysPerWeek', label: 'Run days / week', unit: 'days', min: 3, max: 6, step: 1,
         info: 'How many days you run each week. Fewer days means more rest; each run may stretch a little to hold weekly volume.' },
-      { key: 'blockWeeks', label: 'Block length', unit: 'weeks', min: 4, max: 12, step: 1,
-        info: 'How many weeks the base block runs before the plan re-evaluates from scratch.' },
+      { key: 'weeksShown', label: 'Planning window', unit: 'weeks', min: 4, max: 24, step: 1,
+        info: 'How many future weeks the app SHOWS. The plan is rolling — the engine keeps going beyond this window; this only changes how many weeks are visible.' },
       { key: 'downEvery', label: 'Down week every', unit: 'weeks', min: 3, max: 6, step: 1,
         info: "How often a lighter 'down' week drops in so your body absorbs the work. Lower = recover more often." },
       { key: 'startDate', label: 'Start date', type: 'date', min: 0, max: 0, step: 0,
@@ -96,29 +96,35 @@ function fmt(v: number, step: number): string {
 }
 
 export default function SettingsPanel({
-  raw, runState, today, onChange, onFullReset, onSeasonReset, onClose, layoutSection,
+  raw, runState, today, breakStart, onChange, onFullReset, onStartBreak, onReturnFromBreak, onClose, layoutSection,
 }: {
   raw: RawSettings;
   runState: RunState;
   today: string;
+  /** null/absent = not on break; a YYYY-MM-DD = break started that date. */
+  breakStart: string | null;
   onChange: (patch: Partial<RawSettings>) => void;
   onFullReset: () => void;
-  onSeasonReset: () => void;
+  onStartBreak: () => void;
+  onReturnFromBreak: () => void;
   onClose: () => void;
   layoutSection?: React.ReactNode;
 }) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [infoKey, setInfoKey] = useState<string | null>(null);
   const [resetArm, setResetArm] = useState('');
-  const [seasonArm, setSeasonArm] = useState('');
+  const [breakArm, setBreakArm] = useState('');
 
   const { clamps } = effectiveSettings(raw, runState, today);
   const clampByField = new Map<string, ClampNote>();
   for (const c of clamps) clampByField.set(c.field, c);
 
-  // Preview what a season reset would seed, so the user sees the new starting
-  // mileage (from recent training) before confirming.
-  const resetPreview = resetToRecentActuals(raw, runState, today, raw.updated_at);
+  const onBreak = !!breakStart && breakStart <= today;
+  // Preview what returning from break would seed, so the user sees the new
+  // starting mileage (scaled by break length) before confirming.
+  const returnPreview = onBreak
+    ? returnFromBreak(raw, runState, today, breakStart!, raw.updated_at)
+    : null;
 
   const bump = (f: FieldDef, dir: 1 | -1) => {
     const cur = Number(raw[f.key]);
@@ -253,35 +259,49 @@ export default function SettingsPanel({
           </div>
         </div>
 
-        {/* Season reset — start a fresh base block from RECENT training. */}
-        <div className="rounded-xl border border-border bg-[#0b1220] px-3.5 py-3 flex flex-col gap-2">
-          <span className="text-[12.5px] text-slate-300">Start a new base block</span>
-          <span className="text-[11px] leading-relaxed text-slate-500">
-            After a season or a break, restart base from where you are now. It would start at{' '}
-            <span className="text-slate-300 font-semibold">~{resetPreview.startMpw} mi/week</span>{' '}
-            (from your recent training, not an old peak), with the long run seeded at{' '}
-            <span className="text-slate-300">{resetPreview.trailingLongest.toFixed(1)} mi</span> and
-            week 1 on {resetPreview.startDate}. Speed resets to base and PT clearances clear, so both
-            are re-earned. Type <span className="font-mono text-slate-400">new base</span> to confirm.
-            Your logged runs are kept, and completed weeks are never rewritten.
-          </span>
-          <div className="flex gap-2">
-            <input
-              value={seasonArm} onChange={e => setSeasonArm(e.target.value)}
-              placeholder="type new base"
-              className="flex-1 min-w-0 bg-ink border border-border rounded-[9px] px-3 py-2 text-[12.5px] text-slate-200 font-mono placeholder:text-slate-700 outline-none focus:border-slate-600"
-            />
+        {/* Break mode — end of season / injury / time off. The rolling plan is
+            continuous; this is the only true pause/reseed action. */}
+        {onBreak ? (
+          <div className="rounded-xl border border-teal-500/30 bg-teal-500/[0.05] px-3.5 py-3 flex flex-col gap-2">
+            <span className="text-[12.5px] text-teal-200 font-semibold">Return from break</span>
+            <span className="text-[11px] leading-relaxed text-slate-500">
+              On break since <span className="text-slate-300 font-mono">{breakStart}</span> ({returnPreview!.breakDays} day{returnPreview!.breakDays === 1 ? '' : 's'}).
+              Returning would restart the plan at{' '}
+              <span className="text-slate-300 font-semibold">~{returnPreview!.settings.startMpw} mi/week</span>{' '}
+              ({Math.round(returnPreview!.seedFactor * 100)}% of pre-break volume),
+              long run seeded at{' '}
+              <span className="text-slate-300">{returnPreview!.settings.trailingLongest.toFixed(1)} mi</span>,
+              week 1 on {returnPreview!.settings.startDate}. Speed re-earns from base if the break was long. Your logged runs are kept.
+            </span>
             <button
-              disabled={seasonArm.trim().toLowerCase() !== 'new base'}
-              onClick={() => { onSeasonReset(); setSeasonArm(''); }}
-              className={`shrink-0 px-3.5 rounded-[9px] font-display text-[12.5px] font-semibold transition ${
-                seasonArm.trim().toLowerCase() === 'new base'
-                  ? 'bg-sky-500/15 text-sky-300 border border-sky-500/40 cursor-pointer'
-                  : 'bg-transparent text-slate-600 border border-border cursor-not-allowed'
-              }`}
-            >New base</button>
+              onClick={() => { onReturnFromBreak(); }}
+              className="h-[38px] rounded-[9px] bg-teal-500/15 text-teal-200 border border-teal-500/40 font-display text-[12.5px] font-semibold hover:bg-teal-500/25 transition"
+            >Return from break</button>
           </div>
-        </div>
+        ) : (
+          <div className="rounded-xl border border-border bg-[#0b1220] px-3.5 py-3 flex flex-col gap-2">
+            <span className="text-[12.5px] text-slate-300">End season · start break</span>
+            <span className="text-[11px] leading-relaxed text-slate-500">
+              Use this when you're done with a season (end of XC before track prep, off-season, injury, life). The plan pauses — no future weeks are projected — and comes back with a conservative re-seed based on how long the break lasts. Type <span className="font-mono text-slate-400">break</span> to confirm. Logged runs and completed weeks are never touched.
+            </span>
+            <div className="flex gap-2">
+              <input
+                value={breakArm} onChange={e => setBreakArm(e.target.value)}
+                placeholder="type break"
+                className="flex-1 min-w-0 bg-ink border border-border rounded-[9px] px-3 py-2 text-[12.5px] text-slate-200 font-mono placeholder:text-slate-700 outline-none focus:border-slate-600"
+              />
+              <button
+                disabled={breakArm.trim().toLowerCase() !== 'break'}
+                onClick={() => { onStartBreak(); setBreakArm(''); }}
+                className={`shrink-0 px-3.5 rounded-[9px] font-display text-[12.5px] font-semibold transition ${
+                  breakArm.trim().toLowerCase() === 'break'
+                    ? 'bg-sky-500/15 text-sky-300 border border-sky-500/40 cursor-pointer'
+                    : 'bg-transparent text-slate-600 border border-border cursor-not-allowed'
+                }`}
+              >Start break</button>
+            </div>
+          </div>
+        )}
 
         <button
           onClick={onClose}

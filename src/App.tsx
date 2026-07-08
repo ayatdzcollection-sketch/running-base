@@ -13,8 +13,8 @@ import {
 } from './lib/storage';
 import { hasSupabase } from './lib/supabase';
 import { getAward, todayStr, PLAN_START_DATE, HR } from './config/plan';
-import { resolveEffectivePlan, planTotalMiles } from './lib/planOverlay';
-import { defaultSettings, effectiveSettings, resetToRecentActuals } from './lib/settings';
+import { resolveEffectivePlan, planTotalMiles, isOnBreak } from './lib/planOverlay';
+import { defaultSettings, effectiveSettings, returnFromBreak } from './lib/settings';
 import { FLAGS } from './config/flags';
 import { HOME_BLOCKS, DEFAULT_HIDDEN_IDS, blockMeta, type BlockId } from './config/homeBlocks';
 import { sanitizeOrder, sanitizeHidden } from './lib/layout';
@@ -83,7 +83,9 @@ export default function App() {
 
   // v3: settings drive the plan. null = pure static plan (original behavior).
   const settings = globals.settings ?? null;
-  const { plan } = resolveEffectivePlan(settings, runState, today);
+  const breakStart = globals.breakStart ?? null;
+  const onBreak = isOnBreak(breakStart, today);
+  const { plan } = resolveEffectivePlan(settings, runState, today, { breakStart });
   const award = getAward(settings);
   const blockTotalTarget = planTotalMiles(plan);
 
@@ -247,27 +249,55 @@ export default function App() {
     setSettingsOpen(false);
   }, [accessCode]);
 
-  // Season reset: start a FRESH base block from recent actual training. Reseeds
-  // settings from recent volume (not the old peak), resets speed to base so it
-  // is re-earned through the ladder, and clears confirmed future weeks + delay.
-  // Logged runs are NEVER deleted and completed weeks are never rewritten.
-  const handleSeasonReset = useCallback(() => {
+  // Start break: pause the rolling plan (end of season, injury, time off).
+  // NOTHING is reseeded here — settings and history are untouched. The plan
+  // simply stops projecting future weeks until Return-from-break is used. The
+  // returning flow is where the length-aware reseed happens.
+  const handleStartBreak = useCallback(() => {
     setGlobals(prev => {
       const nowIso = new Date().toISOString();
-      const nextSettings = resetToRecentActuals(prev.settings ?? null, runState, today, nowIso);
+      const next: GlobalState = {
+        ...prev,
+        breakStart: today,
+        acceptedWeeks: {},              // future drafts belong to before the break
+        updated_at: nowIso,
+      };
+      saveGlobalLocal(next);
+      if (accessCode && hasSupabase) debouncedGlobalUpsert.current(next, accessCode);
+      return next;
+    });
+    setSettingsOpen(false);
+  }, [today, accessCode]);
+
+  // Return from break: length-aware conservative reseed. Runs `returnFromBreak`
+  // to shape the plan (startMpw scaled by break length; startDate = next Monday
+  // from today). For breaks ≥ ~3 weeks, also reset the speed layer so intensity
+  // is re-earned; for shorter breaks the speed state persists. Logged runs are
+  // NEVER deleted and completed weeks are never rewritten.
+  const handleReturnFromBreak = useCallback(() => {
+    setGlobals(prev => {
+      if (!prev.breakStart) return prev;
+      const nowIso = new Date().toISOString();
+      const { settings: nextSettings, breakDays } = returnFromBreak(
+        prev.settings ?? null, runState, today, prev.breakStart, nowIso,
+      );
       saveSettingsLocal(nextSettings);
+      const longBreak = breakDays >= 21;
       const next: GlobalState = {
         ...prev,
         settings: nextSettings,
-        speedState: 1,             // speed re-earned, never auto-resumed
-        hipSafeFlag: false,        // clearances re-established with the PT after a break
-        ptClearedSpeed: false,
-        ptClearedIntensity: false,
-        delayUntil: null,
-        acceptedWeeks: {},         // old confirmed future weeks belong to the old block
-        lastFastSessionDate: null,
-        lastLongRunDate: null,
-        painFreeEasyRunStreak: 0,
+        breakStart: null,
+        ...(longBreak ? {
+          speedState: 1 as const,          // speed re-earned after a real detraining break
+          hipSafeFlag: false,
+          ptClearedSpeed: false,
+          ptClearedIntensity: false,
+          delayUntil: null,
+          lastFastSessionDate: null,
+          lastLongRunDate: null,
+          painFreeEasyRunStreak: 0,
+        } : {}),
+        acceptedWeeks: {},                 // stale drafts belong to before the break
         updated_at: nowIso,
       };
       saveGlobalLocal(next);
@@ -417,10 +447,17 @@ export default function App() {
   for (const d of plan.allDates) if (d <= today) dayIdx++;
   const isPre = today < plan.bonusDay.date;
   const isPost = today > PLAN_END;
-  const dayOfBlock = isPost ? 'block complete' : isPre ? 'starts soon' : `day ${dayIdx}`;
-  // Training phase: summer base until XC/coach season, then maintain.
+  const dayOfBlock = isPost ? 'plan complete' : isPre ? 'starts soon' : `day ${dayIdx}`;
+  // Training phase — the rolling plan is continuous. Break wins over XC/season.
   const inXcSeason = !!settings && !!settings.xcStartDate && today >= settings.xcStartDate;
-  const phaseLabel = inXcSeason ? 'XC season · maintain' : 'summer base';
+  const phaseLabel =
+    onBreak ? 'on break'
+    : inXcSeason ? 'XC season · maintain'
+    : 'base building';
+  const phaseTone =
+    onBreak ? 'text-teal-400'
+    : inXcSeason ? 'text-teal-400'
+    : 'text-slate-400';
 
   function renderBlock(id: BlockId): ReactNode {
     const meta = blockMeta(id);
@@ -541,9 +578,11 @@ export default function App() {
           raw={settings ?? defaultSettings(new Date().toISOString())}
           runState={runState}
           today={today}
+          breakStart={breakStart}
           onChange={updateSettings}
           onFullReset={handleFullReset}
-          onSeasonReset={handleSeasonReset}
+          onStartBreak={handleStartBreak}
+          onReturnFromBreak={handleReturnFromBreak}
           onClose={() => setSettingsOpen(false)}
           layoutSection={
             <LayoutEditor
@@ -583,14 +622,25 @@ export default function App() {
             </div>
             <div className="flex items-baseline justify-between gap-3">
               <p className="text-xs text-slate-500">
-                {plan.weeks.length}-week XC base · {PLAN_START_DATE} → {PLAN_END} · <span className="text-slate-400">{dayOfBlock}</span> · <span className={inXcSeason ? 'text-teal-400' : 'text-slate-400'}>{phaseLabel}</span>
+                rolling XC plan · {PLAN_START_DATE} · <span className="text-slate-400">{dayOfBlock}</span> · <span className={phaseTone}>{phaseLabel}</span>
               </p>
               <span className={`text-[10.5px] whitespace-nowrap ${syncTone}`}>{syncLabel}</span>
             </div>
           </header>
 
-          {/* Flare / breach banner (pinned) — two-tone: rose flare, amber single breach */}
-          {flare ? (
+          {/* Break banner — wins over flare/breach visually; plan is paused. */}
+          {onBreak && (
+            <div className="rounded-2xl border border-teal-500/30 bg-teal-500/[0.08] px-4 py-3.5 flex flex-col gap-[5px]">
+              <span className="font-display text-[10.5px] font-semibold tracking-[0.12em] text-teal-300">ON BREAK · PLAN PAUSED</span>
+              <p className="m-0 text-[13px] leading-relaxed text-slate-200">
+                Break started <span className="font-mono text-slate-300">{breakStart}</span>. No future weeks are being projected. Open Settings and hit <em>Return from break</em> when you're back — the plan will re-seed conservatively based on how long you've been off.
+              </p>
+            </div>
+          )}
+
+          {/* Flare / breach banner (pinned) — two-tone: rose flare, amber single breach.
+              Suppressed during a break: the plan is already paused. */}
+          {onBreak ? null : flare ? (
             <div className="rounded-2xl border border-rose-500/30 bg-rose-500/[0.08] px-4 py-3.5 flex flex-col gap-[5px]">
               <span className="font-display text-[10.5px] font-semibold tracking-[0.12em] text-rose-400">FLARE · DELOAD ACTIVE</span>
               <p className="m-0 text-[13px] leading-relaxed text-slate-200">

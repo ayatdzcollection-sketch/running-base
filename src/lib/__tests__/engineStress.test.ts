@@ -19,7 +19,7 @@
 // ============================================================
 
 import { describe, it, expect } from 'vitest';
-import { buildWeekConfigsFromSettings, effectiveSettings, defaultSettings, clampBlockWeeks } from '../settings';
+import { buildWeekConfigsFromSettings, effectiveSettings, defaultSettings, clampWeeksShown } from '../settings';
 import { resolveEffectivePlan } from '../planOverlay';
 import { getPlan, type WeekConfig } from '../../config/plan';
 import { nextLongFrom, addDaysStr } from '../metrics';
@@ -56,7 +56,6 @@ function violations(
   daysExpected: number,
 ): string[] {
   const out: string[] = [];
-  const settingsWeeks = weeks.filter(w => w.source === 'settings');
   let lastBuild = -1; // last non-down week's total (the trajectory reference)
 
   for (let i = 0; i < weeks.length; i++) {
@@ -86,23 +85,29 @@ function violations(
       if (w.long > nextLongFrom(prevLong) + EPS) out.push(`W${i + 1}: long ${w.long} jumps past ${nextLongFrom(prevLong)} from ${prevLong}`);
     }
 
-    // Note vocabulary is bounded — no stray 'taper' can reappear
-    if (w.note && !['down week', 'peak', 'handoff', 'maintain'].includes(w.note)) out.push(`W${i + 1}: unexpected note '${w.note}'`);
-    if (w.note === 'taper') out.push(`W${i + 1}: taper note reappeared`);
+    // Note vocabulary is bounded. In the rolling model there is no 'handoff' /
+    // 'taper' — the plan just keeps going, and the last visible week is not
+    // special.
+    if (w.note && !['down week', 'peak', 'maintain'].includes(w.note)) out.push(`W${i + 1}: unexpected note '${w.note}'`);
+    if (w.note === 'taper' || w.note === 'handoff') out.push(`W${i + 1}: stale note '${w.note}' reappeared`);
 
     if (isSettings) {
       if (w.isDown) {
         // (G-down) a scheduled down week is a dip that never collapses: below the
-        // last build, but still ≥60% of it (not a crater), and never the 1st/last.
+        // last build, but still ≥60% of it (not a crater). Rolling model: a
+        // down week CAN legitimately land as the last visible week — that's a
+        // display boundary, not a training boundary — so no first/last checks.
         if (lastBuild > 0) {
           if (w.total > lastBuild + 0.5 + EPS) out.push(`W${i + 1}: 'down' ${w.total} not below build ${lastBuild}`);
           if (w.total < 0.6 * lastBuild - EPS) out.push(`W${i + 1}: down week ${w.total} collapsed below 60% of ${lastBuild}`);
         }
         if (i === 0) out.push(`W${i + 1}: down week cannot be the first week`);
-        if (i === weeks.length - 1) out.push(`W${i + 1}: down week cannot be the final week`);
       } else {
-        // (G-build) non-down weeks never grow more than +10% over the last build.
-        if (lastBuild > 0 && w.total > lastBuild * TUNABLES.WEEKLY_GROWTH_MAX + 0.5 + EPS) {
+        // (G-build) non-down weeks never grow more than +10% over the last
+        // build. Tolerance of ~2 mi accommodates splitWeek round-down loss on
+        // the previous week making the ratio look higher than the engine's
+        // internal target-vs-target ratio.
+        if (lastBuild > 0 && w.total > lastBuild * TUNABLES.WEEKLY_GROWTH_MAX + 2 + EPS) {
           out.push(`W${i + 1}: build ${w.total} exceeds +10% of last build ${lastBuild}`);
         }
         lastBuild = w.total;
@@ -112,14 +117,25 @@ function violations(
     }
   }
 
-  // (I) the FINAL week is never a taper/down collapse — it hands off / maintains
-  // near the top, never cut to a fraction of the block's biggest week.
-  const last = weeks[weeks.length - 1];
-  if (last && weeks.length > 1) {
-    if (last.isDown) out.push(`final week is a down week`);
-    if (last.note === 'taper') out.push(`final week is a taper`);
-    const maxTotal = Math.max(...settingsWeeks.map(w => w.total), ...weeks.map(w => w.total));
-    if (last.total < 0.6 * maxTotal - EPS) out.push(`final week ${last.total} collapsed below 60% of max ${maxTotal}`);
+  // (I) NO MID-PLAN COLLAPSE — once the settings engine reaches a build level,
+  // subsequent non-down settings-build weeks are monotonic non-decreasing (the
+  // rolling model has no forced final taper). Allow a ~1.5 mi drop to absorb
+  // splitWeek round-off noise (same trajectory can display as 12 vs 11). Only
+  // compares within the settings-driven segment — a locked→settings boundary
+  // may legitimately change daysPerWeek and the long-run cap, which is not a
+  // collapse. A real collapse (30 → ~12) still fails this by an order of
+  // magnitude.
+  {
+    let lastB = -1;
+    for (let i = 0; i < weeks.length; i++) {
+      const w = weeks[i];
+      if (w.source !== 'settings') { lastB = -1; continue; }
+      if (w.isDown) continue;
+      if (lastB > 0 && w.total < lastB - 1.5 - EPS) {
+        out.push(`W${i + 1}: build ${w.total} dropped below previous build ${lastB} (collapse)`);
+      }
+      lastB = w.total;
+    }
   }
 
   // (M) consecutive 'maintain' weeks are FLAT (hold, not drift) and ≤ peak.
@@ -165,21 +181,21 @@ describe('engine stress — the pure scaffold builder never yields a nonsensical
     for (const peakRaw of PEAK)
     for (const buildStep of STEP)
     for (const downEvery of DOWN)
-    for (const blockWeeks of WEEKS)
+    for (const weeksShown of WEEKS)
     for (const daysPerWeek of DAYS)
     for (const trailingLongest of SEED)
     for (const xcOff of XC_OFFSET) {
       const startDate = '2026-06-29';
       const peakMpw = Math.max(peakRaw, startMpw); // the one precondition the clamp guarantees
       const eff = rawFrom({
-        startDate, startMpw, peakMpw, buildStep, downEvery, blockWeeks, daysPerWeek, trailingLongest,
+        startDate, startMpw, peakMpw, buildStep, downEvery, weeksShown, daysPerWeek, trailingLongest,
         xcStartDate: addDaysStr(startDate, xcOff),
       });
       const cfgs = buildWeekConfigsFromSettings(eff);
       const days = Math.round(Math.min(6, Math.max(3, daysPerWeek)));
       const v = violations(fromConfigs(cfgs), peakMpw, days);
       n++;
-      if (v.length) bad.push(`[start${startMpw} peak${peakMpw} step${buildStep} down${downEvery} wk${blockWeeks} d${daysPerWeek} seed${trailingLongest} xc${xcOff}] ${v.slice(0, 3).join('; ')}`);
+      if (v.length) bad.push(`[start${startMpw} peak${peakMpw} step${buildStep} down${downEvery} wk${weeksShown} d${daysPerWeek} seed${trailingLongest} xc${xcOff}] ${v.slice(0, 3).join('; ')}`);
     }
     expect(n).toBeGreaterThan(5000);
     expect(bad.slice(0, 15)).toEqual([]); // show the first offenders if any
@@ -194,32 +210,32 @@ describe('engine stress — the pure scaffold builder never yields a nonsensical
       const peakMpw = Math.max(pick(8, 120, 1), startMpw);
       const buildStep = pick(0, 8, 0.5);
       const downEvery = pick(2, 7, 1);
-      const blockWeeks = pick(1, 12, 1);
+      const weeksShown = pick(1, 12, 1);
       const daysPerWeek = pick(3, 6, 1);
       const trailingLongest = pick(2, 18, 0.5);
       const startDate = '2026-06-29';
       const xcOff = Math.round((rnd() * 130 - 14)); // -14 .. +116 days
       const eff = rawFrom({
-        startDate, startMpw, peakMpw, buildStep, downEvery, blockWeeks, daysPerWeek, trailingLongest,
+        startDate, startMpw, peakMpw, buildStep, downEvery, weeksShown, daysPerWeek, trailingLongest,
         xcStartDate: addDaysStr(startDate, xcOff),
       });
       const cfgs = buildWeekConfigsFromSettings(eff);
       const days = Math.round(Math.min(6, Math.max(3, daysPerWeek)));
       const v = violations(fromConfigs(cfgs), peakMpw, days);
-      if (v.length) bad.push(`#${k} [start${startMpw} peak${peakMpw} step${buildStep} down${downEvery} wk${blockWeeks} d${daysPerWeek} seed${trailingLongest} xc${xcOff}] ${v.slice(0, 2).join('; ')}`);
+      if (v.length) bad.push(`#${k} [start${startMpw} peak${peakMpw} step${buildStep} down${downEvery} wk${weeksShown} d${daysPerWeek} seed${trailingLongest} xc${xcOff}] ${v.slice(0, 2).join('; ')}`);
     }
     expect(bad.slice(0, 15)).toEqual([]);
   });
 
   it('adversarial edge cases produce a sane (possibly flat) plan, never garbage', () => {
     const edges: Partial<RawSettings>[] = [
-      { startMpw: 8, peakMpw: 8, blockWeeks: 1, daysPerWeek: 3, buildStep: 4, trailingLongest: 2 },
-      { startMpw: 80, peakMpw: 80, blockWeeks: 12, downEvery: 2, daysPerWeek: 6, buildStep: 0.5 },
-      { startMpw: 20, peakMpw: 100, blockWeeks: 12, buildStep: 8, downEvery: 3, trailingLongest: 15 },
-      { startMpw: 20, peakMpw: 21, blockWeeks: 8, buildStep: 4, downEvery: 4 }, // near-flat build
-      { startMpw: 30, peakMpw: 30, blockWeeks: 6, xcStartDate: '2026-06-01' }, // all maintenance
-      { startMpw: 12, peakMpw: 60, blockWeeks: 10, xcStartDate: '2026-07-13' }, // maintenance mid-build
-      { startMpw: 15, peakMpw: 40, blockWeeks: 2, downEvery: 2 }, // shortest multi-week
+      { startMpw: 8, peakMpw: 8, weeksShown: 1, daysPerWeek: 3, buildStep: 4, trailingLongest: 2 },
+      { startMpw: 80, peakMpw: 80, weeksShown: 12, downEvery: 2, daysPerWeek: 6, buildStep: 0.5 },
+      { startMpw: 20, peakMpw: 100, weeksShown: 12, buildStep: 8, downEvery: 3, trailingLongest: 15 },
+      { startMpw: 20, peakMpw: 21, weeksShown: 8, buildStep: 4, downEvery: 4 }, // near-flat build
+      { startMpw: 30, peakMpw: 30, weeksShown: 6, xcStartDate: '2026-06-01' }, // all maintenance
+      { startMpw: 12, peakMpw: 60, weeksShown: 10, xcStartDate: '2026-07-13' }, // maintenance mid-build
+      { startMpw: 15, peakMpw: 40, weeksShown: 2, downEvery: 2 }, // shortest multi-week
     ];
     for (const e of edges) {
       const eff = rawFrom({ startDate: '2026-06-29', ...e });
@@ -227,7 +243,7 @@ describe('engine stress — the pure scaffold builder never yields a nonsensical
       const days = Math.round(Math.min(6, Math.max(3, eff.daysPerWeek)));
       const v = violations(fromConfigs(cfgs), eff.peakMpw, days);
       expect(v, JSON.stringify(e)).toEqual([]);
-      expect(cfgs.length).toBe(clampBlockWeeks(eff.blockWeeks));
+      expect(cfgs.length).toBe(clampWeeksShown(eff.weeksShown));
     }
   });
 });
@@ -281,10 +297,10 @@ describe('engine stress — resolveEffectivePlan preserves locks, never mutates 
     for (const peakMpw of PEAK)
     for (const buildStep of STEP)
     for (const downEvery of DOWN)
-    for (const blockWeeks of WEEKS)
+    for (const weeksShown of WEEKS)
     for (const daysPerWeek of DAYS)
     for (const xcStartDate of XC) {
-      const raw = rawFrom({ startMpw, peakMpw, buildStep, downEvery, blockWeeks, daysPerWeek, xcStartDate });
+      const raw = rawFrom({ startMpw, peakMpw, buildStep, downEvery, weeksShown, daysPerWeek, xcStartDate });
       const snapshot = JSON.stringify(log);
       const { plan, weekSource } = resolveEffectivePlan(raw, log, TODAY);
       const eff = effectiveSettings(raw, log, TODAY).eff;
@@ -303,7 +319,7 @@ describe('engine stress — resolveEffectivePlan preserves locks, never mutates 
       }
 
       const v = violations(planToViews(plan.weeks, weekSource), eff.peakMpw, days);
-      if (v.length) bad.push(`[${logName} start${startMpw} peak${peakMpw} step${buildStep} down${downEvery} wk${blockWeeks} d${daysPerWeek} xc${xcStartDate}] ${v.slice(0, 2).join('; ')}`);
+      if (v.length) bad.push(`[${logName} start${startMpw} peak${peakMpw} step${buildStep} down${downEvery} wk${weeksShown} d${daysPerWeek} xc${xcStartDate}] ${v.slice(0, 2).join('; ')}`);
     }
     expect(bad.slice(0, 15)).toEqual([]);
   });

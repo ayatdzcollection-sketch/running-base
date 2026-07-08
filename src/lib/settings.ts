@@ -30,7 +30,7 @@ export function defaultSettings(nowIso: string): RawSettings {
     goalMiles: AWARD.target,
     safeDelivery: AWARD.safePlanDelivery,
     daysPerWeek: 5,
-    blockWeeks: WEEK_CONFIGS.length,
+    weeksShown: WEEK_CONFIGS.length,
     downEvery: 4,
     startDate: PLAN_START_DATE,
     // Official XC/coach season default: the Monday just after the base block
@@ -91,7 +91,10 @@ export function migrateSettings(raw: unknown, nowIso: string): RawSettings | nul
     goalMiles: num(raw.goalMiles, d.goalMiles),
     safeDelivery: num(raw.safeDelivery, d.safeDelivery),
     daysPerWeek: num(raw.daysPerWeek, d.daysPerWeek),
-    blockWeeks: num(raw.blockWeeks, d.blockWeeks),
+    // Rolling model: `weeksShown` (display horizon). Older blobs used
+    // `blockWeeks` (which also meant "the block ends here" — that concept is
+    // gone). Read either; write `weeksShown`.
+    weeksShown: num(raw.weeksShown ?? raw.blockWeeks, d.weeksShown),
     downEvery: num(raw.downEvery, d.downEvery),
     startDate: typeof raw.startDate === 'string' ? raw.startDate : d.startDate,
     xcStartDate: typeof raw.xcStartDate === 'string' ? raw.xcStartDate : d.xcStartDate,
@@ -197,14 +200,13 @@ export function requiredStreakFor(target: SpeedStateNum, eff: RawSettings | null
   return Math.max(builtin, eff?.pfNeeded ?? 0);
 }
 
-// ── Season reset / transition block ──────────────────────────
-// Reseed a FRESH base block from RECENT ACTUAL training, not the old peak.
-// After a season or a break, fitness and tissue tolerance reflect what the
-// runner has done LATELY, so the restart anchors startMpw to ~80% of the last
-// sustained week and the long-run seed to the trailing-30 longest. Preferences
-// (goal, days/week, block length, governors, layout) carry over unchanged.
-// The caller resets speedState to 1 so speed is RE-EARNED through the ladder,
-// never auto-resumed. No logged run is ever deleted.
+// ── Re-seed from recent actuals (shared primitive) ───────────
+// Rebuild the future plan from RECENT ACTUAL training, not from the old peak.
+// The plan is rolling, so this isn't "a fresh block" — it's a re-anchor at the
+// current fitness/tissue-tolerance level. Preferences (goal, days/week,
+// planning window, governors, layout) carry over unchanged. Never touches the
+// run log. Callers that reset the speed layer (e.g. Return-from-break) do so
+// separately so that policy stays outside this function.
 export function resetToRecentActuals(
   current: RawSettings | null,
   runState: RunState,
@@ -230,15 +232,71 @@ export function resetToRecentActuals(
   return {
     ...base,
     startDate,
-    // A fresh base block BUILDS again, so push the XC/maintenance line to just
-    // after the new block — otherwise an old (now-past) xcStartDate would flip
-    // the whole restart straight into maintenance.
-    xcStartDate: addDaysStr(startDate, clampBlockWeeks(base.blockWeeks) * 7),
+    // Push the XC/maintenance line out past the new visible window so a stale
+    // (now-past) xcStartDate can't flip the reseed straight into maintenance.
+    xcStartDate: addDaysStr(startDate, clampWeeksShown(base.weeksShown) * 7),
     startMpw,
     peakMpw: Math.max(base.peakMpw, startMpw),
     trailingLongest: seed,
     updated_at: nowIso,
   };
+}
+
+// ── Return from break ───────────────────────────────────────
+// The end-of-break flow. Length-aware, evidence-flavored (detraining after ~3
+// weeks off is real; a few days off is not). Scales the pre-break sustained
+// volume down and reseeds the plan from `nextMonday(today)`. The run log is
+// never touched. Callers apply speed-layer resets (state → 1, PT clearances) on
+// long breaks separately; this function only shapes the plan.
+//
+//   < 7  days   → 100% resume (a rest week doesn't need a reseed)
+//   7–13 days   → 90%  gentle re-entry
+//  14–20 days   → 75%  standard return-to-running seed
+//  21–41 days   → 60%  conservative ramp (detraining measurable)
+//  ≥ 42 days    → 45%  very conservative — treat as a fresh base
+export function returnFromBreak(
+  current: RawSettings | null,
+  runState: RunState,
+  today: string,
+  breakStart: string,
+  nowIso: string,
+): { settings: RawSettings; breakDays: number; seedFactor: number } {
+  const base = current ?? defaultSettings(nowIso);
+  const breakDays = Math.max(
+    0,
+    Math.floor((Date.parse(today + 'T12:00:00Z') - Date.parse(breakStart + 'T12:00:00Z')) / 86_400_000),
+  );
+
+  const seedFactor =
+    breakDays < 7 ? 1.0
+    : breakDays < 14 ? 0.90
+    : breakDays < 21 ? 0.75
+    : breakDays < 42 ? 0.60
+    : 0.45;
+
+  // Pre-break sustained: the last completed week WITH miles, looking BEFORE
+  // breakStart. If nothing is on file (very new athlete, or break lands right
+  // after starting), fall back to the current startMpw so we don't seed 0.
+  const preBreak = weeklyActuals(runState, breakStart).filter(w => w.weekStart < breakStart);
+  const lastSustained = [...preBreak].reverse().find(w => w.miles > 0);
+  const preBreakVolume = lastSustained?.miles ?? base.startMpw;
+  const startMpw = Math.max(6, Math.round(preBreakVolume * seedFactor));
+
+  // Trailing longest naturally decays to the fallback during a real break;
+  // clamp to a safe seed regardless.
+  const seed = Math.max(2, Math.min(trailing30Longest(runState, today), 5));
+
+  const startDate = nextMonday(today);
+  const settings: RawSettings = {
+    ...base,
+    startDate,
+    xcStartDate: addDaysStr(startDate, clampWeeksShown(base.weeksShown) * 7),
+    startMpw,
+    peakMpw: Math.max(base.peakMpw, startMpw),
+    trailingLongest: seed,
+    updated_at: nowIso,
+  };
+  return { settings, breakDays, seedFactor };
 }
 
 // ── Build week configs from settings ─────────────────────────
@@ -274,8 +332,12 @@ export function splitWeek(total: number, long: number, daysPerWeek: number): num
   return easy;
 }
 
-export function clampBlockWeeks(n: number): number {
-  return Math.round(Math.min(12, Math.max(1, n)));
+/** Clamp the display window (how many future weeks the app renders). Purely a
+ *  visualization horizon — the rolling engine can generate arbitrarily many
+ *  weeks beyond it. Kept ≥1 so there's always something to show, and ≤24 so
+ *  the DOM/computation stays cheap. */
+export function clampWeeksShown(n: number): number {
+  return Math.round(Math.min(24, Math.max(1, n)));
 }
 
 /** Normalized down-week cadence — every Nth week, N ≥ 2. */
@@ -284,14 +346,13 @@ function normDownEvery(downEvery: number): number {
 }
 
 /**
- * Is week `j` a SCHEDULED down (absorption) week? Every `downEvery`th week, but
- * never the first week and never the final (handoff) week — the block hands off
- * at the peak, not a deload. This is the base-block scaffold's cadence; the
- * generator inserts pain-driven down weeks dynamically on top of actuals.
+ * Is week `j` a SCHEDULED down (absorption) week? Every `downEvery`th week
+ * (excluding the very first). The rolling model has no "final week" — the plan
+ * keeps going — so the cadence is uniform. The generator layers pain-driven
+ * down weeks dynamically on top of the cadence.
  */
-function isScheduledDownIdx(j: number, weeksN: number, downEvery: number): boolean {
-  const isFinal = j === weeksN - 1 && weeksN > 1;
-  return !isFinal && j > 0 && (j + 1) % downEvery === 0;
+function isScheduledDownIdx(j: number, downEvery: number): boolean {
+  return j > 0 && (j + 1) % downEvery === 0;
 }
 
 /** Is week `j` in the XC/coach maintenance phase? True when its Monday lands on
@@ -300,19 +361,6 @@ function isScheduledDownIdx(j: number, weeksN: number, downEvery: number): boole
 function isMaintenanceIdx(j: number, eff: EffectiveSettings): boolean {
   if (!eff.xcStartDate) return false;
   return addDaysStr(eff.startDate, j * 7) >= eff.xcStartDate;
-}
-
-/** Count of true BUILD weeks from index `i` through the end (inclusive) —
- *  neither scheduled down weeks NOR maintenance weeks count, so the ramp sizes
- *  each step to reach peakMpw by the time it hands off / enters maintenance,
- *  never spreading the gap across weeks that will not actually build. Always ≥ 1. */
-function buildsRemainingFrom(i: number, weeksN: number, eff: EffectiveSettings): number {
-  const downEvery = normDownEvery(eff.downEvery);
-  let n = 0;
-  for (let j = i; j < weeksN; j++) {
-    if (!isScheduledDownIdx(j, weeksN, downEvery) && !isMaintenanceIdx(j, eff)) n++;
-  }
-  return Math.max(1, n);
 }
 
 /** Carried between weeks: the long-run seed and the BUILD trajectory (the last
@@ -325,39 +373,30 @@ export interface StepCarry {
 }
 
 /**
- * Build one week from the carried long-run seed + build trajectory. The block
- * ramps from startMpw toward peakMpw and HANDS OFF at the peak (the final week
- * is a peak/handoff week, never a forced taper — a taper belongs to a race week,
- * which this base block has none of). Scheduled down weeks are temporary dips
- * off the trajectory; the following week resumes the build from the trajectory,
- * not from the down week.
+ * Build one week from the carried long-run seed + build trajectory. This is a
+ * ROLLING model — no block boundary, no "final week," no forced handoff. The
+ * plan builds from startMpw toward peakMpw at `buildStep` mi/week, holds a
+ * scheduled down week every `downEvery` weeks (a shallow dip off the
+ * trajectory), then holds at peak indefinitely. A separate MAINTENANCE phase
+ * kicks in on/after xcStartDate — coach-primary hold, no build, long run flat.
  *
- * Structural safety baked in (all preserved from before):
- *  • no build week grows more than +10% over the last BUILD week (trajectory)
- *  • no week ever exceeds peakMpw
- *  • down weeks cut ~20% off the trajectory and HOLD the long run (no ladder step)
- *  • the long run advances only via nextLongFrom(prevLong) — ≤110% of prior
- *
- * What changed (the progression fix):
- *  • buildStep is a slope FLOOR, not the whole step: each build also moves a
- *    share of the remaining gap to peak, so editing peakMpw actually re-solves
- *    the future toward that target instead of crawling +buildStep forever.
- *  • the trajectory survives down weeks, so W(after-down) resumes near the last
- *    build level rather than anchoring to the reduced down-week volume.
- *  • the final week is a handoff at peak, not an unconditional collapse.
- *
- * Maintenance phase (XC season): weeks on/after xcStartDate HOLD volume at the
- * trajectory (min with peak) instead of building — coach-primary/guardrail mode.
- * Scheduled down weeks still apply; the long run holds (no ladder step). The
- * trajectory and long-run seed are preserved, so maintenance is flat, not drift.
+ * Structural safety (invariants that survive every settings combo):
+ *  • no build week grows more than +10% of the last BUILD week (trajectory)
+ *  • no week's total ever exceeds peakMpw
+ *  • no single run ever exceeds the peak WEEK (long capped at floorToHalf(peak))
+ *  • the long-run ladder advances only via nextLongFrom(prevLong) — ≤110%
+ *  • down weeks cut ~15% off the trajectory and HOLD the long run
+ *  • the trajectory survives down weeks: the week AFTER a down week resumes
+ *    from the last real BUILD level, never from the reduced down-week total
+ *  • buildStep drives the rate honestly — changing the display window does
+ *    not compress or stretch the training slope
  */
 export function stepWeek(
-  i: number, weeksN: number, prev: StepCarry, eff: EffectiveSettings,
+  i: number, prev: StepCarry, eff: EffectiveSettings,
 ): { config: WeekConfig; total: number; long: number; traj: number } {
   const days = Math.round(Math.min(6, Math.max(3, eff.daysPerWeek)));
   const downEvery = normDownEvery(eff.downEvery);
-  const isFinal = i === weeksN - 1 && weeksN > 1;
-  const isDown = isScheduledDownIdx(i, weeksN, downEvery);
+  const isDown = isScheduledDownIdx(i, downEvery);
   const isMaint = isMaintenanceIdx(i, eff);
 
   let total: number;
@@ -373,39 +412,35 @@ export function stepWeek(
     // capped at the peak. Volume stays flat while the coach drives the work.
     total = Math.min(prev.traj, eff.peakMpw);
   } else {
-    // Build toward peakMpw: buildStep is a floor, the gap-to-peak spread over
-    // the remaining build weeks is the target, and +10%/week is the hard safety
-    // ceiling. So the ramp reaches the peak by the handoff without ever
-    // breaching the week-over-week growth cap or overshooting the peak.
-    const remaining = buildsRemainingFrom(i, weeksN, eff);
-    const gapStep = Math.max(0, eff.peakMpw - prev.traj) / remaining;
-    const step = Math.min(
-      Math.max(eff.buildStep, gapStep),
-      prev.traj * (TUNABLES.WEEKLY_GROWTH_MAX - 1),
-    );
+    // Build toward peakMpw honestly. `buildStep` is THE slope (not a floor);
+    // +10%/wk over the last real build is the hard safety ceiling; peakMpw is
+    // the terminal cap. Once the plan reaches peak it holds there rolling
+    // forward — no compression to fit a fake window.
+    const step = Math.min(eff.buildStep, prev.traj * (TUNABLES.WEEKLY_GROWTH_MAX - 1));
     total = Math.min(prev.traj + step, eff.peakMpw);
   }
 
   // Down AND maintenance weeks hold the long run (prev.long is already a
-  // half-step); only build/handoff weeks step it up the ladder. The long run is
-  // then capped at the peak WEEK: a single run can never exceed a whole week's
-  // ceiling, so a high starting-long seed or a long block can't ladder the long
-  // run past peakMpw and drag the week total above its own cap.
+  // half-step); only build weeks step it up the ladder. The long run is capped
+  // at the peak week: a single run can never exceed a whole week's cap.
   const holdLong = isDown || isMaint;
   const rawLong = holdLong ? floorToHalf(prev.long) : nextLongFrom(prev.long);
   const long = Math.min(rawLong, floorToHalf(eff.peakMpw));
-  total = Math.max(roundHalf(total), long); // a week is never smaller than its long run
+  const targetTotal = Math.max(roundHalf(total), long); // a week is never smaller than its long run
 
-  const miles = splitWeek(total, long, days);
-  // Carry the ACTUAL prescribed sum forward (not the pre-split target) so the
-  // +10% growth cap is measured against real totals and never compounds drift.
+  const miles = splitWeek(targetTotal, long, days);
+  // Displayed sum can be slightly under the target because splitWeek rounds each
+  // easy day down (a half-step per day). Show that; but carry the pre-split
+  // TARGET as the trajectory, otherwise the round-down drift compounds and the
+  // plan would only grow at ~half the requested buildStep. The +10%/wk safety
+  // cap still binds — it's measured against the target, which is a strict upper
+  // bound on the display anyway.
   const actualTotal = miles.reduce((a, b) => a + b, 0);
 
   let note: string | undefined;
   if (isDown) note = 'down week';
-  else if (isMaint && !isFinal) note = 'maintain';
-  else if (isFinal) note = 'handoff';
-  else if (actualTotal >= eff.peakMpw - 1e-9 && prev.traj < eff.peakMpw - 1e-9) note = 'peak';
+  else if (isMaint) note = 'maintain';
+  else if (targetTotal >= eff.peakMpw - 1e-9 && prev.traj < eff.peakMpw - 1e-9) note = 'peak';
 
   return {
     config: { miles, note, isDownWeek: isDown },
@@ -413,18 +448,20 @@ export function stepWeek(
     // The trajectory only advances on real build weeks; absorption AND
     // maintenance weeks keep the prior trajectory so volume neither drifts up
     // nor re-baselines down.
-    traj: holdLong ? prev.traj : actualTotal,
+    traj: holdLong ? prev.traj : targetTotal,
     long: holdLong ? prev.long : long,
   };
 }
 
-/** Build a full WeekConfig[] purely from settings (no locked-week splicing). */
-export function buildWeekConfigsFromSettings(eff: EffectiveSettings): WeekConfig[] {
-  const weeksN = clampBlockWeeks(eff.blockWeeks);
+/** Build a full WeekConfig[] purely from settings (no locked-week splicing).
+ *  Optional `count` overrides the visible-window size — the engine is rolling,
+ *  so callers can extend as far as they like beyond `weeksShown`. */
+export function buildWeekConfigsFromSettings(eff: EffectiveSettings, count?: number): WeekConfig[] {
+  const weeksN = clampWeeksShown(count ?? eff.weeksShown);
   const configs: WeekConfig[] = [];
   let carry: StepCarry = { long: eff.trailingLongest, traj: eff.startMpw };
   for (let i = 0; i < weeksN; i++) {
-    const { config, long, traj } = stepWeek(i, weeksN, carry, eff);
+    const { config, long, traj } = stepWeek(i, carry, eff);
     configs.push(config);
     carry = { long, traj };
   }

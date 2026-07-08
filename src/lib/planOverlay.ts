@@ -16,7 +16,7 @@ import { buildPlan, getPlan, WEEK_CONFIGS, PLAN_START_DATE } from '../config/pla
 import type { RawSettings, RunState } from './types';
 import { mondayOf, addDaysStr } from './metrics';
 import {
-  effectiveSettings, stepWeek, clampBlockWeeks, type ClampNote, type StepCarry,
+  effectiveSettings, stepWeek, clampWeeksShown, type ClampNote, type StepCarry,
 } from './settings';
 
 /**
@@ -53,12 +53,17 @@ function configLong(cfg: WeekConfig): number {
  * settings — and crucially the volume/long-run ladder carries across the
  * boundary, so a settings week that follows a locked week never jumps the long
  * run (it continues from the locked week's long run, ≤110%).
+ *
+ * Rolling model: `weeksShown` is a display horizon, not a training boundary.
+ * Callers can pass `count` to extend the horizon further (the engine keeps
+ * generating; it never "ends"). Break Mode: pass `breakStart` and settings-
+ * generated weeks on/after that date are omitted (locked weeks still show).
  */
 export function resolveEffectivePlan(
   raw: RawSettings | null,
   runState: RunState,
   today: string,
-  opts?: { fullReset?: boolean },
+  opts?: { fullReset?: boolean; count?: number; breakStart?: string | null },
 ): ResolvedPlan {
   const staticPlan = getPlan();
   const weekSource = new Map<string, 'static' | 'settings'>();
@@ -69,8 +74,9 @@ export function resolveEffectivePlan(
   }
 
   const { eff, clamps } = effectiveSettings(raw, runState, today);
-  const weeksN = clampBlockWeeks(eff.blockWeeks);
+  const weeksN = clampWeeksShown(opts?.count ?? eff.weeksShown);
   const configs: WeekConfig[] = [];
+  const startDates: string[] = [];
   let carry: StepCarry = { long: eff.trailingLongest, traj: eff.startMpw };
 
   for (let i = 0; i < weeksN; i++) {
@@ -86,21 +92,34 @@ export function resolveEffectivePlan(
       // re-baseline the trajectory downward (the settings weeks that follow
       // resume from the last real build level, the same rule stepWeek applies).
       configs.push(staticCfg);
+      startDates.push(weekStart);
       carry = {
         long: configLong(staticCfg),
         traj: staticCfg.isDownWeek ? carry.traj : configTotal(staticCfg),
       };
       weekSource.set(weekStart, 'static');
     } else {
-      const { config, long, traj } = stepWeek(i, weeksN, carry, eff);
+      // Break Mode: STOP generating settings-derived weeks at/after breakStart.
+      // Any locked week (has a logged run) still appears via the branch above;
+      // future unlocked weeks during a break are simply omitted from display.
+      if (opts?.breakStart && weekStart >= opts.breakStart) break;
+      const { config, long, traj } = stepWeek(i, carry, eff);
       configs.push(config);
+      startDates.push(weekStart);
       carry = { long, traj };
       weekSource.set(weekStart, 'settings');
     }
   }
 
+  // buildPlan assumes contiguous weeks from eff.startDate. That still holds:
+  // we only skipped the TAIL (weeks past breakStart), never a middle week.
   const plan = buildPlan(configs, eff.startDate);
   return { plan, weekSource, clamps };
+}
+
+/** True when the athlete is currently on a training break (breakStart set). */
+export function isOnBreak(breakStart: string | null | undefined, today: string): boolean {
+  return !!breakStart && breakStart <= today;
 }
 
 /** Total prescribed miles across the resolved plan (for block progress copy). */

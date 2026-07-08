@@ -38,7 +38,7 @@ function scenarioLog(): RunState {
 
 /** Base-scenario settings: start 20, peak 30, +1 nominal step, down every 4. */
 function scenarioSettings(patch: Partial<RawSettings> = {}): RawSettings {
-  return raw({ startMpw: 20, peakMpw: 30, buildStep: 1, downEvery: 4, blockWeeks: 7, trailingLongest: 4.5, ...patch });
+  return raw({ startMpw: 20, peakMpw: 30, buildStep: 1, downEvery: 4, weeksShown: 7, trailingLongest: 4.5, ...patch });
 }
 
 function totals(weeks: PlanWeek[]): number[] {
@@ -60,16 +60,17 @@ describe('completed weeks stay locked and logged runs are preserved', () => {
   });
 
   it('editing the peak only rewrites FUTURE unlocked weeks', () => {
-    const a = resolveEffectivePlan(scenarioSettings({ peakMpw: 30 }), scenarioLog(), TODAY).plan.weeks;
-    const b = resolveEffectivePlan(scenarioSettings({ peakMpw: 40 }), scenarioLog(), TODAY).plan.weeks;
-    expect(totals(a).slice(0, 2)).toEqual(totals(b).slice(0, 2));          // W1+W2 identical
+    // A high buildStep + a long horizon so peak actually matters in the window.
+    const a = resolveEffectivePlan(scenarioSettings({ peakMpw: 30, buildStep: 3, weeksShown: 12, xcStartDate: '2027-01-01' }), scenarioLog(), TODAY).plan.weeks;
+    const b = resolveEffectivePlan(scenarioSettings({ peakMpw: 40, buildStep: 3, weeksShown: 12, xcStartDate: '2027-01-01' }), scenarioLog(), TODAY).plan.weeks;
+    expect(totals(a).slice(0, 2)).toEqual(totals(b).slice(0, 2));          // W1+W2 identical (locked)
     expect(totals(a).slice(2)).not.toEqual(totals(b).slice(2));            // W3+ changed
   });
 
   it('never mutates runState (no logged run deleted or rewritten), even on full reset', () => {
     const log = scenarioLog();
     const before = JSON.stringify(log);
-    resolveEffectivePlan(scenarioSettings({ peakMpw: 40, blockWeeks: 10, daysPerWeek: 4 }), log, TODAY);
+    resolveEffectivePlan(scenarioSettings({ peakMpw: 40, weeksShown: 10, daysPerWeek: 4 }), log, TODAY);
     resolveEffectivePlan(scenarioSettings(), log, TODAY, { fullReset: true });
     expect(JSON.stringify(log)).toBe(before);
   });
@@ -129,64 +130,93 @@ describe('post-down-week progression resumes upward from the trajectory', () => 
   });
 });
 
-// ── 4. Editing Peak re-solves the future toward the target ───
+// ── 4. Editing Peak is a ceiling in the rolling model ───────
 
-describe('editing Peak week regenerates future weeks intelligently', () => {
-  it('the plan climbs toward the peak and hands off near it (peak 30 → handoff ≥ 27)', () => {
+describe('Peak week acts as a rolling ceiling, not a block-compressing target', () => {
+  it('the plan climbs toward the peak at the buildStep rate and never exceeds it', () => {
+    // buildStep=1 mi/wk + a down week means peak≈30 is reached ~week 10, not
+    // by week 7. The visible window shows the honest climb.
     const weeks = resolveEffectivePlan(scenarioSettings({ peakMpw: 30 }), scenarioLog(), TODAY).plan.weeks;
-    const maxFuture = Math.max(...futureWeeks(weeks).map(w => w.totalPlanned));
-    expect(maxFuture).toBeGreaterThanOrEqual(27);       // actually reaches near the peak
-    expect(maxFuture).toBeLessThanOrEqual(30 + 1e-9);   // never exceeds it
-    expect(weeks[weeks.length - 1].totalPlanned).toBeGreaterThanOrEqual(27); // handoff near peak
+    for (const w of futureWeeks(weeks)) expect(w.totalPlanned).toBeLessThanOrEqual(30 + 1e-9);
+    // The future is monotonically non-decreasing on build weeks — no collapse.
+    const buildTotals = futureWeeks(weeks).filter(w => !w.isDownWeek).map(w => w.totalPlanned);
+    for (let i = 1; i < buildTotals.length; i++) expect(buildTotals[i]).toBeGreaterThanOrEqual(buildTotals[i - 1] - 1e-9);
   });
 
-  it('raising the peak raises the late-week targets; lowering it lowers them', () => {
-    const low = resolveEffectivePlan(scenarioSettings({ peakMpw: 25 }), scenarioLog(), TODAY).plan.weeks;
-    const mid = resolveEffectivePlan(scenarioSettings({ peakMpw: 30 }), scenarioLog(), TODAY).plan.weeks;
-    const high = resolveEffectivePlan(scenarioSettings({ peakMpw: 40 }), scenarioLog(), TODAY).plan.weeks;
-    const handoff = (ws: PlanWeek[]) => ws[ws.length - 1].totalPlanned;
-    expect(handoff(low)).toBeLessThan(handoff(mid));
-    expect(handoff(mid)).toBeLessThan(handoff(high));
+  it('over a long enough horizon, the plan reaches peakMpw and holds it (rolling)', () => {
+    // Aggressive buildStep + XC out of the way so the plan hits peak.
+    const weeks = resolveEffectivePlan(
+      scenarioSettings({ peakMpw: 30, buildStep: 2, weeksShown: 20, xcStartDate: '2027-01-01' }),
+      scenarioLog(), TODAY,
+    ).plan.weeks;
+    const maxTotal = Math.max(...weeks.map(w => w.totalPlanned));
+    expect(maxTotal).toBeCloseTo(30, 0);
+  });
+
+  it('raising the peak allows higher terminal targets; lowering caps sooner', () => {
+    // Push XC out so both plans build freely; use buildStep=2 so both reach.
+    const long = { weeksShown: 20, buildStep: 2, xcStartDate: '2027-01-01' };
+    const low = resolveEffectivePlan(scenarioSettings({ ...long, peakMpw: 25 }), scenarioLog(), TODAY).plan.weeks;
+    const high = resolveEffectivePlan(scenarioSettings({ ...long, peakMpw: 40 }), scenarioLog(), TODAY).plan.weeks;
+    const maxOf = (ws: PlanWeek[]) => Math.max(...ws.map(w => w.totalPlanned));
+    expect(maxOf(high)).toBeGreaterThan(maxOf(low));
+    expect(maxOf(low)).toBeLessThanOrEqual(25 + 1e-9);
+    expect(maxOf(high)).toBeLessThanOrEqual(40 + 1e-9);
   });
 
   it('no week ever exceeds the peak ceiling', () => {
     for (const peak of [22, 25, 30, 40]) {
-      const weeks = resolveEffectivePlan(scenarioSettings({ peakMpw: peak }), scenarioLog(), TODAY).plan.weeks;
+      const weeks = resolveEffectivePlan(
+        scenarioSettings({ peakMpw: peak, weeksShown: 20, xcStartDate: '2027-01-01' }),
+        scenarioLog(), TODAY,
+      ).plan.weeks;
       for (const w of futureWeeks(weeks)) expect(w.totalPlanned).toBeLessThanOrEqual(peak + 1e-9);
     }
   });
 });
 
-// ── 5. No unconfigured Week-7 collapse ───────────────────────
+// ── 5. The last visible week is NOT a special case (rolling) ─
 
-describe('the final week is a handoff, not a collapse', () => {
-  it('the last week is not a taper and is near the peak, not cut to a fraction of it', () => {
+describe('the last visible week is an ordinary week, not a forced taper/handoff', () => {
+  it('the last week carries no stale block-boundary note', () => {
     const { plan } = resolveEffectivePlan(scenarioSettings(), scenarioLog(), TODAY);
     const last = plan.weeks[plan.weeks.length - 1];
     expect(last.note).not.toBe('taper');
-    expect(last.isDownWeek).toBe(false);
-    expect(last.totalPlanned).toBeGreaterThan(20); // nowhere near the old ~12 collapse
-    // The handoff is the largest (or tied) future week, not the smallest.
-    const maxFuture = Math.max(...futureWeeks(plan.weeks).map(w => w.totalPlanned));
-    expect(last.totalPlanned).toBeGreaterThanOrEqual(maxFuture - 1e-9);
+    expect(last.note).not.toBe('handoff');
+    // It just extends the trajectory — nowhere near a collapse.
+    expect(last.totalPlanned).toBeGreaterThan(20);
+  });
+
+  it('changing the planning window does not change the training logic — only the horizon', () => {
+    // The first N weeks of a longer window are identical to the whole shorter window.
+    const short = resolveEffectivePlan(scenarioSettings({ weeksShown: 7 }), scenarioLog(), TODAY).plan.weeks;
+    const long = resolveEffectivePlan(scenarioSettings({ weeksShown: 12 }), scenarioLog(), TODAY).plan.weeks;
+    expect(long.length).toBe(12);
+    expect(short.length).toBe(7);
+    for (let i = 0; i < 7; i++) {
+      expect(long[i].totalPlanned).toBeCloseTo(short[i].totalPlanned, 5);
+      expect(long[i].longRunCap).toBeCloseTo(short[i].longRunCap, 5);
+      expect(long[i].isDownWeek).toBe(short[i].isDownWeek);
+    }
   });
 });
 
 // ── 6. End-to-end acceptance: the directional shape ──────────
 
 describe('acceptance scenario — directionally sane progression', () => {
-  it('builds up, dips once for a down week, resumes, and hands off near peak (never collapses)', () => {
+  it('builds up, dips once for a down week, resumes upward — no collapse (rolling plan)', () => {
     const { plan } = resolveEffectivePlan(scenarioSettings(), scenarioLog(), TODAY);
     const t = totals(plan.weeks);
-    // [~20, ~22, ~24, ~20.5(down), ~26, ~28, ~29.5(handoff)] — assert the SHAPE.
+    // Rolling model with buildStep=1: ~[20, 22, 24, 20.5(down), 25, 26, 27].
+    // Peak (30) is a ceiling — reached later in the rolling plan, not compressed.
     expect(t[0]).toBeCloseTo(20, 0);         // locked completed week
     expect(t[2]).toBeGreaterThan(t[1]);      // W3 builds over W2
     expect(t[3]).toBeLessThan(t[2]);         // W4 down week dips
     expect(t[4]).toBeGreaterThan(t[3]);      // W5 resumes upward
     expect(t[4]).toBeGreaterThan(t[1]);      // ...above the pre-down level
     expect(t[5]).toBeGreaterThanOrEqual(t[4]); // W6 keeps building
-    expect(t[6]).toBeGreaterThanOrEqual(27); // W7 hands off near peak 30
-    // Exactly one scheduled down week across the 7-week block.
+    expect(t[6]).toBeGreaterThanOrEqual(t[5] - 1e-9); // W7 keeps building (or holds)
+    // Exactly one scheduled down week inside the 7-week window (rolling cadence).
     expect(plan.weeks.filter(w => w.isDownWeek).length).toBe(1);
   });
 });
@@ -210,17 +240,17 @@ describe('base mileage is independent of logged hip/pain state', () => {
 
 // ── 7. The no-settings STATIC fallback obeys the same philosophy ──
 // A user who never opens Settings sees WEEK_CONFIGS directly. That scaffold
-// must not collapse at Week 7 either — a summer base block has no race, so the
-// final week hands off at the peak rather than tapering.
+// must not collapse at Week 7 either — the rolling model has no forced final
+// taper or handoff, so the last week is just a normal peak-hold week.
 
-describe('static fallback plan (no settings) builds and hands off, never tapers', () => {
-  it('the final static week is a handoff near the peak, not a taper/down collapse', () => {
+describe('static fallback plan (no settings) builds and holds, never tapers', () => {
+  it('the final static week is a normal peak-level week — not a taper, not a forced handoff', () => {
     const weeks = resolveEffectivePlan(null, scenarioLog(), TODAY).plan.weeks;
     const last = weeks[weeks.length - 1];
-    expect(last.note).toBe('handoff');
     expect(last.note).not.toBe('taper');
+    expect(last.note).not.toBe('handoff');
     expect(last.isDownWeek).toBe(false);
-    // Handoff is the largest (or tied-largest) week, not a fraction of the peak.
+    // Still at (or above) the largest total in the window — no collapse.
     const maxTotal = Math.max(...weeks.map(w => w.totalPlanned));
     expect(last.totalPlanned).toBeGreaterThanOrEqual(maxTotal - 1e-9);
   });

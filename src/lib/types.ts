@@ -88,6 +88,12 @@ export interface GlobalState {
    *  and PT clearances are never settable from here (they stay a manual toggle
    *  in the Speed plan). */
   ptNotes?: PtNote[];
+  /** Break mode (end-of-season / injury / time off).
+   *  YYYY-MM-DD the current break began; null/absent = not on break.
+   *  While set: normal build math pauses, no future settings-week generation
+   *  past the break date, no down-week cadence advancement. Cleared by the
+   *  Return-from-break flow, which conservatively re-seeds startMpw. */
+  breakStart?: string | null;
   updated_at: string;
 }
 
@@ -131,7 +137,11 @@ export interface RawSettings {
   safeDelivery: number;
   // plan shape
   daysPerWeek: number;   // run days/week (3–6)
-  blockWeeks: number;    // 4–12
+  weeksShown: number;    // 4–24 — how many future weeks the app RENDERS.
+                         // NOT a training-block boundary: the plan is rolling,
+                         // and the engine can generate arbitrarily many weeks
+                         // beyond this window. Renamed from `blockWeeks`
+                         // (migration keeps old blobs valid).
   downEvery: number;     // down week after N build weeks (3–4)
   startDate: string;     // Monday YYYY-MM-DD
   xcStartDate: string;   // Monday official XC/coach season begins. Weeks on/after

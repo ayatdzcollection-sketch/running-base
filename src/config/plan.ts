@@ -48,11 +48,11 @@ export interface WeekConfig {
   isDownWeek?: boolean;
 }
 
-// This is the no-settings FALLBACK scaffold. It mirrors the settings-driven
-// engine's philosophy (settings.ts → stepWeek): build toward the peak, take a
-// shallow absorption week at ~85% of the prior build (never a collapse), then
-// HAND OFF at the peak. A summer base block has no race, so there is no taper —
-// the block hands the runner to the coach at full volume in mid-August.
+// No-settings FALLBACK scaffold. Mirrors the settings-driven engine's rolling
+// philosophy (settings.ts → stepWeek): build toward the peak, take a shallow
+// absorption week at ~85% of the prior build (never a collapse), then hold at
+// the peak. No 'handoff' / 'taper' vocabulary — the rolling plan never ends,
+// so the last visible week is just an ordinary peak-hold week.
 export const WEEK_CONFIGS: WeekConfig[] = [
   /* W1 */ { miles: [4.0, 4.0, 4.0, 3.5, 4.5] },                                     // 20.0
   /* W2 */ { miles: [4.5, 4.5, 4.0, 4.0, 5.0] },                                     // 22.0
@@ -60,7 +60,7 @@ export const WEEK_CONFIGS: WeekConfig[] = [
   /* W4 */ { miles: [4.0, 4.0, 4.0, 3.5, 5.5], isDownWeek: true, note: 'down week' }, // 21.0 (~84% of W3)
   /* W5 */ { miles: [5.5, 5.5, 5.0, 5.0, 6.0] },                                     // 27.0
   /* W6 */ { miles: [6.0, 6.0, 5.5, 6.0, 6.5], note: 'peak' },                       // 30.0
-  /* W7 */ { miles: [6.0, 6.0, 5.5, 5.5, 7.0], note: 'handoff' },                    // 30.0 handoff, not a taper
+  /* W7 */ { miles: [6.0, 6.0, 5.5, 5.5, 7.0] },                                     // 30.0 continued
 ];
 
 // ── Derived plan (computed from config above) ──────────────

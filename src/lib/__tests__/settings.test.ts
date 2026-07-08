@@ -93,7 +93,7 @@ describe('buildWeekConfigsFromSettings — safety baked into the shape', () => {
   });
 
   it('build weeks never grow more than ~10% over the last BUILD week (a down week is absorption, not a new baseline)', () => {
-    const cfgs = buildWeekConfigsFromSettings(raw({ startMpw: 20, peakMpw: 60, buildStep: 4, blockWeeks: 6, downEvery: 4 }));
+    const cfgs = buildWeekConfigsFromSettings(raw({ startMpw: 20, peakMpw: 60, buildStep: 4, weeksShown: 6, downEvery: 4 }));
     const totals = cfgs.map(c => c.miles.reduce((a, b) => a + b, 0));
     // The invariant is week-over-week growth vs the last real BUILD week — the
     // week after a down week may legitimately jump back up toward the trajectory
@@ -106,22 +106,18 @@ describe('buildWeekConfigsFromSettings — safety baked into the shape', () => {
     }
   });
 
-  it('inserts down weeks on the configured cadence and HANDS OFF at the peak (no forced final taper)', () => {
-    const cfgs = buildWeekConfigsFromSettings(raw({ blockWeeks: 7, downEvery: 3 }));
-    // A scheduled down week still appears on the cadence...
+  it('inserts down weeks on the configured cadence with no stale block-boundary notes (rolling plan)', () => {
+    const cfgs = buildWeekConfigsFromSettings(raw({ weeksShown: 12, downEvery: 3, peakMpw: 40 }));
+    // A scheduled down week still appears on the cadence.
     expect(cfgs.some(c => c.note === 'down week')).toBe(true);
-    // ...but the FINAL week is a handoff near the peak, never a taper collapse.
-    const last = cfgs[cfgs.length - 1];
-    expect(last.note).toBe('handoff');
-    expect(last.isDownWeek).toBe(false);
-    // No collapse: the handoff is not cut below the scheduled down weeks.
-    const lastTotal = last.miles.reduce((a, b) => a + b, 0);
-    const downTotals = cfgs.filter(c => c.isDownWeek).map(c => c.miles.reduce((a, b) => a + b, 0));
-    for (const dt of downTotals) expect(lastTotal).toBeGreaterThan(dt);
+    // The rolling model has no 'handoff' or 'taper' vocabulary — the plan just
+    // keeps going, and the last visible week is not a special case.
+    for (const c of cfgs) expect(c.note).not.toBe('handoff');
+    for (const c of cfgs) expect(c.note).not.toBe('taper');
   });
 
   it('peakMpw binds — no week total exceeds it', () => {
-    const cfgs = buildWeekConfigsFromSettings(raw({ startMpw: 20, peakMpw: 22, buildStep: 5, blockWeeks: 8, downEvery: 4 }));
+    const cfgs = buildWeekConfigsFromSettings(raw({ startMpw: 20, peakMpw: 22, buildStep: 5, weeksShown: 8, downEvery: 4 }));
     for (const c of cfgs) {
       expect(c.miles.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(22 + 1e-9);
     }
@@ -157,11 +153,11 @@ describe('resetToRecentActuals — fresh base from recent training, not old peak
   });
 
   it('carries over preferences (goal, days/week, block length, governors)', () => {
-    const custom = { ...defaultSettings(NOW2), goalMiles: 200, daysPerWeek: 4, blockWeeks: 10, capPct: 108 };
+    const custom = { ...defaultSettings(NOW2), goalMiles: 200, daysPerWeek: 4, weeksShown: 10, capPct: 108 };
     const s = resetToRecentActuals(custom, brokenSeason, '2026-07-07', NOW2);
     expect(s.goalMiles).toBe(200);
     expect(s.daysPerWeek).toBe(4);
-    expect(s.blockWeeks).toBe(10);
+    expect(s.weeksShown).toBe(10);
     expect(s.capPct).toBe(108);
   });
 
