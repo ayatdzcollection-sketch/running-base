@@ -73,6 +73,51 @@ export interface GlobalState {
   settings?: RawSettings | null;
   /** Logged race results (Stage F). Display-only — never an engine input. */
   races?: RaceResult[];
+  // ── v4 additive home widgets (all optional; absent = feature unused) ──
+  // None of these is ever read by the speed ladder, pain gate, HR caps, or the
+  // long-run cap. They are human-facing journals and advisory displays only.
+  /** Free-text daily notes, keyed by date (YYYY-MM-DD). Never parsed. */
+  notes?: Record<string, string>;
+  /** Weekly subjective check-ins, keyed by weekStart (Mon YYYY-MM-DD).
+   *  Display-only — a poor week may SUGGEST easing, but never auto-advances a
+   *  speed state or relaxes any gate. */
+  checkins?: Record<string, WeeklyCheckin>;
+  /** Shoe rotation. Mileage is advisory only; never feeds the cap/gate math. */
+  shoes?: Shoe[];
+  /** Local PT/coach notes-to-self. NOT messaging — nothing is sent anywhere,
+   *  and PT clearances are never settable from here (they stay a manual toggle
+   *  in the Speed plan). */
+  ptNotes?: PtNote[];
+  updated_at: string;
+}
+
+// ── v4: weekly check-in (subjective load monitoring, display-only) ──
+export interface WeeklyCheckin {
+  weekStart: string;     // Monday YYYY-MM-DD
+  sleep: number;         // 1–5 (5 = slept great)
+  soreness: number;      // 1–5 (5 = very sore) — higher is worse
+  energy: number;        // 1–5 (5 = full of energy)
+  stress: number;        // 1–5 (5 = high life stress) — higher is worse
+  note?: string;
+  updated_at: string;
+}
+
+// ── v4: shoe rotation (advisory mileage tracking) ──
+export interface Shoe {
+  id: string;
+  name: string;
+  startDate: string;         // miles counted from this date (YYYY-MM-DD)
+  retiredAt?: string | null; // null/absent = still in rotation
+  baseMiles: number;         // miles already on the shoe before tracking began
+  retireAt: number;          // advisory retirement threshold (miles)
+  updated_at: string;
+}
+
+// ── v4: local PT / coach note (a private log, NOT a message thread) ──
+export interface PtNote {
+  id: string;
+  date: string;              // YYYY-MM-DD
+  body: string;
   updated_at: string;
 }
 

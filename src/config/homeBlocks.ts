@@ -6,7 +6,9 @@
 // Safety-critical blocks (Today, Week progress, Hip+speed status, Pain
 // logger) are NON-hideable — they can be reordered but never turned off,
 // so a corrupted or hand-edited setting can't bury the safety surfaces.
-// Proposed blocks (real: false) are stubs, hidden by default, toggleable.
+// Secondary widgets (notes, check-in, shoes, coach log, heat) are real and
+// functional but HIDDEN BY DEFAULT (defaultHidden) so the default home stays
+// focused — the user opts into them from Settings → Home layout.
 // ============================================================
 
 export type BlockId =
@@ -18,12 +20,14 @@ export type BlockId =
 export interface BlockMeta {
   id: BlockId;
   label: string;
-  /** false = a proposed stub, not built yet (hidden by default). */
+  /** false = a proposed stub, not built yet. All blocks ship real now. */
   real: boolean;
   /** false = can be reordered but never hidden (safety surfaces). */
   hideable: boolean;
   safetyCritical: boolean;
-  /** Stub description shown in the layout editor. */
+  /** true = real and functional, but off in a fresh layout (opt-in). */
+  defaultHidden?: boolean;
+  /** Short description shown in the layout editor. */
   desc?: string;
 }
 
@@ -41,16 +45,16 @@ export const HOME_BLOCKS: BlockMeta[] = [
   { id: 'award',      label: 'Award tracker',        real: true,  hideable: true,  safetyCritical: false },
   { id: 'backup',     label: 'Backup / restore',     real: true,  hideable: true,  safetyCritical: false },
   { id: 'evidence',   label: 'Evidence',             real: true,  hideable: true,  safetyCritical: false },
-  // ── Proposed blocks (Stage H) — polished stubs, hidden by default ──
-  { id: 'notes',   label: 'Daily notes',         real: false, hideable: true, safetyCritical: false, desc: 'Free-text note per run: how it felt, terrain, weather.' },
-  { id: 'checkin', label: 'Weekly check-in',     real: false, hideable: true, safetyCritical: false, desc: 'Sleep, soreness, and RPE trend to catch overload early.' },
-  { id: 'shoes',   label: 'Shoe mileage',        real: false, hideable: true, safetyCritical: false, desc: 'Rotate pairs and retire them at a mileage threshold.' },
-  { id: 'coach',   label: 'Coach / PT thread',   real: false, hideable: true, safetyCritical: false, desc: 'Shared notes and clearance sign-off with your coach.' },
-  { id: 'weather', label: 'Heat-adjusted effort',real: false, hideable: true, safetyCritical: false, desc: 'Nudge the easy HR target in heat and humidity.' },
+  // ── Secondary widgets (Stage H → v4) — real, functional, off by default ──
+  { id: 'notes',   label: 'Daily notes',         real: true, hideable: true, safetyCritical: false, defaultHidden: true, desc: 'Free-text note per day: how it felt, terrain, weather.' },
+  { id: 'checkin', label: 'Weekly check-in',     real: true, hideable: true, safetyCritical: false, defaultHidden: true, desc: 'Sleep, soreness, energy and stress to catch overload early. Advisory only.' },
+  { id: 'shoes',   label: 'Shoe mileage',        real: true, hideable: true, safetyCritical: false, defaultHidden: true, desc: 'Track pairs and retire them at a mileage threshold. Advisory only.' },
+  { id: 'coach',   label: 'Coach / PT log',      real: true, hideable: true, safetyCritical: false, defaultHidden: true, desc: 'A private log of what your coach or PT said. Nothing is sent.' },
+  { id: 'weather', label: 'Heat-adjusted effort',real: true, hideable: true, safetyCritical: false, defaultHidden: true, desc: 'Slow the pace to hold effort in heat. Never changes a cap or gate.' },
 ];
 
-/** Ids of the proposed stubs — hidden by default in a fresh layout. */
-export const STUB_IDS: BlockId[] = HOME_BLOCKS.filter(b => !b.real).map(b => b.id);
+/** Ids hidden in a fresh layout — real but opt-in secondary widgets. */
+export const DEFAULT_HIDDEN_IDS: BlockId[] = HOME_BLOCKS.filter(b => b.defaultHidden).map(b => b.id);
 
 export function blockMeta(id: string): BlockMeta | undefined {
   return HOME_BLOCKS.find(b => b.id === id);

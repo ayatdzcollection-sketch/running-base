@@ -33,6 +33,10 @@ export function defaultGlobalState(nowIso: string): GlobalState {
     acceptedWeeks: {},
     settings: null,   // v3: null = pure static plan (original behavior)
     races: [],        // v3: display-only race log
+    notes: {},        // v4: daily notes, keyed by date
+    checkins: {},     // v4: weekly check-ins, keyed by weekStart
+    shoes: [],        // v4: shoe rotation (advisory)
+    ptNotes: [],      // v4: local PT/coach notes-to-self
     updated_at: nowIso,
   };
 }
@@ -64,6 +68,11 @@ export function migrateGlobalState(raw: unknown, nowIso: string): GlobalState {
   // v3 additive fields — clamp corrupt shapes without discarding valid data.
   if (!Array.isArray(out.races)) out.races = [];
   if (out.settings !== null && !isRecord(out.settings)) out.settings = null;
+  // v4 additive widget stores — clamp corrupt shapes, never discard valid data.
+  if (!isRecord(out.notes)) out.notes = {};
+  if (!isRecord(out.checkins)) out.checkins = {};
+  if (!Array.isArray(out.shoes)) out.shoes = [];
+  if (!Array.isArray(out.ptNotes)) out.ptNotes = [];
 
   // Stamp version LAST so a partially-old object still gets every key above.
   const ver = Number(out.schemaVersion);

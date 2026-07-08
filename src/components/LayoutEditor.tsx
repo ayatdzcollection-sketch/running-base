@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { HOME_BLOCKS, STUB_IDS, type BlockId } from '../config/homeBlocks';
+import { HOME_BLOCKS, DEFAULT_HIDDEN_IDS, type BlockId } from '../config/homeBlocks';
 import { sanitizeOrder, sanitizeHidden, moveBlock, toggleHidden } from '../lib/layout';
 
 // Home layout editor (Settings → Home layout). Real <button> reorder controls
@@ -34,13 +34,13 @@ export default function LayoutEditor({ layoutOrder, layoutOff, onChange }: Props
     setAnnounce(`${HOME_BLOCKS.find(b => b.id === id)?.label} ${next.includes(id) ? 'hidden' : 'shown'}`);
   }
   function resetLayout() {
-    // Registry default order, proposed stubs hidden. Safety blocks are already
-    // non-hideable, so this can never bury a safety surface.
-    onChange(HOME_BLOCKS.map(b => b.id), [...STUB_IDS]);
+    // Registry default order, secondary widgets hidden. Safety blocks are
+    // already non-hideable, so this can never bury a safety surface.
+    onChange(HOME_BLOCKS.map(b => b.id), [...DEFAULT_HIDDEN_IDS]);
     setAnnounce('Home layout reset to default');
   }
   const isDefault = order.join(',') === HOME_BLOCKS.map(b => b.id).join(',')
-    && [...off].sort().join(',') === [...STUB_IDS].sort().join(',');
+    && [...off].sort().join(',') === [...DEFAULT_HIDDEN_IDS].sort().join(',');
 
   return (
     <div className="rounded-xl border border-border bg-[#0b1220] overflow-hidden">
@@ -57,7 +57,7 @@ export default function LayoutEditor({ layoutOrder, layoutOff, onChange }: Props
       {open && (
         <div className="px-3.5 pb-2">
           <span className="block text-[11px] leading-relaxed text-slate-600 pt-0.5 pb-1.5">
-            Reorder blocks or hide them. Greyed rows are proposed, not built yet.
+            Reorder blocks or hide them. Some extras are off by default — turn on what you want. Safety blocks stay pinned.
           </span>
           <div aria-live="polite" className="sr-only">{announce}</div>
           {order.map((id, i) => {
@@ -82,7 +82,7 @@ export default function LayoutEditor({ layoutOrder, layoutOff, onChange }: Props
                       <span className="inline-flex px-1.5 rounded-full font-display text-[9px] font-semibold tracking-[0.06em] bg-slate-500/[0.12] text-slate-500 border border-border">SOON</span>
                     )}
                   </div>
-                  {!b.real && b.desc && <span className="text-[11px] leading-tight text-slate-600">{b.desc}</span>}
+                  {b.desc && <span className="text-[11px] leading-tight text-slate-600">{b.desc}</span>}
                 </div>
                 {b.hideable ? (
                   <button

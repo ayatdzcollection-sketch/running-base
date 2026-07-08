@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
-import type { GlobalState, RaceResult, RawSettings, RunEntry, RunState, SyncStatus } from './lib/types';
+import type { GlobalState, PtNote, RaceResult, RawSettings, RunEntry, RunState, Shoe, SyncStatus, WeeklyCheckin as WeeklyCheckinType } from './lib/types';
 import {
   getStoredCode, setStoredCode,
   loadLocal, saveLocal,
@@ -16,7 +16,7 @@ import { getAward, todayStr, PLAN_START_DATE, HR } from './config/plan';
 import { resolveEffectivePlan, planTotalMiles } from './lib/planOverlay';
 import { defaultSettings, effectiveSettings, resetToRecentActuals } from './lib/settings';
 import { FLAGS } from './config/flags';
-import { HOME_BLOCKS, STUB_IDS, blockMeta, type BlockId } from './config/homeBlocks';
+import { HOME_BLOCKS, DEFAULT_HIDDEN_IDS, blockMeta, type BlockId } from './config/homeBlocks';
 import { sanitizeOrder, sanitizeHidden } from './lib/layout';
 import type { PlanDay } from './lib/types';
 import {
@@ -44,8 +44,22 @@ import BackupRestore from './components/BackupRestore';
 import SpeedPlan from './components/SpeedPlan';
 import GenerateWeek from './components/GenerateWeek';
 import StubCard from './components/StubCard';
+import DailyNotes from './components/DailyNotes';
+import WeeklyCheckin from './components/WeeklyCheckin';
+import ShoeTracker from './components/ShoeTracker';
+import CoachNotes from './components/CoachNotes';
+import HeatEffort from './components/HeatEffort';
 
 const PLAN_END = '2026-08-14';
+
+/** Replace an item with a matching id, or append it. Used by the shoe store. */
+function upsertById<T extends { id: string }>(list: T[], item: T): T[] {
+  const i = list.findIndex(x => x.id === item.id);
+  if (i === -1) return [...list, item];
+  const next = list.slice();
+  next[i] = item;
+  return next;
+}
 
 export default function App() {
   const today = todayStr();
@@ -81,7 +95,7 @@ export default function App() {
 
   // Home layout (Stage G). With no settings yet, stubs are hidden by default.
   const layoutOrder = sanitizeOrder(settings?.layoutOrder, HOME_BLOCKS);
-  const layoutOff = sanitizeHidden(settings?.layoutOff ?? STUB_IDS, HOME_BLOCKS);
+  const layoutOff = sanitizeHidden(settings?.layoutOff ?? DEFAULT_HIDDEN_IDS, HOME_BLOCKS);
 
   const todayDay = plan.dateToDay.get(today) ?? null;
   const todayWeek = plan.dateToWeek.get(today) ?? null;
@@ -278,6 +292,14 @@ export default function App() {
     [accessCode],
   );
 
+  // ── v4 secondary widget stores (notes / check-ins / shoes / PT log) ──
+  // Each is a plain additive GlobalState field, persisted and synced through
+  // updateGlobals. NONE is ever read by a gate, cap, or the speed ladder.
+  const notes = globals.notes ?? {};
+  const checkins = globals.checkins ?? {};
+  const shoes = globals.shoes ?? [];
+  const ptNotes = globals.ptNotes ?? [];
+
   // One-time adoption of bb_settings / bb_races mirrors (e.g. from the design
   // prototype) when globals has none yet — additive, never overwrites existing.
   useEffect(() => {
@@ -466,6 +488,40 @@ export default function App() {
         return <BackupRestore runState={runState} globals={globals} onRestore={handleRestore} />;
       case 'evidence':
         return <ResearchFooter hrBand={hrBand} hrMax={eff ? eff.hrMax : HR.hrmax} />;
+      // ── v4 secondary widgets — real, but the flag stays a kill switch ──
+      case 'notes':
+        return FLAGS.dailyNotes ? (
+          <DailyNotes
+            notes={notes} today={today}
+            onSave={(date, text) => updateGlobals({ notes: { ...notes, [date]: text } })}
+            onDelete={date => { const n = { ...notes }; delete n[date]; updateGlobals({ notes: n }); }}
+          />
+        ) : <StubCard meta={meta} />;
+      case 'checkin':
+        return FLAGS.weeklyCheckin ? (
+          <WeeklyCheckin
+            checkins={checkins} today={today}
+            onSave={(c: WeeklyCheckinType) => updateGlobals({ checkins: { ...checkins, [c.weekStart]: c } })}
+          />
+        ) : <StubCard meta={meta} />;
+      case 'shoes':
+        return FLAGS.shoeMileage ? (
+          <ShoeTracker
+            shoes={shoes} runState={runState} today={today}
+            onSave={(s: Shoe) => updateGlobals({ shoes: upsertById(shoes, s) })}
+            onDelete={id => updateGlobals({ shoes: shoes.filter(s => s.id !== id) })}
+          />
+        ) : <StubCard meta={meta} />;
+      case 'coach':
+        return FLAGS.coachThread ? (
+          <CoachNotes
+            notes={ptNotes} today={today}
+            onAdd={(n: PtNote) => updateGlobals({ ptNotes: [n, ...ptNotes] })}
+            onDelete={id => updateGlobals({ ptNotes: ptNotes.filter(n => n.id !== id) })}
+          />
+        ) : <StubCard meta={meta} />;
+      case 'weather':
+        return FLAGS.heatEffort ? <HeatEffort /> : <StubCard meta={meta} />;
       default:
         return null;
     }
@@ -489,7 +545,7 @@ export default function App() {
           layoutSection={
             <LayoutEditor
               layoutOrder={settings?.layoutOrder}
-              layoutOff={settings?.layoutOff ?? STUB_IDS}
+              layoutOff={settings?.layoutOff ?? DEFAULT_HIDDEN_IDS}
               onChange={saveLayout}
             />
           }

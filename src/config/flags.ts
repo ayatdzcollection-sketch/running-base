@@ -37,14 +37,16 @@ export const FLAGS = {
    */
   RACE_ADAPTIVE_TRAINING: false,
 
-  // ── Proposed home blocks (Stage H) — stubs only, no functionality. ──
-  // Each row is still shown in Settings → Home layout (greyed, "SOON").
-  // Flipping one to true reveals its polished stub card; none is interactive.
-  dailyNotes: false,
-  weeklyCheckin: false,
-  shoeMileage: false,
-  coachThread: false,
-  heatEffort: false,
+  // ── Secondary home widgets (v4) — real, functional, hidden by default. ──
+  // Each is off in a fresh layout (see DEFAULT_HIDDEN_IDS) and opt-in from
+  // Settings → Home layout. Flags act as compile-time kill switches: flip one
+  // back to false and its case renders the polished inert stub instead. None
+  // can raise a cap, relax a gate, or send anything anywhere.
+  dailyNotes: true,
+  weeklyCheckin: true,
+  shoeMileage: true,
+  coachThread: true,
+  heatEffort: true,
 } as const;
 
 export type FlagKey = keyof typeof FLAGS;

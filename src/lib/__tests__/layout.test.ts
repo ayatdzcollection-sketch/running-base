@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { sanitizeOrder, sanitizeHidden, moveBlock, toggleHidden } from '../layout';
-import { HOME_BLOCKS, STUB_IDS, type BlockId } from '../../config/homeBlocks';
+import { HOME_BLOCKS, DEFAULT_HIDDEN_IDS, type BlockId } from '../../config/homeBlocks';
 
 const B = HOME_BLOCKS;
 const DEFAULT_ORDER = B.map(b => b.id);
@@ -83,8 +83,11 @@ describe('registry invariants (regression guard)', () => {
   it('ids are unique and the default order contains each exactly once', () => {
     expect(new Set(DEFAULT_ORDER).size).toBe(DEFAULT_ORDER.length);
   });
-  it('STUB_IDS are exactly the non-real blocks and all hideable', () => {
-    expect(STUB_IDS).toEqual(B.filter(b => !b.real).map(b => b.id));
-    for (const id of STUB_IDS) expect(B.find(b => b.id === id)!.hideable).toBe(true);
+  it('DEFAULT_HIDDEN_IDS are exactly the defaultHidden blocks and all hideable', () => {
+    expect(DEFAULT_HIDDEN_IDS).toEqual(B.filter(b => b.defaultHidden).map(b => b.id));
+    for (const id of DEFAULT_HIDDEN_IDS) expect(B.find(b => b.id === id)!.hideable).toBe(true);
+  });
+  it('every default-hidden block is real (no dead stubs shipped)', () => {
+    for (const b of B) if (b.defaultHidden) expect(b.real).toBe(true);
   });
 });

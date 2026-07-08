@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildBackup, parseBackup, mergeStates, mergeGlobalStates, applySeed } from '../storage';
 import { defaultGlobalState } from '../migrate';
-import type { GlobalState, RaceResult, RunState } from '../types';
+import type { GlobalState, PtNote, RaceResult, RunState, Shoe, WeeklyCheckin } from '../types';
 
 const NOW = '2026-07-07T12:00:00Z';
 
@@ -111,5 +111,36 @@ describe('mergeGlobalStates — field-aware, non-destructive', () => {
     const merged = mergeGlobalStates(local, remote);
     expect(Object.keys(merged.acceptedWeeks).sort()).toEqual(['2026-07-13', '2026-07-20']);
     expect(merged.acceptedWeeks['2026-07-13'][0].why).toBe('local'); // local wins the tie
+  });
+
+  it('unions daily notes without dropping either device (local wins ties)', () => {
+    const local = g({ notes: { '2026-07-01': 'local one', '2026-07-02': 'only local' } });
+    const remote = g({ notes: { '2026-07-01': 'remote one', '2026-07-03': 'only remote' } });
+    const merged = mergeGlobalStates(local, remote);
+    expect(Object.keys(merged.notes!).sort()).toEqual(['2026-07-01', '2026-07-02', '2026-07-03']);
+    expect(merged.notes!['2026-07-01']).toBe('local one');
+  });
+
+  it('merges check-ins by week, newest updated_at wins', () => {
+    const ck = (weekStart: string, soreness: number, updated_at: string): WeeklyCheckin =>
+      ({ weekStart, sleep: 3, soreness, energy: 3, stress: 2, updated_at });
+    const local = g({ checkins: { '2026-07-06': ck('2026-07-06', 2, '2026-07-06T18:00:00Z') } });
+    const remote = g({ checkins: { '2026-07-06': ck('2026-07-06', 5, '2026-07-07T09:00:00Z'), '2026-06-29': ck('2026-06-29', 1, NOW) } });
+    const merged = mergeGlobalStates(local, remote);
+    expect(Object.keys(merged.checkins!).sort()).toEqual(['2026-06-29', '2026-07-06']);
+    expect(merged.checkins!['2026-07-06'].soreness).toBe(5); // remote is newer
+  });
+
+  it('merges shoes and PT notes by id, newest wins, keeps device-only entries', () => {
+    const shoe = (id: string, updated_at: string): Shoe =>
+      ({ id, name: id, startDate: '2026-06-01', baseMiles: 0, retireAt: 400, updated_at });
+    const note = (id: string, updated_at: string): PtNote =>
+      ({ id, date: '2026-07-01', body: id, updated_at });
+    const local = g({ shoes: [shoe('a', '2026-07-06T10:00:00Z')], ptNotes: [note('n1', NOW)] });
+    const remote = g({ shoes: [shoe('a', '2026-07-07T10:00:00Z'), shoe('b', NOW)], ptNotes: [note('n2', NOW)] });
+    const merged = mergeGlobalStates(local, remote);
+    expect(merged.shoes!.map(s => s.id).sort()).toEqual(['a', 'b']);
+    expect(merged.shoes!.find(s => s.id === 'a')!.updated_at).toBe('2026-07-07T10:00:00Z');
+    expect(merged.ptNotes!.map(n => n.id).sort()).toEqual(['n1', 'n2']);
   });
 });

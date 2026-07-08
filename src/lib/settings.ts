@@ -12,7 +12,7 @@
 import type { RawSettings, RunState, SpeedStateNum } from './types';
 import type { WeekConfig } from '../config/plan';
 import { PLAN_START_DATE, WEEK_CONFIGS, HR, AWARD } from '../config/plan';
-import { STUB_IDS } from '../config/homeBlocks';
+import { DEFAULT_HIDDEN_IDS } from '../config/homeBlocks';
 import { TUNABLES } from '../config/tunables';
 import {
   mondayOf, nextMonday, addDaysStr, weeklyActuals, trailing30Longest, nextLongFrom, floorToHalf,
@@ -44,8 +44,8 @@ export function defaultSettings(nowIso: string): RawSettings {
     capPct: Math.round(TUNABLES.CAP_FACTOR * 100),
     pfNeeded: 4,
     adaptive: true,
-    layoutOrder: [],            // [] = registry default order (Stage G)
-    layoutOff: [...STUB_IDS],   // proposed stubs are hidden by default
+    layoutOrder: [],                    // [] = registry default order (Stage G)
+    layoutOff: [...DEFAULT_HIDDEN_IDS],  // secondary widgets are hidden by default
     updated_at: nowIso,
   };
 }
@@ -77,7 +77,7 @@ export function migrateSettings(raw: unknown, nowIso: string): RawSettings | nul
   } else if (isRecord(raw.layoutOff)) {
     layoutOff = Object.keys(raw.layoutOff).filter(k => raw.layoutOff && (raw.layoutOff as Record<string, unknown>)[k] === true);
   } else {
-    layoutOff = [...STUB_IDS];
+    layoutOff = [...DEFAULT_HIDDEN_IDS];
   }
   const layoutOrder = Array.isArray(raw.layoutOrder)
     ? raw.layoutOrder.filter(x => typeof x === 'string')

@@ -200,7 +200,39 @@ export function mergeGlobalStates(local: GlobalState, remote: GlobalState): Glob
   // acceptedWeeks: union of week keys; local wins ties (local edits are freshest).
   base.acceptedWeeks = { ...(remote.acceptedWeeks ?? {}), ...(local.acceptedWeeks ?? {}) };
 
+  // v4 widget stores — same non-destructive spirit: never let an older blob
+  // drop journal/rotation data the other device recorded.
+  // notes: plain strings (no per-note timestamp) → union, local wins ties.
+  base.notes = { ...(remote.notes ?? {}), ...(local.notes ?? {}) };
+  // checkins: keyed by weekStart, newest updated_at per week wins.
+  base.checkins = mergeRecordNewest(local.checkins ?? {}, remote.checkins ?? {});
+  // shoes / ptNotes: merge by id, newest updated_at per id wins.
+  base.shoes = mergeByIdNewest(local.shoes ?? [], remote.shoes ?? []);
+  base.ptNotes = mergeByIdNewest(local.ptNotes ?? [], remote.ptNotes ?? []);
+
   return base;
+}
+
+/** Merge two id-keyed lists, keeping the newest updated_at per id. */
+function mergeByIdNewest<T extends { id: string; updated_at: string }>(a: T[], b: T[]): T[] {
+  const by = new Map<string, T>();
+  for (const x of a) by.set(x.id, x);
+  for (const x of b) {
+    const cur = by.get(x.id);
+    if (!cur || x.updated_at > cur.updated_at) by.set(x.id, x);
+  }
+  return [...by.values()];
+}
+
+/** Merge two key→record maps, keeping the newest updated_at per key. */
+function mergeRecordNewest<T extends { updated_at: string }>(
+  a: Record<string, T>, b: Record<string, T>,
+): Record<string, T> {
+  const out: Record<string, T> = { ...a };
+  for (const [k, v] of Object.entries(b)) {
+    if (!out[k] || v.updated_at > out[k].updated_at) out[k] = v;
+  }
+  return out;
 }
 
 // ── Supabase row mapping (v2 columns are snake_case) ───────
