@@ -42,6 +42,13 @@ export const TUNABLES = {
    *  Contrast the DEEPER pain-driven DOWN_WEEK_CUT above, which prioritises
    *  recovery after an actual pain spike. */
   SCHEDULED_DOWN_CUT: 0.15,
+  /** Peak-seeking reference horizon (weeks). Each build week closes ~1/N of the
+   *  remaining gap to peakMpw, so raising/lowering the peak visibly reshapes the
+   *  future — but this N is a FIXED constant, NOT the display window, so
+   *  `weeksShown` never affects the training slope (no horizon compression).
+   *  buildStep is the floor and +10%/wk the ceiling, so the seek only accelerates
+   *  a climb toward a distant peak; a near peak still moves at buildStep. */
+  PEAK_RAMP_WEEKS: 4,
 
   // ── Speed permission machine ───────────────────────────────
   /** Pain-free easy-run streak required to step INTO each state (key = target). */

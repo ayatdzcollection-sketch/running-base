@@ -80,34 +80,39 @@ describe('splitWeek distributes the easy budget EXACTLY (no silent round-down)',
 // ── build step honored in the rolling plan ───────────────────
 
 describe('the weekly build step is honored in the displayed plan', () => {
-  it('buildStep=2.0: consecutive BUILD weeks rise by ~2.0 until the peak', () => {
+  // buildStep is the MINIMUM weekly increase (a FLOOR). When the peak is close
+  // the plan moves at exactly buildStep; when the peak is far the peak-seek term
+  // can pull the climb faster (up to the +10%/wk cap), so raising the peak is
+  // visible. These tests pin the floor + the calibrated buildStep=2/peak=30 case.
+
+  it('buildStep=2.0 with peak 30 rises by exactly ~2.0/wk (the calibrated case)', () => {
     const weeks = resolveEffectivePlan(s({ buildStep: 2.0 }), scenarioLog(), TODAY).plan.weeks;
     const t = totals(weeks);
-    // W2→W3 and W5→W6 are build-to-build steps (W4 is the down week).
+    // W2→W3 and W5→W6 are build-to-build steps (W4 is the down week). Here the
+    // gap to peak is small enough that buildStep is the binding rate.
     expect(t[2] - t[1]).toBeCloseTo(2.0, 1);   // 22 → 24
     expect(t[5] - t[4]).toBeCloseTo(2.0, 1);   // 26 → 28
     expect(t[6]).toBeCloseTo(30, 1);           // reaches the peak by W7
   });
 
-  it('buildStep=1.5: consecutive BUILD weeks rise by ~1.5', () => {
-    const weeks = resolveEffectivePlan(s({ buildStep: 1.5 }), scenarioLog(), TODAY).plan.weeks;
-    const t = totals(weeks);
-    expect(t[2] - t[1]).toBeCloseTo(1.5, 1);   // 22 → 23.5
-    expect(t[5] - t[4]).toBeCloseTo(1.5, 1);   // 25 → 26.5
-    expect(t[6]).toBeGreaterThanOrEqual(27.5); // near the peak
+  it('buildStep is a FLOOR: every build week rises by at least buildStep (until it caps at peak)', () => {
+    for (const bs of [1.0, 1.5, 2.0]) {
+      const weeks = resolveEffectivePlan(s({ buildStep: bs, peakMpw: 40 }), scenarioLog(), TODAY).plan.weeks;
+      const t = totals(weeks);
+      let lastBuild = t[1]; // W2 locked (22)
+      for (let i = 2; i < weeks.length; i++) {
+        if (weeks[i].isDownWeek) continue;
+        // grows by at least buildStep (minus a half-step of rounding slack) while below peak
+        if (t[i] < 40 - 1e-9) expect(t[i] - lastBuild).toBeGreaterThanOrEqual(bs - 0.5 - 1e-9);
+        lastBuild = t[i];
+      }
+    }
   });
 
-  it('buildStep=1.0: consecutive BUILD weeks rise by ~1.0 (honest, not trimmed to ~0.5)', () => {
-    const weeks = resolveEffectivePlan(s({ buildStep: 1.0 }), scenarioLog(), TODAY).plan.weeks;
-    const t = totals(weeks);
-    expect(t[2] - t[1]).toBeCloseTo(1.0, 1);   // 22 → 23  (previously showed 22.5)
-    expect(t[5] - t[4]).toBeCloseTo(1.0, 1);   // 24 → 25
-  });
-
-  it('a bigger build step reaches the peak sooner; none ever exceeds it', () => {
+  it('a bigger build step climbs at least as fast and reaches a higher terminal week', () => {
     const slow = totals(resolveEffectivePlan(s({ buildStep: 1.0 }), scenarioLog(), TODAY).plan.weeks);
     const fast = totals(resolveEffectivePlan(s({ buildStep: 2.0 }), scenarioLog(), TODAY).plan.weeks);
-    expect(fast[6]).toBeGreaterThan(slow[6]);         // 30 vs 26
+    expect(fast[6]).toBeGreaterThan(slow[6]);         // 30 vs ~27.5
     for (const v of fast) expect(v).toBeLessThanOrEqual(30 + 1e-9); // peak stays a ceiling
   });
 

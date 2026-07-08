@@ -439,11 +439,17 @@ export function stepWeek(
     // capped at the peak. Volume stays flat while the coach drives the work.
     total = Math.min(prev.traj, eff.peakMpw);
   } else {
-    // Build toward peakMpw honestly. `buildStep` is THE slope (not a floor);
-    // +10%/wk over the last real build is the hard safety ceiling; peakMpw is
-    // the terminal cap. Once the plan reaches peak it holds there rolling
-    // forward — no compression to fit a fake window.
-    const step = Math.min(eff.buildStep, prev.traj * (TUNABLES.WEEKLY_GROWTH_MAX - 1));
+    // Ramp toward peakMpw. `buildStep` is the MINIMUM weekly increase; when the
+    // peak is still far the plan closes a share (~1/PEAK_RAMP_WEEKS) of the gap
+    // each week so that raising or lowering the peak visibly reshapes the future
+    // — but never faster than the +10%/wk safety ceiling, and never past the
+    // peak. The gap term uses a FIXED reference horizon, NOT weeksShown, so the
+    // display window never changes the training slope (no horizon compression).
+    // A near peak (small gap) moves at buildStep; a distant peak accelerates up
+    // to the safety cap; peakMpw is always the terminal ceiling.
+    const cap = prev.traj * (TUNABLES.WEEKLY_GROWTH_MAX - 1);
+    const gapSeek = Math.max(0, eff.peakMpw - prev.traj) / TUNABLES.PEAK_RAMP_WEEKS;
+    const step = Math.min(cap, Math.max(eff.buildStep, gapSeek));
     total = Math.min(prev.traj + step, eff.peakMpw);
   }
 
