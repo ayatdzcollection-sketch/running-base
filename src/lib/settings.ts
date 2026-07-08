@@ -38,7 +38,10 @@ export function defaultSettings(nowIso: string): RawSettings {
     xcStartDate: addDaysStr(PLAN_START_DATE, WEEK_CONFIGS.length * 7),
     startMpw: Math.round(staticTotal),
     peakMpw: 30,
-    buildStep: 1,
+    // +1.5 mi/wk: a summer-XC-base-appropriate default (~7.5% at 20mpw, well
+    // inside the +10%/wk safety cap) that reaches a 20→30 build in ~7 weeks.
+    // Still user-editable 0.5–4; the safety cap governs regardless.
+    buildStep: 1.5,
     trailingLongest: TUNABLES.TRAILING_FALLBACK,
     hrEasyMin: HR.easyMin,
     hrEasyMax: HR.easyMax,
@@ -306,28 +309,52 @@ export function roundHalf(x: number): number {
 }
 
 /** Split a weekly total into run-day miles: long run last, day-before-long
- *  lightest, no easy day above the long-run ceiling. The prescribed sum never
- *  exceeds roundHalf(total) — half-step rounding is trimmed down, never up, so
- *  the peak-week ceiling genuinely binds. */
+ *  lightest, no easy day above the long-run ceiling.
+ *
+ *  The easy days sum EXACTLY to `roundHalf(total) - longR` (when per-day
+ *  capacity allows) via a largest-remainder apportionment in half-steps —
+ *  never a silent round-DOWN. That matters because the previous
+ *  round-each-day-then-trim approach could shave up to ~1.5 mi off a week, so a
+ *  1.0–2.0 mi weekly build step got quietly eaten and the plan crawled. The
+ *  prescribed sum still never EXCEEDS roundHalf(total), so peakMpw stays a true
+ *  ceiling; and no easy day ever exceeds the long run (per-day cap). */
 export function splitWeek(total: number, long: number, daysPerWeek: number): number[] {
   const easyCount = Math.max(0, daysPerWeek - 1);
   const longR = roundHalf(long);
   if (easyCount === 0) return [longR];
+
+  const STEP = TUNABLES.HALF_STEP;
   const easyBudget = Math.max(roundHalf(total) - longR, 0);
   const weights: number[] = [];
   for (let i = 0; i < easyCount; i++) weights.push(i === easyCount - 1 ? 0.7 : 1); // last easy day lighter
   const wsum = weights.reduce((a, b) => a + b, 0);
-  const easy = weights.map(w => Math.min(roundHalf((easyBudget * w) / wsum), longR));
-  // Trim rounding overshoot from the largest easy day so the total never
-  // exceeds the (rounded) target — keeps peakMpw a true ceiling.
-  let sum = easy.reduce((a, b) => a + b, 0);
-  while (sum > easyBudget + 1e-9) {
-    let idx = 0;
-    for (let i = 1; i < easy.length; i++) if (easy[i] > easy[idx]) idx = i;
-    if (easy[idx] <= 0) break;
-    easy[idx] -= TUNABLES.HALF_STEP;
-    sum -= TUNABLES.HALF_STEP;
+
+  // Work in whole half-steps so the easy days can sum to the budget exactly.
+  const capSteps = Math.max(0, Math.round(longR / STEP));       // no easy day > long run
+  const budgetSteps = Math.round(easyBudget / STEP);
+  const ideal = weights.map(w => (budgetSteps * w) / wsum);     // each day's fair share (half-steps)
+  const steps = ideal.map(x => Math.min(Math.floor(x + 1e-9), capSteps));
+  let placed = steps.reduce((a, b) => a + b, 0);
+
+  // Hand out the leftover half-steps to the days furthest below their fair
+  // share (largest-remainder). Strict '>' means ties go to the EARLIER, heavier
+  // day, so the day before the long run stays the lightest. Per-day cap keeps
+  // any easy day from exceeding the long run; if every day is capped we simply
+  // stop (the week can't hold more without breaching that rule).
+  while (placed < budgetSteps) {
+    let best = -1;
+    let bestGap = -Infinity;
+    for (let i = 0; i < easyCount; i++) {
+      if (steps[i] >= capSteps) continue;
+      const gap = ideal[i] - steps[i];
+      if (gap > bestGap + 1e-9) { bestGap = gap; best = i; }
+    }
+    if (best < 0) break;
+    steps[best]++;
+    placed++;
   }
+
+  const easy = steps.map(s => s * STEP);
   easy.push(longR);
   return easy;
 }
