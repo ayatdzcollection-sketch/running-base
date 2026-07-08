@@ -10,8 +10,10 @@ export const PLAN_START_DATE = '2026-06-29';
 /** Optional easy day before the block officially begins */
 export const BONUS_DAY_DATE = '2026-06-26';
 
-/** Block total prescribed miles (Weeks 1–7, Mon–Fri) */
-export const BLOCK_TOTAL_MILES = 165;
+/** Block total prescribed miles across the static fallback (Weeks 1–7, Mon–Fri).
+ *  Display/reference only — the live plan total is always recomputed from the
+ *  resolved (settings-aware) plan via planTotalMiles(). */
+export const BLOCK_TOTAL_MILES = 175;
 
 /** Coach mileage award tracking */
 export const AWARD = {
@@ -46,14 +48,19 @@ export interface WeekConfig {
   isDownWeek?: boolean;
 }
 
+// This is the no-settings FALLBACK scaffold. It mirrors the settings-driven
+// engine's philosophy (settings.ts → stepWeek): build toward the peak, take a
+// shallow absorption week at ~85% of the prior build (never a collapse), then
+// HAND OFF at the peak. A summer base block has no race, so there is no taper —
+// the block hands the runner to the coach at full volume in mid-August.
 export const WEEK_CONFIGS: WeekConfig[] = [
-  /* W1 */ { miles: [4.0, 4.0, 4.0, 3.5, 4.5] },
-  /* W2 */ { miles: [4.5, 4.5, 4.0, 4.0, 5.0] },
-  /* W3 */ { miles: [5.0, 5.0, 5.0, 4.5, 5.5] },
-  /* W4 */ { miles: [3.5, 3.5, 3.0, 2.5, 5.5], isDownWeek: true, note: 'down week' },
-  /* W5 */ { miles: [5.5, 5.5, 5.0, 5.0, 6.0] },
-  /* W6 */ { miles: [6.0, 6.0, 5.5, 6.0, 6.5], note: 'peak' },
-  /* W7 */ { miles: [4.5, 4.0, 4.0, 3.0, 6.5], isDownWeek: true, note: 'taper' },
+  /* W1 */ { miles: [4.0, 4.0, 4.0, 3.5, 4.5] },                                     // 20.0
+  /* W2 */ { miles: [4.5, 4.5, 4.0, 4.0, 5.0] },                                     // 22.0
+  /* W3 */ { miles: [5.0, 5.0, 5.0, 4.5, 5.5] },                                     // 25.0
+  /* W4 */ { miles: [4.0, 4.0, 4.0, 3.5, 5.5], isDownWeek: true, note: 'down week' }, // 21.0 (~84% of W3)
+  /* W5 */ { miles: [5.5, 5.5, 5.0, 5.0, 6.0] },                                     // 27.0
+  /* W6 */ { miles: [6.0, 6.0, 5.5, 6.0, 6.5], note: 'peak' },                       // 30.0
+  /* W7 */ { miles: [6.0, 6.0, 5.5, 5.5, 7.0], note: 'handoff' },                    // 30.0 handoff, not a taper
 ];
 
 // ── Derived plan (computed from config above) ──────────────

@@ -16,7 +16,7 @@ import { buildPlan, getPlan, WEEK_CONFIGS, PLAN_START_DATE } from '../config/pla
 import type { RawSettings, RunState } from './types';
 import { mondayOf, addDaysStr } from './metrics';
 import {
-  effectiveSettings, stepWeek, clampBlockWeeks, type ClampNote,
+  effectiveSettings, stepWeek, clampBlockWeeks, type ClampNote, type StepCarry,
 } from './settings';
 
 /**
@@ -71,8 +71,7 @@ export function resolveEffectivePlan(
   const { eff, clamps } = effectiveSettings(raw, runState, today);
   const weeksN = clampBlockWeeks(eff.blockWeeks);
   const configs: WeekConfig[] = [];
-  let prevTotal = eff.startMpw;
-  let prevLong = eff.trailingLongest;
+  let carry: StepCarry = { long: eff.trailingLongest, traj: eff.startMpw };
 
   for (let i = 0; i < weeksN; i++) {
     const weekStart = addDaysStr(eff.startDate, i * 7);
@@ -81,17 +80,21 @@ export function resolveEffectivePlan(
 
     if (locked && staticCfg) {
       // Keep the completed/current week exactly as originally prescribed, and
-      // carry its total/long forward so the next settings week continues the
-      // ladder from here instead of restarting it.
+      // carry its long run forward so the next settings week continues the
+      // ladder from here instead of restarting it. Advance the build trajectory
+      // only when the locked week was a build — a locked DOWN week must not
+      // re-baseline the trajectory downward (the settings weeks that follow
+      // resume from the last real build level, the same rule stepWeek applies).
       configs.push(staticCfg);
-      prevTotal = configTotal(staticCfg);
-      prevLong = configLong(staticCfg);
+      carry = {
+        long: configLong(staticCfg),
+        traj: staticCfg.isDownWeek ? carry.traj : configTotal(staticCfg),
+      };
       weekSource.set(weekStart, 'static');
     } else {
-      const { config, total, long } = stepWeek(i, weeksN, prevTotal, prevLong, eff);
+      const { config, long, traj } = stepWeek(i, weeksN, carry, eff);
       configs.push(config);
-      prevTotal = total;
-      prevLong = long;
+      carry = { long, traj };
       weekSource.set(weekStart, 'settings');
     }
   }

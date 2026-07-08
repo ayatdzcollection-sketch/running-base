@@ -269,51 +269,114 @@ export function clampBlockWeeks(n: number): number {
   return Math.round(Math.min(12, Math.max(1, n)));
 }
 
+/** Normalized down-week cadence — every Nth week, N ≥ 2. */
+function normDownEvery(downEvery: number): number {
+  return Math.max(2, Math.round(downEvery));
+}
+
 /**
- * Build one week from the previous week's total + long run. Down weeks land on
- * a fixed cadence (every `downEvery`th week, excluding the first) and the final
- * week is always a taper — an index-based cadence keeps the settings scaffold
- * predictable (the generator handles pain-driven down weeks dynamically).
- * Returns the config plus the carry-forward total/long for the NEXT week, so a
- * caller can splice locked weeks in and keep the ladder continuous across the
- * boundary (no long-run jump).
+ * Is week `j` a SCHEDULED down (absorption) week? Every `downEvery`th week, but
+ * never the first week and never the final (handoff) week — the block hands off
+ * at the peak, not a deload. This is the base-block scaffold's cadence; the
+ * generator inserts pain-driven down weeks dynamically on top of actuals.
+ */
+function isScheduledDownIdx(j: number, weeksN: number, downEvery: number): boolean {
+  const isFinal = j === weeksN - 1 && weeksN > 1;
+  return !isFinal && j > 0 && (j + 1) % downEvery === 0;
+}
+
+/** Count of BUILD weeks from index `i` through the end (inclusive) — i.e. how
+ *  many upward steps remain to reach the peak, so the ramp can size each step
+ *  to actually arrive at peakMpw by the handoff. Always ≥ 1. */
+function buildsRemainingFrom(i: number, weeksN: number, downEvery: number): number {
+  let n = 0;
+  for (let j = i; j < weeksN; j++) if (!isScheduledDownIdx(j, weeksN, downEvery)) n++;
+  return Math.max(1, n);
+}
+
+/** Carried between weeks: the long-run seed and the BUILD trajectory (the last
+ *  real build week's total). The trajectory — NOT the displayed total — is what
+ *  the next build resumes from, so an absorption week never re-baselines the
+ *  plan downward. */
+export interface StepCarry {
+  long: number;
+  traj: number;
+}
+
+/**
+ * Build one week from the carried long-run seed + build trajectory. The block
+ * ramps from startMpw toward peakMpw and HANDS OFF at the peak (the final week
+ * is a peak/handoff week, never a forced taper — a taper belongs to a race week,
+ * which this base block has none of). Scheduled down weeks are temporary dips
+ * off the trajectory; the following week resumes the build from the trajectory,
+ * not from the down week.
  *
- * Structural safety baked in:
- *  • build weeks grow by at most min(buildStep, +10%); never exceed peakMpw
- *  • down/taper weeks cut ~27.5% and HOLD the long run (no ladder step)
+ * Structural safety baked in (all preserved from before):
+ *  • no build week grows more than +10% over the last BUILD week (trajectory)
+ *  • no week ever exceeds peakMpw
+ *  • down weeks cut ~20% off the trajectory and HOLD the long run (no ladder step)
  *  • the long run advances only via nextLongFrom(prevLong) — ≤110% of prior
+ *
+ * What changed (the progression fix):
+ *  • buildStep is a slope FLOOR, not the whole step: each build also moves a
+ *    share of the remaining gap to peak, so editing peakMpw actually re-solves
+ *    the future toward that target instead of crawling +buildStep forever.
+ *  • the trajectory survives down weeks, so W(after-down) resumes near the last
+ *    build level rather than anchoring to the reduced down-week volume.
+ *  • the final week is a handoff at peak, not an unconditional collapse.
  */
 export function stepWeek(
-  i: number, weeksN: number, prevTotal: number, prevLong: number, eff: EffectiveSettings,
-): { config: WeekConfig; total: number; long: number } {
+  i: number, weeksN: number, prev: StepCarry, eff: EffectiveSettings,
+): { config: WeekConfig; total: number; long: number; traj: number } {
   const days = Math.round(Math.min(6, Math.max(3, eff.daysPerWeek)));
-  const isLast = i === weeksN - 1 && weeksN > 1;
-  const isDown = !isLast && i > 0 && (i + 1) % eff.downEvery === 0;
-  const cut = isLast || isDown;
+  const downEvery = normDownEvery(eff.downEvery);
+  const isFinal = i === weeksN - 1 && weeksN > 1;
+  const isDown = isScheduledDownIdx(i, weeksN, downEvery);
 
   let total: number;
   if (i === 0) {
     total = eff.startMpw;
-  } else if (cut) {
-    total = prevTotal * (1 - TUNABLES.DOWN_WEEK_CUT);
+  } else if (isDown) {
+    // Absorption week: dip off the BUILD trajectory (not the previous displayed
+    // total). The trajectory is left untouched below so the next build resumes
+    // from the last real build level.
+    total = prev.traj * (1 - TUNABLES.SCHEDULED_DOWN_CUT);
   } else {
-    const step = Math.min(eff.buildStep, prevTotal * (TUNABLES.WEEKLY_GROWTH_MAX - 1));
-    total = Math.min(prevTotal + step, eff.peakMpw);
+    // Build toward peakMpw: buildStep is a floor, the gap-to-peak spread over
+    // the remaining build weeks is the target, and +10%/week is the hard safety
+    // ceiling. So the ramp reaches the peak by the handoff without ever
+    // breaching the week-over-week growth cap or overshooting the peak.
+    const remaining = buildsRemainingFrom(i, weeksN, downEvery);
+    const gapStep = Math.max(0, eff.peakMpw - prev.traj) / remaining;
+    const step = Math.min(
+      Math.max(eff.buildStep, gapStep),
+      prev.traj * (TUNABLES.WEEKLY_GROWTH_MAX - 1),
+    );
+    total = Math.min(prev.traj + step, eff.peakMpw);
   }
 
-  // Down/taper weeks hold the long run (prevLong is already a half-step).
-  const long = cut ? floorToHalf(prevLong) : nextLongFrom(prevLong);
+  // Down weeks hold the long run (prev.long is already a half-step); build and
+  // handoff weeks step it up the ladder.
+  const long = isDown ? floorToHalf(prev.long) : nextLongFrom(prev.long);
   total = Math.max(roundHalf(total), long); // a week is never smaller than its long run
 
   const miles = splitWeek(total, long, days);
   // Carry the ACTUAL prescribed sum forward (not the pre-split target) so the
   // +10% growth cap is measured against real totals and never compounds drift.
   const actualTotal = miles.reduce((a, b) => a + b, 0);
-  const note = isLast ? 'taper' : isDown ? 'down week' : undefined;
+
+  let note: string | undefined;
+  if (isDown) note = 'down week';
+  else if (isFinal) note = 'handoff';
+  else if (actualTotal >= eff.peakMpw - 1e-9 && prev.traj < eff.peakMpw - 1e-9) note = 'peak';
+
   return {
-    config: { miles, note, isDownWeek: cut },
+    config: { miles, note, isDownWeek: isDown },
     total: actualTotal,
-    long: cut ? prevLong : long,
+    // The trajectory only advances on real build weeks; an absorption week keeps
+    // the prior trajectory so the plan rebuilds upward afterward.
+    traj: isDown ? prev.traj : actualTotal,
+    long: isDown ? prev.long : long,
   };
 }
 
@@ -321,13 +384,11 @@ export function stepWeek(
 export function buildWeekConfigsFromSettings(eff: EffectiveSettings): WeekConfig[] {
   const weeksN = clampBlockWeeks(eff.blockWeeks);
   const configs: WeekConfig[] = [];
-  let prevTotal = eff.startMpw;
-  let prevLong = eff.trailingLongest;
+  let carry: StepCarry = { long: eff.trailingLongest, traj: eff.startMpw };
   for (let i = 0; i < weeksN; i++) {
-    const { config, total, long } = stepWeek(i, weeksN, prevTotal, prevLong, eff);
+    const { config, long, traj } = stepWeek(i, weeksN, carry, eff);
     configs.push(config);
-    prevTotal = total;
-    prevLong = long;
+    carry = { long, traj };
   }
   return configs;
 }

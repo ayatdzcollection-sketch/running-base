@@ -92,19 +92,32 @@ describe('buildWeekConfigsFromSettings — safety baked into the shape', () => {
     }
   });
 
-  it('weekly totals never grow more than ~10% between build weeks', () => {
+  it('build weeks never grow more than ~10% over the last BUILD week (a down week is absorption, not a new baseline)', () => {
     const cfgs = buildWeekConfigsFromSettings(raw({ startMpw: 20, peakMpw: 60, buildStep: 4, blockWeeks: 6, downEvery: 4 }));
     const totals = cfgs.map(c => c.miles.reduce((a, b) => a + b, 0));
+    // The invariant is week-over-week growth vs the last real BUILD week — the
+    // week after a down week may legitimately jump back up toward the trajectory
+    // (resuming a previously-tolerated load), which is NOT a >10% overload.
+    let lastBuild = totals[0];
     for (let i = 1; i < totals.length; i++) {
-      if (cfgs[i].isDownWeek) continue; // down/taper weeks cut, not grow
-      expect(totals[i]).toBeLessThanOrEqual(totals[i - 1] * 1.1 + 0.5);
+      if (cfgs[i].isDownWeek) continue; // absorption week — a dip, not growth
+      expect(totals[i]).toBeLessThanOrEqual(lastBuild * 1.1 + 0.5);
+      lastBuild = totals[i];
     }
   });
 
-  it('forces a down week on the configured cadence and a final taper', () => {
+  it('inserts down weeks on the configured cadence and HANDS OFF at the peak (no forced final taper)', () => {
     const cfgs = buildWeekConfigsFromSettings(raw({ blockWeeks: 7, downEvery: 3 }));
-    expect(cfgs[cfgs.length - 1].note).toBe('taper');
+    // A scheduled down week still appears on the cadence...
     expect(cfgs.some(c => c.note === 'down week')).toBe(true);
+    // ...but the FINAL week is a handoff near the peak, never a taper collapse.
+    const last = cfgs[cfgs.length - 1];
+    expect(last.note).toBe('handoff');
+    expect(last.isDownWeek).toBe(false);
+    // No collapse: the handoff is not cut below the scheduled down weeks.
+    const lastTotal = last.miles.reduce((a, b) => a + b, 0);
+    const downTotals = cfgs.filter(c => c.isDownWeek).map(c => c.miles.reduce((a, b) => a + b, 0));
+    for (const dt of downTotals) expect(lastTotal).toBeGreaterThan(dt);
   });
 
   it('peakMpw binds — no week total exceeds it', () => {

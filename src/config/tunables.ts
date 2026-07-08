@@ -30,8 +30,18 @@ export const TUNABLES = {
   LONG_RUN_WEEK_PCT_FLAG: 0.3,
   /** Auto-insert a down week after this many consecutive build weeks. */
   DOWN_WEEK_AFTER_BUILDS: 3,
-  /** Down week cuts this fraction of volume (~25–30%), long run held. */
+  /** Pain-driven / generator deload cut (~25–30%), long run held. Deliberately
+   *  the DEEPER of the two down-week cuts: an emergency deload after a pain
+   *  spike prioritises recovery, so it stays conservative. */
   DOWN_WEEK_CUT: 0.275,
+  /** Scheduled base-block absorption week cut (~15%: the down week lands at ~85%
+   *  of the prior BUILD week — the UPPER end of the standard 75–85% deload band).
+   *  A planned base down week is a temporary dip, not an emergency, and — unlike a
+   *  pain deload — the plan resumes its build trajectory the following week, so a
+   *  shallow cut keeps the block progressing without re-baselining downward.
+   *  Contrast the DEEPER pain-driven DOWN_WEEK_CUT above, which prioritises
+   *  recovery after an actual pain spike. */
+  SCHEDULED_DOWN_CUT: 0.15,
 
   // ── Speed permission machine ───────────────────────────────
   /** Pain-free easy-run streak required to step INTO each state (key = target). */
