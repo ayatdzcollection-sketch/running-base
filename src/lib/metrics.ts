@@ -116,12 +116,15 @@ export function flareActive(runState: RunState, today: string, painCap: number):
 
 /**
  * Consecutive completed runs (newest first) with no pain-cap breach.
- * Unlogged pain counts as pain-free — the fields are optional and the
- * pre-v2 history has none. Any breach resets the streak to 0 naturally.
+ * Unlogged pain counts as pain-free — "nothing to report = pain-free" is the
+ * intended low-burden semantics for runs logged WHILE tracking. But runs dated
+ * before `since` (the day pain tracking began) are excluded: we can't treat a
+ * run that predates the pain feature as proven pain-free evidence for unlocking
+ * speed. Any logged breach resets the streak to 0 naturally.
  */
-export function painFreeStreak(runState: RunState, painCap: number): number {
+export function painFreeStreak(runState: RunState, painCap: number, since?: string | null): number {
   const runs = Object.values(runState)
-    .filter(e => e.done || e.miles_actual != null)
+    .filter(e => (e.done || e.miles_actual != null) && (!since || e.date >= since))
     .sort((a, b) => (a.date < b.date ? 1 : -1));
   let streak = 0;
   for (const e of runs) {

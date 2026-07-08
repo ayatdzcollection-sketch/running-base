@@ -54,6 +54,17 @@ export default function SpeedPlan({ runState, globals, today, onUpdateGlobals }:
         <span className={`tag ${flare ? 'tag-rose' : 'tag-amber'} text-[10px]`}>state {state}</span>
       </div>
 
+      {/* Ready-to-advance CTA — surfaced here so progression isn't buried. */}
+      {!flare && state < 7 && up?.allowed && (
+        <button
+          onClick={() => setSpeedState(upTarget)}
+          className="mx-2.5 mb-2 rounded-xl bg-teal-500/[0.12] border border-teal-500/40 px-3 py-2.5 text-left transition hover:border-teal-500/70"
+        >
+          <span className="font-display text-[12.5px] font-semibold text-teal-300">Ready — advance to {SPEED_STATE_NAMES[upTarget].replace(' allowed', '')}</span>
+          <span className="block text-[11px] text-slate-500">Readiness is all green. Tap to unlock the next rung. You can always step back down.</span>
+        </button>
+      )}
+
       {/* Ladder */}
       {SPEED_TYPES.map((t, i) => {
         const status = flare ? 'locked' : typeStatus(t, globals, today);

@@ -84,9 +84,14 @@ export function computeAdaptiveProfile(
   }
   const unsettledRate = painDays > 0 ? unsettled / painDays : 0;
 
-  // 3. Consecutive clean completed weeks (no breach, some running), newest first.
+  // 3. Consecutive clean completed weeks (no breach, some running), newest
+  //    first. Weeks that predate pain tracking don't count — we can't call an
+  //    un-tracked week "clean".
+  const since = globals.painTrackingSince;
   const breachSet = new Set(painBreachDates(runState, painCap));
-  const weeks = weeklyActuals(runState, today).filter(w => w.weekStart < mondayOf(today));
+  const weeks = weeklyActuals(runState, today).filter(
+    w => w.weekStart < mondayOf(today) && (!since || w.weekStart >= since),
+  );
   let cleanWeeks = 0;
   for (let i = weeks.length - 1; i >= 0; i--) {
     const w = weeks[i];

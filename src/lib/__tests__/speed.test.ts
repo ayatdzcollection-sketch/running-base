@@ -83,6 +83,22 @@ describe('state machine (§4)', () => {
     expect(canSetState(2, state, globals(), TODAY).allowed).toBe(false);
   });
 
+  it('pre-baseline unlogged runs do NOT satisfy the streak gate (the reported bug)', () => {
+    // 10 completed runs, all dated before the pain-tracking baseline, none with
+    // pain logged. They must NOT count as proven pain-free for progression.
+    const preHistory: RunState = {};
+    for (let i = 1; i <= 10; i++) {
+      const d = new Date('2026-06-25T12:00:00Z');
+      d.setUTCDate(d.getUTCDate() - i);
+      const date = d.toISOString().slice(0, 10);
+      preHistory[date] = run(date);
+    }
+    const g = globals({ painTrackingSince: '2026-07-01' });
+    const report = evaluateReadiness(2, preHistory, g, TODAY);
+    expect(report.items.find(i => i.key === 'streak')?.ok).toBe(false); // streak 0, not ready
+    expect(canSetState(2, preHistory, g, TODAY).allowed).toBe(false);
+  });
+
   it('a recent pain breach blocks via last-pain and streak checks', () => {
     const state = { '2026-07-06': run('2026-07-06', { painDuring: 5 }) };
     const report = evaluateReadiness(2, state, globals(), TODAY);

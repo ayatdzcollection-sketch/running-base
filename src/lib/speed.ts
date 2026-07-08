@@ -113,8 +113,9 @@ export function evaluateReadiness(
   const painCap = globals.painCap;
 
   // 1. Pain-free easy-run streak — the STRICTER of the built-in requirement
-  //    and the user's pfNeeded setting (settings can only tighten it).
-  const streak = painFreeStreak(runState, painCap);
+  //    and the user's pfNeeded setting (settings can only tighten it). Runs
+  //    predating pain tracking don't count as proven pain-free evidence.
+  const streak = painFreeStreak(runState, painCap, globals.painTrackingSince);
   const required = requiredStreakFor(target, settings);
   items.push({
     key: 'streak',

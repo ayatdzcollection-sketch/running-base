@@ -24,6 +24,7 @@ export function defaultGlobalState(nowIso: string): GlobalState {
     ptClearedSpeed: false,
     ptClearedIntensity: false,
     painFreeEasyRunStreak: 0,      // snapshot; live value derived from logs
+    painTrackingSince: null,       // stamped on first post-update load (App)
     painCap: TUNABLES.PAIN_CAP_DEFAULT, // 3/10 — research ceiling is 5, we run tighter
     lastFastSessionDate: null,
     lastLongRunDate: null,

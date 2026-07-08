@@ -54,6 +54,11 @@ export interface GlobalState {
   ptClearedIntensity: boolean;
   /** Snapshot only — the live value is always recomputed from the run log. */
   painFreeEasyRunStreak: number;
+  /** Date (YYYY-MM-DD) pain tracking began for this athlete. Runs BEFORE this
+   *  never count as "proven pain-free" toward speed progression — they predate
+   *  the pain feature, so we can't assume they were pain-free. Set once, on the
+   *  first load after the pain layer existed. */
+  painTrackingSince: string | null;
   painCap: number;                     // default 3; research ceiling is 5
   lastFastSessionDate: string | null;
   lastLongRunDate: string | null;

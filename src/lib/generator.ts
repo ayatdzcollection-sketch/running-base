@@ -68,7 +68,7 @@ export function generateNextWeek({ runState, globals, today, settings, adaptive 
 
   const t30 = trailing30Longest(runState, today);
   const flare = flareActive(runState, today, globals.painCap);
-  const streak = painFreeStreak(runState, globals.painCap);
+  const streak = painFreeStreak(runState, globals.painCap, globals.painTrackingSince);
   const delayed = !!globals.delayUntil && globals.delayUntil > today;
   const effectiveState = flare ? 8 : globals.speedState;
 

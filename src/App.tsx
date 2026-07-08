@@ -53,7 +53,17 @@ export default function App() {
   const [accessCode, setAccessCode] = useState<string | null>(getStoredCode);
   const [runState, setRunState] = useState<RunState>(() => applySeed(loadLocal()));
   // v2 global speed-layer state — separate key, additive migration on load.
-  const [globals, setGlobals] = useState<GlobalState>(loadGlobalLocal);
+  const [globals, setGlobals] = useState<GlobalState>(() => {
+    const g = loadGlobalLocal();
+    // Stamp the pain-tracking baseline once, so runs logged before the pain
+    // feature don't count as proven pain-free toward speed progression.
+    if (g.painTrackingSince == null) {
+      const stamped = { ...g, painTrackingSince: todayStr() };
+      saveGlobalLocal(stamped);
+      return stamped;
+    }
+    return g;
+  });
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -92,7 +102,7 @@ export default function App() {
   // own log, so an over-cap actual reads rose instead of raising its own cap).
   const trailingLongest = trailing30Longest(runState, today, false);
   const nextLong = nextLongFrom(trailingLongest);
-  const streak = painFreeStreak(runState, globals.painCap);
+  const streak = painFreeStreak(runState, globals.painCap, globals.painTrackingSince);
   const flare = flareActive(runState, today, globals.painCap);
   const breach = recentBreach(runState, today, globals.painCap);
   const morningCheckDate = pendingMorningCheck(runState, today);

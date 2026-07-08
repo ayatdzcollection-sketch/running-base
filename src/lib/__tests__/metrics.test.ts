@@ -100,6 +100,18 @@ describe('pain governor (§3)', () => {
     expect(painFreeStreak(state, CAP)).toBe(2);
   });
 
+  it('excludes runs before the pain-tracking baseline (unlogged history is not evidence)', () => {
+    const state: RunState = {
+      '2026-06-01': run('2026-06-01', 4),  // pre-baseline, no pain logged
+      '2026-06-08': run('2026-06-08', 4),  // pre-baseline
+      '2026-07-05': run('2026-07-05', 4),  // post-baseline
+      '2026-07-06': run('2026-07-06', 4),  // post-baseline
+    };
+    expect(painFreeStreak(state, CAP)).toBe(4);                  // no baseline → counts all (unchanged)
+    expect(painFreeStreak(state, CAP, '2026-07-01')).toBe(2);    // baseline → only the two post-baseline runs
+    expect(painFreeStreak(state, CAP, null)).toBe(4);            // null baseline → counts all
+  });
+
   it('one breach in 7 days: banner but no flare', () => {
     const state: RunState = { '2026-07-05': run('2026-07-05', 4, { painDuring: 4 }) };
     expect(recentBreach(state, '2026-07-07', CAP)).toBe(true);
