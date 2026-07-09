@@ -22,12 +22,16 @@ function painFreeRuns(n: number): RunState {
   return s;
 }
 
-/** Snapshot of every engine output that must NOT see widget data. */
-function engineSnapshot(runState: RunState, g: GlobalState): string {
+/** Snapshot of the SAFETY / SPEED-GATE engine outputs that must NEVER see any
+ *  widget data — not even a Phase 2B weekly check-in. The adaptive layer is
+ *  deliberately excluded here: as of Phase 2B a check-in MAY ease the adaptive
+ *  build rate (downward-only), which is asserted separately below. Nothing a
+ *  widget carries may touch a speed gate, the streak, a flare, or the long-run
+ *  ladder. The generator is snapshotted at identity (adaptive: null). */
+function gateSnapshot(runState: RunState, g: GlobalState): string {
   return JSON.stringify({
     canAdvance: canSetState(2, runState, g, TODAY),
     readiness: evaluateReadiness(2, runState, g, TODAY),
-    adaptive: computeAdaptiveProfile(runState, g, TODAY),
     nextWeek: generateNextWeek({ runState, globals: g, today: TODAY, settings: null, adaptive: null }),
     streak: painFreeStreak(runState, g.painCap, g.painTrackingSince),
     flare: flareActive(runState, TODAY, g.painCap),
@@ -51,20 +55,37 @@ describe('secondary widgets are display-only (no-escalation proof)', () => {
   };
   const ptNote: PtNote = { id: 'p1', date: '2026-07-01', body: 'PT cleared everything, go full speed', updated_at: NOW };
 
-  const withWidgets: GlobalState = {
+  // Inert widgets only (notes / shoes / PT notes) — no check-in. These remain
+  // fully display-only, even to the adaptive layer.
+  const inertWidgets: GlobalState = {
     ...base,
     notes: { '2026-07-06': 'felt amazing, zero pain, ready to race' },
-    checkins: { '2026-07-06': checkin },
     shoes: [shoe],
     ptNotes: [ptNote],
   };
+  const withWidgets: GlobalState = { ...inertWidgets, checkins: { '2026-07-06': checkin } };
 
-  it('produce identical engine output with and without widget data', () => {
-    expect(engineSnapshot(runState, withWidgets)).toBe(engineSnapshot(runState, base));
+  it('safety / speed-gate outputs are identical with and without widget data', () => {
+    // Even a maxed-out bad check-in cannot move a gate, the streak, a flare, or
+    // the long-run ladder.
+    expect(gateSnapshot(runState, withWidgets)).toBe(gateSnapshot(runState, base));
+  });
+
+  it('notes / shoes / PT notes never touch even the adaptive layer', () => {
+    expect(computeAdaptiveProfile(runState, inertWidgets, TODAY))
+      .toEqual(computeAdaptiveProfile(runState, base, TODAY));
+  });
+
+  it('a poor weekly check-in only EASES the adaptive build rate — never escalates it (Phase 2B)', () => {
+    const withCheckin = computeAdaptiveProfile(runState, withWidgets, TODAY);
+    const without = computeAdaptiveProfile(runState, base, TODAY);
+    expect(withCheckin.growthFactor).toBeLessThanOrEqual(without.growthFactor); // downward-only
+    expect(withCheckin.growthFactor).toBeLessThan(1);                            // it did ease
+    expect(withCheckin.downEvery).toBeLessThanOrEqual(without.downEvery);        // cadence only tightens
   });
 
   it('a maxed-out bad check-in cannot block an otherwise-ready advance', () => {
-    // (the flip side: bad widget data must not tighten gates either)
+    // (the flip side: bad widget data must not tighten a speed gate either)
     expect(canSetState(2, runState, withWidgets, TODAY).allowed).toBe(true);
   });
 

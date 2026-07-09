@@ -112,5 +112,46 @@ export const TUNABLES = {
     LR_PAIN_NEXTAM_HIGH: 2,
     /** Only a long run this recent (days) informs the readiness gate. */
     LR_LOOKBACK_DAYS: 21,
+
+    // ── Phase 2B: weekly check-in recovery signal ─────────────
+    // A composite, DETERMINISTIC recovery read from the weekly check-in
+    // (sleep / soreness / energy / stress, each 1–5). Like every adaptive
+    // signal it can only HOLD / REDUCE / DELOAD — a good week never speeds the
+    // plan up. A missing check-in, or a field that is missing / out of the 1–5
+    // range, is UNKNOWN: it is skipped, never read as good, bad, or zero. One
+    // mildly rough field is a note only; it takes two bad fields (or a genuinely
+    // extreme week, or repetition across weeks) to move the plan.
+    RECOVERY: {
+      // "Low" applies to sleep & energy (5 = best); "high" to soreness & stress
+      // (5 = worst). A field at/inside these bounds is one caution "flag".
+      SLEEP_LOW: 2,
+      ENERGY_LOW: 2,
+      SORENESS_HIGH: 4,
+      STRESS_HIGH: 4,
+      // The very-worst end of each field. Two+ of these IN ONE check-in makes an
+      // extreme-poor week that can hold on its own, even without repetition.
+      SLEEP_MIN: 1,
+      ENERGY_MIN: 1,
+      SORENESS_MAX: 5,
+      STRESS_MAX: 5,
+      /** ≥ this many caution flags in ONE check-in = a cautionary week. */
+      CAUTION_MIN_FLAGS: 2,
+      /** ≥ this many caution flags in ONE check-in = a poor week. */
+      POOR_MIN_FLAGS: 3,
+      /** ≥ this many EXTREME-end fields in one check-in = poor even alone. */
+      EXTREME_MIN_FLAGS: 2,
+      /** Recent check-ins (by weekStart) considered for repetition. */
+      LOOKBACK_WEEKS: 3,
+      /** ≥ this many cautionary-or-worse recent weeks = repeated poor
+       *  (escalates a cautionary latest week to poor + a shallow deload). */
+      REPEAT_MIN: 2,
+      /** growthFactor multiplier for a cautionary week (shallow ease). */
+      CAUTION_EASE: 0.85,
+      /** growthFactor multiplier for a poor week (deeper, still bounded). */
+      POOR_EASE: 0.7,
+      /** Tighten the absorption cadence to at most this on REPEATED poor weeks
+       *  (a shallow deload). Only ever shortens the cadence, never loosens it. */
+      POOR_DOWNEVERY: 3,
+    },
   },
 } as const;

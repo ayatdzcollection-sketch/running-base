@@ -24,7 +24,7 @@
 //    (Frandsen 2025) → deliberately NOT used here.
 // ============================================================
 
-import type { GlobalState, RawSettings, RunEntry, RunState } from './types';
+import type { GlobalState, RawSettings, RunEntry, RunState, WeeklyCheckin } from './types';
 import { TUNABLES } from '../config/tunables';
 import {
   addDaysStr, mondayOf, painBreachDates, weeklyActuals,
@@ -177,6 +177,145 @@ export function longRunReadiness(runState: RunState, today: string): LongRunRead
   return { status: 'ok', reason: null, lastLongDate: lr.date };
 }
 
+// ============================================================
+// PHASE 2B — weekly check-in recovery signal (pure, testable).
+//
+// Folds the weekly check-in (sleep / soreness / energy / stress, each 1–5) into
+// a single deterministic recovery status. Same one-way contract as every other
+// adaptive signal: it can only HOLD / REDUCE / DELOAD. A good week never speeds
+// the plan up. Missing check-ins — and missing / out-of-range fields inside a
+// check-in — are UNKNOWN: skipped, never read as good, bad, or zero. Thresholds
+// live in TUNABLES.ADAPTIVE.RECOVERY. No ML, no scoring — just named counts.
+// ============================================================
+
+export type RecoveryStatus = 'insufficient' | 'normal' | 'caution' | 'poor';
+
+/** Which fields in a check-in were in their "bad" range (present + out-of-bounds).
+ *  A missing/unknown field is never flagged — it stays false. */
+export interface RecoveryFlags {
+  sleepLow: boolean;
+  energyLow: boolean;
+  sorenessHigh: boolean;
+  stressHigh: boolean;
+}
+
+export interface RecoverySignal {
+  status: RecoveryStatus;
+  weeksConsidered: number;      // recent check-ins with at least one readable field
+  cautionWeeks: number;         // recent weeks classified caution or poor
+  repeated: boolean;            // cautionWeeks ≥ REPEAT_MIN (drives the shallow deload)
+  latestFlags: RecoveryFlags | null; // bad fields in the most recent readable check-in
+}
+
+/** A 1–5 rating, or null when the value is missing / not a finite 1–5 number.
+ *  0, undefined, NaN and out-of-range are all UNKNOWN — never a valid rating. */
+function rating(x: unknown): number | null {
+  return typeof x === 'number' && Number.isFinite(x) && x >= 1 && x <= 5 ? x : null;
+}
+
+interface CheckinClass {
+  flags: RecoveryFlags;
+  count: number;        // caution flags present
+  extremeCount: number; // fields at the very-worst end
+  status: 'normal' | 'note' | 'caution' | 'poor';
+}
+
+/** Classify ONE check-in. Returns null when no field is readable (all unknown) —
+ *  such a check-in is treated exactly like a missing one. */
+function classifyCheckin(c: WeeklyCheckin): CheckinClass | null {
+  const R = TUNABLES.ADAPTIVE.RECOVERY;
+  const sleep = rating(c.sleep), energy = rating(c.energy);
+  const soreness = rating(c.soreness), stress = rating(c.stress);
+  if (sleep == null && energy == null && soreness == null && stress == null) return null;
+
+  const sleepLow = sleep != null && sleep <= R.SLEEP_LOW;
+  const energyLow = energy != null && energy <= R.ENERGY_LOW;
+  const sorenessHigh = soreness != null && soreness >= R.SORENESS_HIGH;
+  const stressHigh = stress != null && stress >= R.STRESS_HIGH;
+  const flags: RecoveryFlags = { sleepLow, energyLow, sorenessHigh, stressHigh };
+  const count = [sleepLow, energyLow, sorenessHigh, stressHigh].filter(Boolean).length;
+  const extremeCount =
+    (sleep != null && sleep <= R.SLEEP_MIN ? 1 : 0) +
+    (energy != null && energy <= R.ENERGY_MIN ? 1 : 0) +
+    (soreness != null && soreness >= R.SORENESS_MAX ? 1 : 0) +
+    (stress != null && stress >= R.STRESS_MAX ? 1 : 0);
+
+  let status: CheckinClass['status'];
+  if (count >= R.POOR_MIN_FLAGS || extremeCount >= R.EXTREME_MIN_FLAGS) status = 'poor';
+  else if (count >= R.CAUTION_MIN_FLAGS) status = 'caution';
+  else if (count === 1) status = 'note';
+  else status = 'normal';
+  return { flags, count, extremeCount, status };
+}
+
+/**
+ * Composite weekly recovery read over the recent check-in window. Driven by the
+ * MOST RECENT readable check-in, with repetition ESCALATING the response (a
+ * cautionary latest week becomes poor + a shallow deload when caution has
+ * repeated across recent weeks). One mildly rough field (a single flag) is a
+ * 'note' → no plan change. Two bad fields → caution. A genuinely extreme week,
+ * ≥3 bad fields, or repeated caution → poor. Missing check-ins / windows with no
+ * readable data → 'insufficient' → identity (the plan is untouched).
+ */
+export function weeklyRecoverySignal(
+  checkins: Record<string, WeeklyCheckin> | undefined,
+  today: string,
+): RecoverySignal {
+  const R = TUNABLES.ADAPTIVE.RECOVERY;
+  const none: RecoverySignal = {
+    status: 'insufficient', weeksConsidered: 0, cautionWeeks: 0, repeated: false, latestFlags: null,
+  };
+  if (!checkins) return none;
+
+  const currentWeek = mondayOf(today);
+  const earliest = addDaysStr(currentWeek, -(R.LOOKBACK_WEEKS - 1) * 7);
+  const classified = Object.values(checkins)
+    .filter(c => c.weekStart >= earliest && c.weekStart <= currentWeek)
+    .sort((a, b) => (a.weekStart < b.weekStart ? 1 : -1)) // newest first
+    .map(c => classifyCheckin(c))
+    .filter((k): k is CheckinClass => k != null);
+  if (classified.length === 0) return none;
+
+  const weeksConsidered = classified.length;
+  const cautionWeeks = classified.filter(k => k.status === 'caution' || k.status === 'poor').length;
+  const repeated = cautionWeeks >= R.REPEAT_MIN;
+  const latest = classified[0]; // most recent readable check-in
+
+  let status: RecoveryStatus;
+  if (latest.status === 'poor') status = 'poor';
+  else if (latest.status === 'caution') status = repeated ? 'poor' : 'caution';
+  else status = 'normal'; // latest is note/normal → recovered; stale weeks alone don't ease
+
+  return { status, weeksConsidered, cautionWeeks, repeated, latestFlags: latest.flags };
+}
+
+/** Human-readable list of the bad fields that drove a recovery adjustment. */
+function recoveryFieldLabels(f: RecoveryFlags): string {
+  const parts: string[] = [];
+  if (f.sleepLow) parts.push('low sleep');
+  if (f.energyLow) parts.push('low energy');
+  if (f.sorenessHigh) parts.push('high soreness');
+  if (f.stressHigh) parts.push('high life stress');
+  if (parts.length === 0) return 'low recovery';
+  if (parts.length === 1) return parts[0];
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`;
+}
+
+/** Plain-language reason for a recovery-driven adjustment (structured so the UI
+ *  can show exactly why the plan changed). Never scary for a single soft week. */
+function recoveryReason(kind: 'caution' | 'poor' | 'poor-repeated', sig: RecoverySignal): string {
+  const labels = recoveryFieldLabels(sig.latestFlags ?? { sleepLow: false, energyLow: false, sorenessHigh: false, stressHigh: false });
+  switch (kind) {
+    case 'caution':
+      return `This week's recovery check-in was cautionary (${labels}), so the plan is holding back the build a little instead of pushing it.`;
+    case 'poor':
+      return `Recovery was poor this week (${labels}). Holding the build while things recover.`;
+    case 'poor-repeated':
+      return `Recovery has stayed low across ${sig.cautionWeeks} recent check-ins (${labels}). Taking a shallow down week to absorb the load.`;
+  }
+}
+
 export interface AdaptiveProfile {
   // ── observed signals (individual response) ──
   breachDays90: number;            // pain-cap breach days in the last 90 days
@@ -188,6 +327,8 @@ export interface AdaptiveProfile {
   rpeTrend: RpeTrend;              // easy/base-run RPE fatigue trend
   painDrift: PainDrift;            // sub-threshold next-AM pain drift
   longRun: LongRunReadiness;       // how the last long run felt
+  // ── Phase 2B weekly check-in recovery signal (observed; only ever tightens) ──
+  recovery: RecoverySignal;        // composite sleep/soreness/energy/stress read
   // ── derived modulation (safety-subordinate; only tightens) ──
   growthFactor: number;            // 0.4..1.0 multiplier on the build increment
   downEvery: number;               // suggested down-week cadence (≤ the setting)
@@ -302,6 +443,29 @@ export function computeAdaptiveProfile(
   const holdLong = longRun.status === 'hold';
   if (holdLong && longRun.reason) reasons.push(longRun.reason);
 
+  // ── Phase 2B — weekly check-in recovery signal (downward-only) ──
+  // A cautionary week eases the build; a poor week holds it; repeated poor weeks
+  // also tighten the absorption cadence (a shallow deload). Because f is a single
+  // multiplicative factor, this compounds naturally with the RPE / pain-drift
+  // signals above: two mild signals together ease more than either alone. It only
+  // ever multiplies f DOWN, so it can never weaken the pain-breach response.
+  const recovery = weeklyRecoverySignal(globals.checkins, today);
+  if (recovery.status === 'caution') {
+    f *= TUNABLES.ADAPTIVE.RECOVERY.CAUTION_EASE;
+    reasons.push(recoveryReason('caution', recovery));
+  } else if (recovery.status === 'poor') {
+    f *= TUNABLES.ADAPTIVE.RECOVERY.POOR_EASE;
+    reasons.push(recoveryReason(recovery.repeated ? 'poor-repeated' : 'poor', recovery));
+  }
+  // Name the stack when recovery is low AND a Phase 2A trend is also rising —
+  // the eased factor already compounds; this line makes the "combined" reason
+  // explicit (a real pain breach still outranks all of this, handled above).
+  if ((recovery.status === 'caution' || recovery.status === 'poor')
+    && (rpeTrend.status === 'rising' || painDrift.status === 'rising')) {
+    const other = rpeTrend.status === 'rising' ? 'easy-run RPE is rising' : 'next-morning soreness is creeping up';
+    reasons.push(`Recovery is low and ${other} — easing the build more than either signal would alone this week.`);
+  }
+
   const growthFactor = clamp(f, 0.4, 1.0);
 
   // More frequent down weeks for a fragile responder (never LESS frequent). Pain
@@ -309,6 +473,11 @@ export function computeAdaptiveProfile(
   const baseDownEvery = settings ? clamp(Math.round(settings.downEvery), 3, 6) : TUNABLES.DOWN_WEEK_AFTER_BUILDS;
   let downEvery = breachDays90 >= 2 ? Math.min(baseDownEvery, 3) : baseDownEvery;
   if (painDrift.status === 'rising') downEvery = Math.min(downEvery, TUNABLES.ADAPTIVE.PAIN_DRIFT_DOWNEVERY);
+  // Repeated poor recovery earns a shallow deload — a more frequent absorption
+  // week. Only ever SHORTENS the cadence (min), never loosens it.
+  if (recovery.status === 'poor' && recovery.repeated) {
+    downEvery = Math.min(downEvery, TUNABLES.ADAPTIVE.RECOVERY.POOR_DOWNEVERY);
+  }
 
   const readiness: AdaptiveReadiness =
     growthFactor >= 0.95 ? 'building'
@@ -330,7 +499,7 @@ export function computeAdaptiveProfile(
 
   return {
     breachDays90, lastBreachDaysAgo, unsettledRate, cleanWeeks, adherence,
-    rpeTrend, painDrift, longRun,
+    rpeTrend, painDrift, longRun, recovery,
     growthFactor, downEvery, holdLong, readiness, headline, reasons,
   };
 }
