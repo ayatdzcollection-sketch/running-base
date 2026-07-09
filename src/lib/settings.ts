@@ -393,10 +393,13 @@ export interface StepCarry {
  *
  * Individual adaptation (`mod`, optional): a downward-only modulation of the
  * RATE. `growthFactor` (≤1) scales ONLY the positive build increment; `downEvery`
- * may only TIGHTEN the absorption cadence (min with the setting). Absent `mod`
- * (or an identity `mod`) leaves every week byte-identical — this is the hook
- * Phase 2A wires real body signals into; today it stays identity. It can never
- * loosen a cap, raise the peak, or accelerate the build.
+ * may only TIGHTEN the absorption cadence (min with the setting); `holdLong`
+ * (Phase 2A long-run readiness gate) freezes the long-run ladder for this cycle
+ * without freezing the weekly trajectory. Absent `mod` (or an identity `mod`
+ * with holdLong falsy) leaves every week byte-identical. Phase 2A computes this
+ * `mod` from real body signals (easy-run RPE trend, sub-threshold pain drift,
+ * long-run readiness); it can never loosen a cap, raise the peak, or accelerate
+ * the build.
  */
 export function stepWeek(
   i: number, prev: StepCarry, eff: EffectiveSettings, mod?: AdaptiveModulation | null,
@@ -441,10 +444,16 @@ export function stepWeek(
   }
 
   // Down AND maintenance weeks hold the long run (prev.long is already a
-  // half-step); only build weeks step it up the ladder. The long run is capped
-  // at the peak week: a single run can never exceed a whole week's cap.
-  const holdLong = isDown || isMaint;
-  const rawLong = holdLong ? floorToHalf(prev.long) : nextLongFrom(prev.long);
+  // half-step); only build weeks step it up the ladder. The long-run READINESS
+  // gate (mod.holdLong, Phase 2A) ALSO holds the ladder — a poorly-tolerated
+  // last long run freezes the long-run step even on a build week, while the
+  // weekly trajectory may still progress modestly (holdTraj stays false). The
+  // long run is capped at the peak week: a single run can never exceed a whole
+  // week's cap. holdLong only ever HOLDS the ladder — it can never step it up,
+  // so identity (no mod / holdLong falsy) is byte-exact.
+  const holdTraj = isDown || isMaint;
+  const holdLongRun = holdTraj || mod?.holdLong === true;
+  const rawLong = holdLongRun ? floorToHalf(prev.long) : nextLongFrom(prev.long);
   const long = Math.min(rawLong, floorToHalf(eff.peakMpw));
   const targetTotal = Math.max(roundHalf(total), long); // a week is never smaller than its long run
 
@@ -467,9 +476,10 @@ export function stepWeek(
     total: actualTotal,
     // The trajectory only advances on real build weeks; absorption AND
     // maintenance weeks keep the prior trajectory so volume neither drifts up
-    // nor re-baselines down.
-    traj: holdLong ? prev.traj : targetTotal,
-    long: holdLong ? prev.long : long,
+    // nor re-baselines down. A long-run HOLD does not freeze the trajectory —
+    // weekly mileage may still progress while the long run stays put.
+    traj: holdTraj ? prev.traj : targetTotal,
+    long: holdLongRun ? prev.long : long,
   };
 }
 

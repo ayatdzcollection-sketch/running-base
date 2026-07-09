@@ -86,7 +86,23 @@ export default function App() {
   const settings = globals.settings ?? null;
   const breakStart = globals.breakStart ?? null;
   const onBreak = isOnBreak(breakStart, today);
-  const { plan } = resolveEffectivePlan(settings, runState, today, { breakStart });
+
+  // Individual adaptive profile — personalizes the RATE of progression only
+  // (Phase 2A body-response signals: easy-run RPE trend, sub-threshold pain
+  // drift, long-run readiness). Downward-only: it may HOLD / REDUCE / DELOAD but
+  // never accelerate. Computed BEFORE the plan so its modulation can reshape the
+  // visible rolling plan and the feasibility diagnostic — applied to future/
+  // UNLOCKED weeks only (locked/completed weeks are generated at identity).
+  const adaptiveProfile = FLAGS.ADAPTIVE_ENGINE
+    ? computeAdaptiveProfile(runState, globals, today, settings)
+    : null;
+  const adaptiveMod = adaptiveProfile ? toModulation(adaptiveProfile) : null;
+  // Is body-response modulation actually easing the plan right now? (Identity =
+  // no change; drives the plain-language "body-response adjustment" explanation.)
+  const bodyAdjusted = !!adaptiveMod
+    && (adaptiveMod.growthFactor < 1 - 1e-9 || adaptiveMod.holdLong === true);
+
+  const { plan } = resolveEffectivePlan(settings, runState, today, { breakStart, modulation: adaptiveMod });
   const award = getAward(settings);
   const blockTotalTarget = planTotalMiles(plan);
 
@@ -97,7 +113,10 @@ export default function App() {
 
   // Is the peak target safely reachable before XC/maintenance? Diagnostic only —
   // surfaced as a banner so a too-high peak reads as "not reachable" not "broken".
-  const peakFeas = eff ? assessPeakFeasibility(eff) : null;
+  // The modulation is threaded in so `reachedByPlan` tracks the body-adjusted plan
+  // the athlete is actually shown; `maxSafeReachable` stays the UNMODULATED
+  // population safety ceiling (the "safe theoretical max").
+  const peakFeas = eff ? assessPeakFeasibility(eff, adaptiveMod) : null;
   const pfNeeded = eff ? eff.pfNeeded : 4;
 
   // Home layout (Stage G). With no settings yet, stubs are hidden by default.
@@ -111,12 +130,6 @@ export default function App() {
   const todaySpeed = FLAGS.TODAY_SPEED
     ? computeTodaySpeed({ runState, globals, today, plan, acceptedWeeks: globals.acceptedWeeks })
     : null;
-
-  // Individual adaptive profile — personalizes the RATE of progression only.
-  const adaptiveProfile = FLAGS.ADAPTIVE_ENGINE
-    ? computeAdaptiveProfile(runState, globals, today, settings)
-    : null;
-  const adaptiveMod = adaptiveProfile ? toModulation(adaptiveProfile) : null;
 
   // ── Live derived safety metrics (§2, §3) ─────────────────
   // Today's ceiling comes from the 30 days BEFORE today (excludes today's
@@ -661,6 +674,26 @@ export default function App() {
             </div>
           ) : null}
 
+          {/* Body-response adjustment — plain-language why the future weeks are
+              easing/holding. Only shows when the modulation actually changes the
+              plan (bodyAdjusted). Suppressed during break/flare/breach, which have
+              their own stronger banners (a real pain breach outranks this drift). */}
+          {!onBreak && !flare && !breach && bodyAdjusted && adaptiveProfile && (
+            <div className="rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] px-4 py-3.5 flex flex-col gap-[6px]">
+              <span className="font-display text-[10.5px] font-semibold tracking-[0.12em] text-amber-300">BODY-RESPONSE ADJUSTMENT</span>
+              <p className="m-0 text-[13px] leading-relaxed text-slate-300">
+                Your recent signals have eased the upcoming weeks. This only ever holds or reduces the plan — it never raises a cap or pushes past your normal safe rate.
+              </p>
+              <ul className="m-0 mt-0.5 pl-4 flex flex-col gap-[3px] list-disc marker:text-amber-500/60">
+                {adaptiveProfile.reasons
+                  .filter(r => !/full safe rate/i.test(r))
+                  .map((r, i) => (
+                    <li key={i} className="text-[12.5px] leading-snug text-slate-400">{r}</li>
+                  ))}
+              </ul>
+            </div>
+          )}
+
           {/* Peak-not-reachable banner — makes a too-high peak read as "not
               reachable before XC", not "broken". Paused during a break/flare. */}
           {!onBreak && !flare && peakFeas && !peakFeas.feasible && (
@@ -670,7 +703,11 @@ export default function App() {
             >
               <span className="font-display text-[10.5px] font-semibold tracking-[0.12em] text-amber-400">PEAK NOT REACHABLE BEFORE XC</span>
               <p className="m-0 text-[13px] leading-relaxed text-slate-300">
-                Peak {peakFeas.targetPeak} mi can't be safely reached by {peakFeas.boundaryDate}. The plan builds to ~{peakFeas.reachedByPlan} mi (safe max ~{peakFeas.maxSafeReachable} mi), then maintains — it won't break any safety cap to force the number.
+                Peak {peakFeas.targetPeak} mi can't be safely reached by {peakFeas.boundaryDate}.{' '}
+                {bodyAdjusted
+                  ? `Your current body-adjusted plan builds to ~${peakFeas.reachedByPlan} mi; the safe theoretical max before then (ignoring today's body signals) is ~${peakFeas.maxSafeReachable} mi.`
+                  : `The plan builds to ~${peakFeas.reachedByPlan} mi (safe max ~${peakFeas.maxSafeReachable} mi).`}
+                {' '}It then maintains — it won't break any safety cap to force the number.
                 {peakFeas.daysRoute
                   ? ` Adding a ${peakFeas.daysRoute.toDays}${peakFeas.daysRoute.feasible ? 'th day could reach it' : `th day could raise the safe max to ~${peakFeas.daysRoute.reachable} mi`}. Tap to adjust.`
                   : ' Tap to adjust in Settings.'}

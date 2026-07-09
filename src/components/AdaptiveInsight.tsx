@@ -1,10 +1,11 @@
 import type { AdaptiveProfile } from '../lib/adaptive';
 
-// Shows how the runner's own response would personalize the weeks they Generate.
-// Transparent and motivating, and honest about the one direction it moves: it can
-// only ease the build, never push past the population-capped rate. It does NOT
-// silently reshape the displayed rolling plan (that stays at the population rate
-// until the modulation hook is wired end-to-end in Phase 2A). Display + reasons only.
+// Shows how the runner's own response personalizes their plan. Transparent and
+// motivating, and honest about the one direction it moves: it can only ease the
+// build or hold the long run, never push past the population-capped rate. As of
+// Phase 2A this modulation shapes BOTH the displayed rolling plan (future/unlocked
+// weeks) and the weeks you Generate — the card explains the same adjustment the
+// plan applies. Display + reasons only.
 
 const TONE: Record<AdaptiveProfile['readiness'], { chip: string; bar: string }> = {
   building: { chip: 'bg-teal-500/10 text-teal-300 border-teal-500/30', bar: '#2dd4bf' },
@@ -21,7 +22,7 @@ export default function AdaptiveInsight({ profile }: { profile: AdaptiveProfile 
     <section data-block="adaptive" className="card !rounded-2xl px-[18px] py-4 flex flex-col gap-3">
       <div className="flex items-baseline justify-between gap-2.5">
         <span className="font-display text-[10.5px] font-semibold tracking-[0.12em] text-slate-500">TRAINING RESPONSE</span>
-        <span className="text-[11px] text-slate-700">guides Generated weeks</span>
+        <span className="text-[11px] text-slate-700">shapes your rolling plan</span>
       </div>
 
       <div className="flex items-center gap-2.5 flex-wrap">
@@ -54,8 +55,9 @@ export default function AdaptiveInsight({ profile }: { profile: AdaptiveProfile 
           <p key={i} className="m-0 text-[11.5px] leading-snug text-slate-500">{r}</p>
         ))}
         <p className="m-0 text-[11px] leading-snug text-slate-600">
-          This eases the weeks you Generate — it only ever slows the build, never raises your
-          caps or unlocks speed, and doesn't change your saved plan on its own.
+          This eases your upcoming rolling plan and the weeks you Generate — it only ever slows
+          the build or holds the long run, never raises your caps or unlocks speed. Locked and
+          completed weeks are never changed.
         </p>
       </div>
     </section>

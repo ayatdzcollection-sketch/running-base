@@ -65,4 +65,52 @@ export const TUNABLES = {
   THRESHOLD_MAX_WEEK_PCT: 0.1,
   /** Never place a fast session within this many hours of the long run. */
   FAST_LONG_SPACING_H: 48,
+
+  // ── Phase 2A body-response signals (adaptive.ts) ───────────
+  // Every one of these can only HOLD, REDUCE, or DELOAD the plan — never loosen
+  // a cap, raise the peak, or accelerate the build. Conservative on purpose:
+  // trends need multiple comparable data points, sparse/missing data does
+  // nothing, and a real pain breach (FLARE_* above) always stays stronger than
+  // any sub-threshold drift here.
+  ADAPTIVE: {
+    // Easy-run RPE fatigue trend. An "easy/base run" is a logged run whose RPE
+    // is recorded and ≤ RPE_EASY_MAX; RPE ≥ RPE_EASY_MAX+1 (8–10) is treated as
+    // an intentional hard session / race and excluded so a planned workout can't
+    // masquerade as accumulating easy-run fatigue.
+    RPE_EASY_MAX: 7,
+    /** Comparable easy runs required before a trend is trusted (anti-overreaction). */
+    RPE_MIN_SAMPLES: 4,
+    /** Look-back window (days) for the easy-run RPE trend. */
+    RPE_WINDOW_DAYS: 21,
+    /** Recent-half mean minus older-half mean ≥ this = rising (fatigue). */
+    RPE_RISE_MIN: 1.0,
+    /** growthFactor multiplier when easy-run RPE is trending up. */
+    RPE_EASE: 0.85,
+
+    // Sub-threshold next-morning pain DRIFT (0→1→2 below the hard pain cap).
+    // Milder than a real breach; missing painNextAM is UNKNOWN, never zero.
+    /** Next-AM pain readings (≤ cap) required before trusting a drift. */
+    PAIN_DRIFT_MIN_SAMPLES: 3,
+    /** Look-back window (days) for the next-AM pain drift. */
+    PAIN_DRIFT_WINDOW_DAYS: 28,
+    /** Recent-half mean minus older-half mean ≥ this = drifting up. */
+    PAIN_DRIFT_RISE_MIN: 1.0,
+    /** growthFactor multiplier when sub-threshold pain is drifting up. */
+    PAIN_DRIFT_EASE: 0.85,
+    /** Tighten the absorption cadence to at most this when pain is drifting. */
+    PAIN_DRIFT_DOWNEVERY: 3,
+
+    // Long-run readiness gate. Before the long run steps UP, look at how the last
+    // logged long run actually felt. Any of these → hold the long-run ladder (a
+    // session-specific hold; weekly mileage may still progress modestly). These
+    // sit BELOW the pain cap on purpose: a long run can feel bad without breaching.
+    /** Last long run RPE ≥ this = poor readiness → hold the long-run step. */
+    LR_RPE_HIGH: 7,
+    /** Pain DURING the last long run ≥ this = hold. */
+    LR_PAIN_DURING_HIGH: 2,
+    /** Next-morning pain after the last long run ≥ this = hold. */
+    LR_PAIN_NEXTAM_HIGH: 2,
+    /** Only a long run this recent (days) informs the readiness gate. */
+    LR_LOOKBACK_DAYS: 21,
+  },
 } as const;

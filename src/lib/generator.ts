@@ -138,12 +138,18 @@ export function generateNextWeek({ runState, globals, today, settings, adaptive 
   }
 
   // ── Long run ────────────────────────────────────────────────
-  // Flare clamps the long run to the trailing-30 longest — no step up.
-  const long = flare ? floorToHalf(t30) : nextLongFrom(t30);
+  // Flare clamps the long run to the trailing-30 longest — no step up. The
+  // long-run READINESS gate (adaptive.holdLong, Phase 2A) also holds the ladder,
+  // milder than a flare, when the last long run was poorly tolerated. Both only
+  // ever HOLD the ladder; neither loosens the 110% cap.
+  const holdLong = flare || adaptive?.holdLong === true;
+  const long = holdLong ? floorToHalf(t30) : nextLongFrom(t30);
   notes.push(
     flare
       ? `Long run clamped to your recent longest (${long} mi). No ladder step during a flare.`
-      : `Long run = ${long} mi: the largest half-mile step within ~110% of your trailing-30-day longest (${t30} mi).`,
+      : adaptive?.holdLong
+        ? `Long run held at your recent longest (${long} mi): the last long run was poorly tolerated, so the ladder waits a cycle.`
+        : `Long run = ${long} mi: the largest half-mile step within ~110% of your trailing-30-day longest (${t30} mi).`,
   );
 
   let weekTotal = Math.max(Math.min(roundHalf(baseVolume), peakCap), long); // ≥ long, ≤ peak
