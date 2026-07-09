@@ -43,8 +43,13 @@ export type SyncStatus = 'idle' | 'syncing' | 'error' | 'offline';
 // Stored under its own localStorage key + its own Supabase table,
 // so the original per-day run log is never rewritten.
 
-/** 1 base-only … 7 structured speed, 8 = flare/deload override */
-export type SpeedStateNum = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+/** Phase 2D speed ladder (Evidence Spec §5). 0 = speed locked (base only),
+ *  1 buildups, 2 short strides, 3 flat strides, 4 hill strides,
+ *  5 light fartlek, 6 cruise/threshold intervals, 7 continuous tempo,
+ *  8 VO₂/race-specific (season-gated).
+ *  Flare/deload is NOT a rung anymore: it is computed live (flareActive) and
+ *  relocks the stored tier to 0. Old blobs (schema ≤2) are remapped on load. */
+export type SpeedStateNum = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 export interface GlobalState {
   schemaVersion: number;
@@ -193,6 +198,11 @@ export interface StrideSpec {
   recoveryS: number;
 }
 
+export interface FartlekSpec {
+  surges: number;
+  durationS: number;   // per surge, moderate effort inside an easy run
+}
+
 export interface ProposedDay {
   date: string;
   dayLabel: string;
@@ -200,6 +210,9 @@ export interface ProposedDay {
   miles: number | null;
   /** Optional low-dose stride add-on attached to an easy day. */
   strides?: StrideSpec;
+  /** Optional light-fartlek surges inside an easy run (tier 5; 0.5 hard unit).
+   *  Additive & optional — absent = plain easy day, exactly as before. */
+  fartlek?: FartlekSpec;
   why: string;
 }
 

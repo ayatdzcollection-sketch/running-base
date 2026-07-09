@@ -1,14 +1,28 @@
 // ============================================================
-// SPEED PERMISSION MACHINE — a single global speedState (1–8)
-// gates every kind of fast running. Upward transitions require
-// the readiness checklist all-green; downward is always allowed.
-// State 8 (flare/deload) is an override that supersedes all.
+// SPEED PERMISSION MACHINE — a single global speedState (tier 0–8)
+// gates every kind of fast running (Phase 2D ladder, Evidence Spec §5):
+//
+//   0 Speed locked · 1 Buildups · 2 Short strides · 3 Flat strides ·
+//   4 Hill strides · 5 Light fartlek · 6 Cruise/threshold intervals ·
+//   7 Continuous tempo · 8 VO₂ / race-specific (season-gated)
+//
+// Upward transitions require the readiness checklist all-green; downward is
+// always allowed. Tiers 1–4 are BASIC neuromuscular touches: available on
+// pain-free stable training alone. Tiers 5+ are ADVANCED: they additionally
+// require recent check-in + RPE data and clean-week evidence (the
+// missing-data rule — absent optional data never punishes basic touches and
+// never unlocks advanced ones). Tier 8 requires being in/near the XC season.
+// Flare/deload is no longer a rung: it is computed live (metrics.flareActive)
+// and relocks the stored tier to 0. Transient blockers (down week, race week,
+// spike, poor recovery…) live in speedGuard.ts and SUPPRESS below the stored
+// tier without erasing earned progress.
 // ============================================================
 
 import type { GlobalState, RawSettings, RunState, SpeedStateNum } from './types';
 import { TUNABLES } from '../config/tunables';
-import { painFreeStreak, flareActive, mondayOf, addDaysStr, laterDate } from './metrics';
+import { painFreeStreak, flareActive, mondayOf, addDaysStr, laterDate, weeklyActuals, painBreachDates } from './metrics';
 import { requiredStreakFor } from './settings';
+import { easyRunRpeTrend, weeklyRecoverySignal } from './adaptive';
 
 // ── General restriction model ────────────────────────────────
 // A gate is a named clearance that must be satisfied on top of the speed
@@ -38,20 +52,26 @@ function gateLabel(requires: GateReq[]): string {
 
 /** Extra clearances required to ENTER a given speed state (beyond readiness). */
 export const STATE_GATES: Partial<Record<SpeedStateNum, GateReq[]>> = {
-  5: ['hipSafe', 'ptSpeed'],   // intro hills — hip-flexor caution (Yokozawa 2007)
-  7: ['ptIntensity'],          // structured speed
+  4: ['hipSafe', 'ptSpeed'],   // hill strides — hip-flexor caution (Yokozawa 2007)
+  8: ['ptIntensity'],          // VO₂ / race-specific
 };
 
 export const SPEED_STATE_NAMES: Record<SpeedStateNum, string> = {
-  1: 'Base only',
-  2: 'Buildups allowed',
-  3: 'Short strides allowed',
-  4: 'Flat neuromuscular strides allowed',
-  5: 'Intro hills allowed (hip-safe only)',
-  6: 'Intro threshold allowed',
-  7: 'Structured speed allowed',
-  8: 'Flare-up / deload',
+  0: 'Speed locked — base only',
+  1: 'Buildups allowed',
+  2: 'Short strides allowed',
+  3: 'Flat strides allowed',
+  4: 'Hill strides allowed (hip-safe only)',
+  5: 'Light fartlek allowed',
+  6: 'Cruise / threshold intervals allowed',
+  7: 'Continuous tempo allowed',
+  8: 'VO₂ / race-specific allowed (season)',
 };
+
+export const MAX_SPEED_TIER: SpeedStateNum = 8;
+
+/** Tiers at/above this are ADVANCED (need data + earned evidence to unlock). */
+export const ADVANCED_TIER = TUNABLES.SPEED.ADVANCED_MIN_TIER as SpeedStateNum;
 
 // ── Readiness checklist ──────────────────────────────────────
 
@@ -97,10 +117,34 @@ function weekPainMax(runState: RunState, weekStart: string): number {
   return max;
 }
 
+/** Consecutive clean completed calendar weeks (no pain-cap breach, real
+ *  running), inside the pain-tracking era — the "provably clean training"
+ *  evidence advanced tiers require. Mirrors the adaptive engine's clean-week
+ *  count (same rules) so the two never disagree. */
+export function cleanCompletedWeeks(runState: RunState, globals: GlobalState, today: string): number {
+  const since = globals.painTrackingSince;
+  const breachSet = new Set(painBreachDates(runState, globals.painCap));
+  const weeks = weeklyActuals(runState, today).filter(
+    w => w.weekStart < mondayOf(today) && (!since || w.weekStart >= since),
+  );
+  let clean = 0;
+  for (let i = weeks.length - 1; i >= 0; i--) {
+    const w = weeks[i];
+    const weekEnd = addDaysStr(w.weekStart, 6);
+    const hadBreach = [...breachSet].some(d => d >= w.weekStart && d <= weekEnd);
+    if (w.runCount > 0 && !hadBreach) clean++;
+    else break;
+  }
+  return clean;
+}
+
 /**
  * Evaluate readiness to step UP into `target` (= current + 1).
- * All items must be green. Injury gates: 4→5 needs hipSafeFlag &&
- * ptClearedSpeed; 6→7 needs ptClearedIntensity.
+ * All items must be green. Injury gates: 3→4 (hill strides) needs hipSafeFlag
+ * && ptClearedSpeed; 7→8 (VO₂/race) needs ptClearedIntensity. Advanced tiers
+ * (5+) additionally need recent check-in + RPE data and clean-week evidence
+ * (missing-data rule: absent optional data can never unlock them). Tier 8 also
+ * needs to be in/near the XC season.
  */
 export function evaluateReadiness(
   target: SpeedStateNum,
@@ -180,6 +224,54 @@ export function evaluateReadiness(
     });
   }
 
+  // ── Phase 2D: advanced tiers (5+) need real evidence, not just a streak ──
+  // Missing-data rule: these items exist ONLY for advanced targets, so absent
+  // RPE/check-in data never blocks the basic neuromuscular tiers 1–4.
+  if (target >= ADVANCED_TIER) {
+    const S = TUNABLES.SPEED;
+    // a. Recent weekly check-in data present (readiness gating needs it).
+    const rec = weeklyRecoverySignal(globals.checkins, today);
+    items.push({
+      key: 'checkinData',
+      label: `Recent check-in data (≥ ${S.ADVANCED_MIN_CHECKIN_WEEKS} readable week${S.ADVANCED_MIN_CHECKIN_WEEKS > 1 ? 's' : ''})`,
+      ok: rec.weeksConsidered >= S.ADVANCED_MIN_CHECKIN_WEEKS,
+      detail: rec.weeksConsidered === 0
+        ? 'no recent check-ins — advanced speed stays locked (basic touches are unaffected)'
+        : `${rec.weeksConsidered} recent readable check-in(s)`,
+    });
+    // b. Enough easy-run RPE samples that the rising-RPE guard can actually see.
+    const rpe = easyRunRpeTrend(runState, today);
+    const rpeNeeded = TUNABLES.ADAPTIVE.RPE_MIN_SAMPLES;
+    items.push({
+      key: 'rpeData',
+      label: `Easy-run RPE logged (≥ ${rpeNeeded} recent samples)`,
+      ok: rpe.samples >= rpeNeeded,
+      detail: `${rpe.samples} of ${rpeNeeded} recent easy runs with RPE`,
+    });
+    // c. Earned evidence: consecutive clean completed weeks (provably clean).
+    const cleanNeeded = TUNABLES.ADAPTIVE.EARNED_TRUST.MIN_CLEAN_WEEKS;
+    const clean = cleanCompletedWeeks(runState, globals, today);
+    items.push({
+      key: 'cleanWeeks',
+      label: `Clean completed weeks ≥ ${cleanNeeded}`,
+      ok: clean >= cleanNeeded,
+      detail: `currently ${clean}`,
+    });
+  }
+
+  // ── Tier 8 (VO₂ / race-specific) is season-gated: in/near the XC season. ──
+  if (target >= 8) {
+    const xc = settings?.xcStartDate || null;
+    const nearFrom = xc ? addDaysStr(xc, -TUNABLES.SPEED.NEAR_SEASON_DAYS) : null;
+    const ok = !!nearFrom && today >= nearFrom;
+    items.push({
+      key: 'season',
+      label: 'In or near the XC season (coach-led sharpening window)',
+      ok,
+      detail: xc ? `season starts ${xc}` : 'no season date set',
+    });
+  }
+
   return { items, allGreen: items.every(i => i.ok) };
 }
 
@@ -193,7 +285,7 @@ export function canSetState(
 ): { allowed: boolean; reason: string } {
   const current = globals.speedState;
   if (target === current) return { allowed: true, reason: 'no change' };
-  if (target < current || target === 8) return { allowed: true, reason: 'downgrades are always allowed' };
+  if (target < current) return { allowed: true, reason: 'downgrades are always allowed' };
   if (target > current + 1) return { allowed: false, reason: 'advance one state at a time' };
   const report = evaluateReadiness(target, runState, globals, today, settings);
   return report.allGreen
@@ -203,16 +295,14 @@ export function canSetState(
 
 /**
  * When a clearance is revoked out from under the current state, return the
- * downgrade patch the app must apply. Flare (state 8) is left untouched — it's
- * the strongest override. Hills need hip-safe + PT speed; structured needs PT
- * intensity. Missing the hip clearance drops to 4 (the pre-hills state);
- * missing only intensity drops to 6.
+ * downgrade patch the app must apply. Hill strides (tier 4) need hip-safe +
+ * PT speed; VO₂/race (tier 8) needs PT intensity. Missing the hip clearance
+ * drops to 3 (the pre-hills tier); missing only intensity drops to 7.
  */
 export function enforceGateConsistency(globals: GlobalState): Partial<GlobalState> | null {
   const s = globals.speedState;
-  if (s === 8) return null;
-  if (s >= 5 && !gateSatisfied(STATE_GATES[5], globals)) return { speedState: 4 };
-  if (s >= 7 && !gateSatisfied(STATE_GATES[7], globals)) return { speedState: 6 };
+  if (s >= 4 && !gateSatisfied(STATE_GATES[4], globals)) return { speedState: 3 };
+  if (s >= 8 && !gateSatisfied(STATE_GATES[8], globals)) return { speedState: 7 };
   return null;
 }
 
@@ -220,11 +310,18 @@ export function enforceGateConsistency(globals: GlobalState): Partial<GlobalStat
 
 export type TypeStatus = 'allowed' | 'delayed' | 'locked';
 
+/** Intensity bucket (Evidence Spec §3). Neuromuscular touches never count
+ *  toward the hard budget; light fartlek counts 0.5; Bucket C counts 1. */
+export type SpeedBucket = 'neuromuscular' | 'light' | 'hard';
+
 export interface SpeedType {
   key: string;
   name: string;
   unlockState: SpeedStateNum;
   lowDose: boolean;         // softer visual treatment; add-on, not a workout
+  /** Intensity bucket + hard-budget units (Evidence Spec §3/§10). */
+  bucket: SpeedBucket;
+  units: number;            // 0 neuromuscular · 0.5 light fartlek · 1 hard
   trains: string;
   maxFreq: string;
   fastVolume: string;
@@ -239,8 +336,10 @@ export const SPEED_TYPES: SpeedType[] = [
   {
     key: 'buildups',
     name: 'Buildups',
-    unlockState: 2,
+    unlockState: 1,
     lowDose: true,
+    bucket: 'neuromuscular',
+    units: 0,
     trains: 'Economy, coordination (near-zero fatigue)',
     maxFreq: '2/wk',
     fastVolume: '~2 min total fast',
@@ -250,8 +349,10 @@ export const SPEED_TYPES: SpeedType[] = [
   {
     key: 'shortStrides',
     name: 'Short strides',
-    unlockState: 3,
+    unlockState: 2,
     lowDose: true,
+    bucket: 'neuromuscular',
+    units: 0,
     trains: 'Motor-unit recruitment',
     maxFreq: '3/wk',
     fastVolume: '~3 min total fast',
@@ -260,9 +361,11 @@ export const SPEED_TYPES: SpeedType[] = [
   },
   {
     key: 'flatStrides',
-    name: 'Flat neuromuscular strides',
-    unlockState: 4,
+    name: 'Flat strides',
+    unlockState: 3,
     lowDose: true,
+    bucket: 'neuromuscular',
+    units: 0,
     trains: 'Speed reserve, form at speed',
     maxFreq: '3/wk',
     fastVolume: '~4–5 min total fast',
@@ -271,26 +374,45 @@ export const SPEED_TYPES: SpeedType[] = [
   },
   {
     key: 'hills',
-    name: 'Intro hills',
-    unlockState: 5,
+    name: 'Hill strides / short hill sprints',
+    unlockState: 4,
     lowDose: false,
-    trains: 'Force, stiffness',
-    maxFreq: '1/wk',
-    fastVolume: 'Small',
-    downgrade: 'ANY anterior-hip pain → hills lock + state drops to 4',
+    bucket: 'neuromuscular',
+    units: 0,
+    trains: 'Force, stiffness, eccentric durability',
+    maxFreq: '1–2/wk',
+    fastVolume: 'Small (6–10 × 8–12s)',
+    downgrade: 'ANY anterior-hip pain → hills lock + tier drops to 3',
     plain:
-      'Short, low grade, 4–6 × 8–15s. Caution: uphill running increases hip-flexor / iliopsoas ' +
-      'recruitment (Yokozawa, Fujii & Ae, J Biomech 2007). The exact tissue you are recovering. ' +
-      'Hills are NOT your safe entry to speed: flat comes first, and hills wait for the hip to ' +
-      'prove itself and for PT sign-off.',
+      'Short, low grade, 6–10 × 8–12s, walk-down recovery. Caution: uphill running increases ' +
+      'hip-flexor / iliopsoas recruitment (Yokozawa, Fujii & Ae, J Biomech 2007). The exact tissue ' +
+      'you are recovering. Hills are NOT your safe entry to speed: flat comes first, and hills wait ' +
+      'for the hip to prove itself and for PT sign-off.',
     requires: ['hipSafe', 'ptSpeed'],
     extraGateLabel: 'hip-safe flag + PT speed clearance',
+  },
+  {
+    key: 'fartlek',
+    name: 'Light fartlek',
+    unlockState: 5,
+    lowDose: false,
+    bucket: 'light',
+    units: TUNABLES.SPEED.FARTLEK_UNITS,
+    trains: 'First sustained moderate effort (bridge to workouts)',
+    maxFreq: '0–1/wk',
+    fastVolume: '4–6 × 30–60s moderate inside an easy run',
+    downgrade: 'Pain, high RPE, poor recovery, spike or race week',
+    plain:
+      'A few relaxed 30–60s pickups inside an easy run — the gentlest introduction to sustained ' +
+      'effort. Counts half a hard unit; needs recent check-in data and clean weeks to unlock.',
   },
   {
     key: 'cruise',
     name: 'Cruise-interval threshold',
     unlockState: 6,
     lowDose: false,
+    bucket: 'hard',
+    units: 1,
     trains: 'Lactate clearance',
     maxFreq: '1/wk',
     fastVolume: '≤10% of weekly miles',
@@ -300,44 +422,49 @@ export const SPEED_TYPES: SpeedType[] = [
   {
     key: 'tempo',
     name: 'Continuous tempo',
-    unlockState: 6,
+    unlockState: 7,
     lowDose: false,
-    trains: 'Threshold',
+    bucket: 'hard',
+    units: 1,
+    trains: 'Sustained threshold, pacing control',
     maxFreq: '1/wk',
-    fastVolume: '≤10% of weekly miles',
+    fastVolume: '15–25 min continuous',
     downgrade: 'Pain, fatigue',
-    plain: 'Only after ≥2–3 cruise sessions have gone well. Cruise intervals come first.',
+    plain: 'Only after ≥2–3 cruise sessions have gone well. Cruise intervals come first. Replaces (never adds to) the weekly hard slot.',
   },
   {
     key: 'vo2',
     name: 'VO₂max intervals',
-    unlockState: 7,
+    unlockState: 8,
     lowDose: false,
+    bucket: 'hard',
+    units: 1,
     trains: 'vVO₂max',
-    maxFreq: '1/wk',
-    fastVolume: 'Small',
-    downgrade: 'Any flare, sleep/soreness spike',
-    plain: 'Reps of 3–5 min. Needs PT intensity clearance. The top of the ladder.',
+    maxFreq: '≤1/wk, season only',
+    fastVolume: 'Small (4–6 × 3 min)',
+    downgrade: 'Any flare, sleep/soreness spike, off-season',
+    plain: 'Reps of 3–5 min. Season-gated: youth evidence says VO₂ work buys little that base + threshold don\'t (Engel 2018; Matzka 2025). Needs PT intensity clearance and the coach-led season window.',
     requires: ['ptIntensity'],
     extraGateLabel: 'PT intensity clearance',
   },
   {
     key: 'racePace',
     name: 'Race-pace / long hard speed',
-    unlockState: 7,
+    unlockState: 8,
     lowDose: false,
+    bucket: 'hard',
+    units: 1,
     trains: 'Goal-pace economy, pacing',
-    maxFreq: '1/wk',
+    maxFreq: 'Sparse, season only',
     fastVolume: 'Small',
-    downgrade: 'Pain, form breakdown',
-    plain: 'Goal-pace work. Needs PT intensity clearance and a settled hip.',
+    downgrade: 'Pain, form breakdown, no goal race',
+    plain: 'Goal-pace work inside a valid peak window. Needs PT intensity clearance, a settled hip, and the season.',
     requires: ['ptIntensity'],
     extraGateLabel: 'PT intensity clearance',
   },
 ];
 
 export function typeStatus(t: SpeedType, globals: GlobalState, today: string): TypeStatus {
-  if (globals.speedState === 8) return 'locked';                    // flare overrides all
   if (globals.speedState < t.unlockState) return 'locked';
   if (!gateSatisfied(t.requires, globals)) return 'locked';
   if (globals.delayUntil && globals.delayUntil > today) return 'delayed';

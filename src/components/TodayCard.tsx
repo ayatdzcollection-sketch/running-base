@@ -159,6 +159,9 @@ export default function TodayCard({
               {todaySpeed.name}
             </span>
             <span className="text-[11.5px] leading-snug text-slate-500">{todaySpeed.detail}</span>
+            {todaySpeed.skip && (
+              <span className="text-[10.5px] leading-snug text-slate-600">{todaySpeed.skip}</span>
+            )}
           </div>
         </div>
       )}

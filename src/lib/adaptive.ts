@@ -350,6 +350,11 @@ export interface EarnedTrustInput {
   rpeTrend: RpeTrend;
   painDrift: PainDrift;
   recovery: RecoverySignal;
+  /** Phase 2D cooldown: days since the most recent revocation-worthy warning
+   *  was last active (null/absent = none inside the cooldown window). While
+   *  ≤ COOLDOWN_DAYS, trust stays paused even if today reads clean — so it
+   *  never flickers on/off across a boundary signal. */
+  recentVetoDaysAgo?: number | null;
 }
 
 export interface EarnedTrust {
@@ -362,9 +367,36 @@ export interface EarnedTrust {
   adherence: number;
   /** The first active warning that disabled trust (revocation), else null. */
   blockedBy: string | null;
-  /** Calm, non-reward explanation of the current state (active / paused / not
-   *  yet earned) for the UI. */
+  /** Phase 2D clarity: the concrete requirements still missing when trust is
+   *  neither active nor vetoed ("not yet earned" — what to build next). */
+  missing: string[];
+  /** Days left in the post-revocation cooldown (null = not cooling down). */
+  cooldownDaysLeft: number | null;
+  /** Calm, non-reward explanation of the current state (active / paused /
+   *  cooling down / not yet earned) for the UI. */
   reason: string;
+}
+
+/** The instant-revocation chain, extracted so the Phase 2D cooldown can ask
+ *  "was any veto active on day X?" for recent days. Ordered most-informative-
+ *  first so the reported reason is the clearest one. */
+export function trustVeto(inp: {
+  onBreak: boolean; breachDays90: number; unsettledRate: number;
+  rpeTrend: RpeTrend; painDrift: PainDrift; recovery: RecoverySignal;
+  holdLong: boolean; growthFactor: number;
+}): string | null {
+  return inp.onBreak ? 'break mode is active'
+    : inp.breachDays90 > 0 ? 'a recent pain-cap breach'
+    : inp.unsettledRate > 0.3 ? 'recent pain has been slow to settle overnight'
+    : inp.painDrift.status === 'rising' ? 'next-morning soreness is drifting up'
+    : inp.rpeTrend.status === 'rising' ? 'easy-run RPE is trending up'
+    : inp.recovery.status === 'poor' ? 'a poor recovery check-in'
+    : inp.recovery.status === 'caution' ? 'a cautionary recovery check-in'
+    : inp.holdLong ? 'the last long run needs another smooth week'
+    // Backstop: any residual downward modulation (e.g. a lone breach in 90d that
+    // only softly eased) still keeps the plan on the default cap.
+    : inp.growthFactor < 1 - 1e-9 ? 'a caution signal is easing the build'
+    : null;
 }
 
 /**
@@ -379,32 +411,35 @@ export function assessEarnedTrust(inp: EarnedTrustInput): EarnedTrust {
   const ET = TUNABLES.ADAPTIVE.EARNED_TRUST;
   const defaultMax = TUNABLES.WEEKLY_GROWTH_MAX;
   const defPct = Math.round((defaultMax - 1) * 100);
-  const base = { growthMax: defaultMax, cleanWeeks: inp.cleanWeeks, adherence: inp.adherence };
+  const base = {
+    growthMax: defaultMax, cleanWeeks: inp.cleanWeeks, adherence: inp.adherence,
+    missing: [] as string[], cooldownDaysLeft: null as number | null,
+  };
 
   if (!ET.ENABLED) {
     return { active: false, ...base, blockedBy: null, reason: `Normal safety cap active (+${defPct}%/wk).` };
   }
 
   // ── Vetoes — ANY one instantly disables earned-trust (revoke instantly). ──
-  // Ordered most-informative-first so the reported reason is the clearest one.
-  const veto: string | null =
-    inp.onBreak ? 'break mode is active'
-    : inp.breachDays90 > 0 ? 'a recent pain-cap breach'
-    : inp.unsettledRate > 0.3 ? 'recent pain has been slow to settle overnight'
-    : inp.painDrift.status === 'rising' ? 'next-morning soreness is drifting up'
-    : inp.rpeTrend.status === 'rising' ? 'easy-run RPE is trending up'
-    : inp.recovery.status === 'poor' ? 'a poor recovery check-in'
-    : inp.recovery.status === 'caution' ? 'a cautionary recovery check-in'
-    : inp.holdLong ? 'the last long run needs another smooth week'
-    // Backstop: any residual downward modulation (e.g. a lone breach in 90d that
-    // only softly eased) still keeps the plan on the default cap.
-    : inp.growthFactor < 1 - 1e-9 ? 'a caution signal is easing the build'
-    : null;
+  const veto = trustVeto(inp);
 
   if (veto) {
     return {
       active: false, ...base, blockedBy: veto,
       reason: `Earned-trust paused: ${veto}. The build stays on the normal +${defPct}%/wk safety cap.`,
+    };
+  }
+
+  // ── Phase 2D cooldown — a revocation inside the last COOLDOWN_DAYS keeps
+  //    trust paused even though today reads clean, so it re-earns steadily
+  //    instead of flickering on/off across a boundary signal. ──
+  if (inp.recentVetoDaysAgo != null && inp.recentVetoDaysAgo <= ET.COOLDOWN_DAYS) {
+    const left = ET.COOLDOWN_DAYS - inp.recentVetoDaysAgo + 1;
+    return {
+      active: false, ...base, blockedBy: null, cooldownDaysLeft: left,
+      reason:
+        `Earned-trust is re-earning after a recent warning (${inp.recentVetoDaysAgo} day${inp.recentVetoDaysAgo === 1 ? '' : 's'} ago). `
+        + `About ${left} more clean day${left === 1 ? '' : 's'} on the normal +${defPct}%/wk cap before it can re-activate.`,
     };
   }
 
@@ -420,8 +455,21 @@ export function assessEarnedTrust(inp: EarnedTrustInput): EarnedTrust {
   const hasEvidence = enoughCleanWeeks && enoughAdherence && rpeConfirmed && recoveryConfirmed;
 
   if (!hasEvidence) {
+    // Phase 2D clarity: name exactly what is still missing (never a punishment
+    // — absent optional data simply hasn't earned the wider cap yet).
+    const missing: string[] = [];
+    if (!enoughCleanWeeks) missing.push(`clean weeks ${inp.cleanWeeks} of ${ET.MIN_CLEAN_WEEKS}`);
+    if (!enoughAdherence) missing.push(`adherence ${Math.round(inp.adherence * 100)}% (needs ${Math.round(ET.MIN_ADHERENCE * 100)}%)`);
+    if (!rpeConfirmed) {
+      missing.push(`easy-run RPE samples ${inp.rpeTrend.samples} of ${TUNABLES.ADAPTIVE.RPE_MIN_SAMPLES}`);
+    }
+    if (!recoveryConfirmed) {
+      missing.push(inp.recovery.weeksConsidered < ET.MIN_CHECKIN_WEEKS
+        ? `weekly check-ins ${inp.recovery.weeksConsidered} of ${ET.MIN_CHECKIN_WEEKS}`
+        : 'a fully clean recent check-in window');
+    }
     return {
-      active: false, ...base, blockedBy: null,
+      active: false, ...base, missing, blockedBy: null,
       reason:
         `Normal safety cap active (+${defPct}%/wk). Earned-trust needs ${ET.MIN_CLEAN_WEEKS}+ clean weeks with `
         + `strong adherence, steady easy-run effort, and good recovery check-ins before the build widens.`,
@@ -467,15 +515,31 @@ function clamp(x: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, x));
 }
 
-/**
- * Build the individual response profile from the log. Pure and read-only.
- */
-export function computeAdaptiveProfile(
+/** Everything computeAdaptiveProfile derives BEFORE the earned-trust verdict.
+ *  Extracted so the Phase 2D cooldown can re-evaluate "was a veto active on
+ *  day X?" for recent days — same rules, different date. Pure and read-only. */
+interface CoreSignals {
+  breachDays90: number;
+  lastBreachDaysAgo: number | null;
+  unsettledRate: number;
+  cleanWeeks: number;
+  adherence: number;
+  rpeTrend: RpeTrend;
+  painDrift: PainDrift;
+  longRun: LongRunReadiness;
+  recovery: RecoverySignal;
+  growthFactor: number;
+  downEvery: number;
+  holdLong: boolean;
+  reasons: string[];
+}
+
+function computeCoreSignals(
   runState: RunState,
   globals: GlobalState,
   today: string,
-  settings: RawSettings | null = null,
-): AdaptiveProfile {
+  settings: RawSettings | null,
+): CoreSignals {
   const painCap = globals.painCap;
   const from90 = addDaysStr(today, -90);
   const from14 = addDaysStr(today, -14);
@@ -604,6 +668,28 @@ export function computeAdaptiveProfile(
     downEvery = Math.min(downEvery, TUNABLES.ADAPTIVE.RECOVERY.POOR_DOWNEVERY);
   }
 
+  return {
+    breachDays90, lastBreachDaysAgo, unsettledRate, cleanWeeks, adherence,
+    rpeTrend, painDrift, longRun, recovery, growthFactor, downEvery, holdLong, reasons,
+  };
+}
+
+/**
+ * Build the individual response profile from the log. Pure and read-only.
+ */
+export function computeAdaptiveProfile(
+  runState: RunState,
+  globals: GlobalState,
+  today: string,
+  settings: RawSettings | null = null,
+): AdaptiveProfile {
+  const core = computeCoreSignals(runState, globals, today, settings);
+  const {
+    breachDays90, lastBreachDaysAgo, unsettledRate, cleanWeeks, adherence,
+    rpeTrend, painDrift, longRun, recovery, growthFactor, downEvery, holdLong,
+  } = core;
+  const reasons = [...core.reasons];
+
   // ── Phase 2C — earned-trust (the only UPWARD signal) ────────────────────────
   // Read from the SAME observed signals as everything above, plus break state.
   // It never touches growthFactor / downEvery / holdLong (those only tighten);
@@ -611,9 +697,33 @@ export function computeAdaptiveProfile(
   // caution above (growthFactor < 1, holdLong) or a warning signal disables it,
   // so earned-trust and any easing are mutually exclusive by construction.
   const onBreak = !!globals.breakStart && globals.breakStart <= today;
+
+  // Phase 2D cooldown: when today reads clean, look back over the last
+  // COOLDOWN_DAYS and ask whether any revocation-worthy warning was active —
+  // same rules re-evaluated at each prior date. A recent veto keeps trust
+  // paused (re-earning) so it cannot flicker on/off across a boundary signal.
+  const ET = TUNABLES.ADAPTIVE.EARNED_TRUST;
+  let recentVetoDaysAgo: number | null = null;
+  const todayVeto = trustVeto({
+    onBreak, breachDays90, unsettledRate, rpeTrend, painDrift, recovery, holdLong, growthFactor,
+  });
+  if (ET.ENABLED && todayVeto == null) {
+    for (let k = 1; k <= ET.COOLDOWN_DAYS; k++) {
+      const d = addDaysStr(today, -k);
+      const c = computeCoreSignals(runState, globals, d, settings);
+      const onBreakK = !!globals.breakStart && globals.breakStart <= d;
+      const vetoK = trustVeto({
+        onBreak: onBreakK, breachDays90: c.breachDays90, unsettledRate: c.unsettledRate,
+        rpeTrend: c.rpeTrend, painDrift: c.painDrift, recovery: c.recovery,
+        holdLong: c.holdLong, growthFactor: c.growthFactor,
+      });
+      if (vetoK != null) { recentVetoDaysAgo = k; break; }
+    }
+  }
+
   const earnedTrust = assessEarnedTrust({
     onBreak, cleanWeeks, adherence, growthFactor, holdLong,
-    breachDays90, unsettledRate, rpeTrend, painDrift, recovery,
+    breachDays90, unsettledRate, rpeTrend, painDrift, recovery, recentVetoDaysAgo,
   });
 
   const readiness: AdaptiveReadiness =

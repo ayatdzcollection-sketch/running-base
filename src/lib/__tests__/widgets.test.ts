@@ -84,9 +84,11 @@ describe('secondary widgets are display-only (no-escalation proof)', () => {
     expect(withCheckin.downEvery).toBeLessThanOrEqual(without.downEvery);        // cadence only tightens
   });
 
-  it('a maxed-out bad check-in cannot block an otherwise-ready advance', () => {
-    // (the flip side: bad widget data must not tighten a speed gate either)
-    expect(canSetState(2, runState, withWidgets, TODAY).allowed).toBe(true);
+  it('a maxed-out bad check-in cannot block an otherwise-ready BASIC advance', () => {
+    // (the flip side: bad widget data must not tighten a BASIC speed gate.
+    //  Advanced tiers (5+) DO require check-in data by design — the Phase 2D
+    //  missing-data rule — but basic neuromuscular tiers never read it.)
+    expect(canSetState(1, runState, withWidgets, TODAY).allowed).toBe(true);
   });
 
   it('a PT note claiming clearance does NOT set any PT clearance flag', () => {

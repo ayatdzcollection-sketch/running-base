@@ -137,6 +137,7 @@ describe('requiredStreakFor — stricter of user pref and built-in', () => {
     expect(requiredStreakFor(2, raw({ pfNeeded: 6 }))).toBe(6); // built-in for 2 is 3
   });
   it('falls back to the built-in when settings are null', () => {
-    expect(requiredStreakFor(3, null)).toBe(3);
+    expect(requiredStreakFor(2, null)).toBe(3); // built-in for tier 2 (short strides)
+    expect(requiredStreakFor(3, null)).toBe(4); // built-in for tier 3 (flat strides)
   });
 });

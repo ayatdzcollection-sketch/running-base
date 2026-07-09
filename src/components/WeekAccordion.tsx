@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { PlanWeek, RunEntry, RunState } from '../lib/types';
+import type { PlanSpeedAddOn } from '../lib/todaySpeed';
 import DayRow from './DayRow';
 
 interface Props {
@@ -10,9 +11,12 @@ interface Props {
   onUpdate: (date: string, updates: Partial<RunEntry>) => void;
   painCap: number;
   speedState: number;
+  /** Phase 2D: optional speed add-on lines, keyed by date. Display-only —
+   *  they never change a day's miles and skipping one is never a failure. */
+  speedAddOns?: Map<string, PlanSpeedAddOn>;
 }
 
-export default function WeekAccordion({ week, runState, today, defaultOpen, onUpdate, painCap, speedState }: Props) {
+export default function WeekAccordion({ week, runState, today, defaultOpen, onUpdate, painCap, speedState, speedAddOns }: Props) {
   const [open, setOpen] = useState(defaultOpen);
 
   // Compute week totals
@@ -92,6 +96,7 @@ export default function WeekAccordion({ week, runState, today, defaultOpen, onUp
               isToday={day.date === today}
               painCap={painCap}
               speedState={speedState}
+              speedAddOn={speedAddOns?.get(day.date) ?? null}
             />
           ))}
         </div>

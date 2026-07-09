@@ -107,11 +107,13 @@ describe('migration on load preserves in-flight training state', () => {
   });
 
   it('a raw (partial) stored blob is filled additively without touching present keys', () => {
-    // Simulate a pre-existing localStorage blob missing newer keys.
+    // Simulate a pre-existing localStorage blob missing newer keys. No
+    // schemaVersion = legacy scale, so speed state 4 (old flat strides)
+    // remaps to Phase 2D tier 3 — the SAME rung, renumbered.
     const raw = { speedState: 4, hipSafeFlag: true, delayUntil: '2026-08-01', acceptedWeeks: { '2026-07-13': [] } };
     (globalThis.localStorage as Storage).setItem('bb_global_state', JSON.stringify(raw));
     const loaded = loadGlobalLocal();
-    expect(loaded.speedState).toBe(4);
+    expect(loaded.speedState).toBe(3);
     expect(loaded.hipSafeFlag).toBe(true);
     expect(loaded.delayUntil).toBe('2026-08-01');
     expect(loaded.acceptedWeeks).toEqual({ '2026-07-13': [] });

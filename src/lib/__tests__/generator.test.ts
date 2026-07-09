@@ -43,20 +43,21 @@ describe('generate-future-weeks engine (§5)', () => {
     expect(p.days[4].miles).toBe(5.0);
   });
 
-  it('generates ZERO hard sessions while speed is locked (state 1)', () => {
+  it('generates ZERO hard sessions while speed is locked (tier 0)', () => {
     const p = generateNextWeek({ runState: CURRENT_LOG, globals: globals(), today: TODAY });
     expect(p.days.every(d => d.kind !== 'threshold')).toBe(true);
-    expect(p.days.every(d => !d.strides)).toBe(true); // state 1 < 3: no strides either
+    expect(p.days.every(d => !d.strides)).toBe(true); // tier 0 < 2: no strides either
+    expect(p.days.every(d => !d.fartlek)).toBe(true);
   });
 
-  it('generates zero hard sessions when delayUntil is in the future, even at state 7', () => {
-    const g = globals({ speedState: 7, ptClearedIntensity: true, delayUntil: '2026-09-01' });
+  it('generates zero hard sessions when delayUntil is in the future, even at tier 8', () => {
+    const g = globals({ speedState: 8, ptClearedIntensity: true, delayUntil: '2026-09-01' });
     const p = generateNextWeek({ runState: CURRENT_LOG, globals: g, today: TODAY });
-    expect(p.days.every(d => d.kind !== 'threshold' && !d.strides)).toBe(true);
+    expect(p.days.every(d => d.kind !== 'threshold' && !d.strides && !d.fartlek)).toBe(true);
   });
 
-  it('offers valid optional strides at state ≥ 3 with pain-free running', () => {
-    const p = generateNextWeek({ runState: CURRENT_LOG, globals: globals({ speedState: 3 }), today: TODAY });
+  it('offers valid optional strides at tier ≥ 2 with pain-free running', () => {
+    const p = generateNextWeek({ runState: CURRENT_LOG, globals: globals({ speedState: 2 }), today: TODAY });
     const strideDays = p.days.filter(d => d.strides);
     expect(strideDays.length).toBeGreaterThan(0);
     for (const d of strideDays) {
@@ -64,12 +65,54 @@ describe('generate-future-weeks engine (§5)', () => {
     }
   });
 
-  it('adds one threshold session at state 6, ≥48h clear of the long run, never back-to-back fast', () => {
-    const p = generateNextWeek({ runState: CURRENT_LOG, globals: globals({ speedState: 6 }), today: TODAY });
+  // Tier-6 prescription needs the ADVANCED evidence (Phase 2D missing-data
+  // rule): recent easy-run RPE samples + a readable weekly check-in.
+  const RPE_LOG: RunState = Object.fromEntries(
+    Object.entries(CURRENT_LOG).map(([k, v]) => [k, { ...v, rpe: 4 }]),
+  );
+  const DATA_GLOBALS = {
+    checkins: {
+      '2026-07-06': { weekStart: '2026-07-06', sleep: 4, soreness: 2, energy: 4, stress: 2, updated_at: NOW },
+    },
+  };
+
+  it('adds one threshold session at tier 6 (with data), ≥48h clear of the long run', () => {
+    const p = generateNextWeek({ runState: RPE_LOG, globals: globals({ speedState: 6, ...DATA_GLOBALS }), today: TODAY });
     const fastIdx = p.days.map((d, i) => (d.kind === 'threshold' ? i : -1)).filter(i => i >= 0);
     expect(fastIdx).toHaveLength(1);
     expect(fastIdx[0]).toBe(1);                     // Tuesday — 72h before Friday long
     expect(4 - fastIdx[0]).toBeGreaterThanOrEqual(2); // ≥48h before the long run
+  });
+
+  it('tier 6 WITHOUT check-in/RPE data → no threshold (missing-data rule), strides still offered', () => {
+    const p = generateNextWeek({ runState: CURRENT_LOG, globals: globals({ speedState: 6 }), today: TODAY });
+    expect(p.days.every(d => d.kind !== 'threshold')).toBe(true);
+    expect(p.days.some(d => d.strides)).toBe(true); // basic touches never punished
+  });
+
+  it('tier 5 (with data) → a light-fartlek day instead of a threshold (0.5 hard unit)', () => {
+    const p = generateNextWeek({ runState: RPE_LOG, globals: globals({ speedState: 5, ...DATA_GLOBALS }), today: TODAY });
+    expect(p.days.every(d => d.kind !== 'threshold')).toBe(true);
+    const f = p.days.filter(d => d.fartlek);
+    expect(f).toHaveLength(1);
+    expect(f[0].kind).toBe('easy');                 // fartlek rides inside an easy run
+    expect(f[0].miles).not.toBeNull();              // no mileage change from the surges
+  });
+
+  it('a race in the proposed week consumes the hard budget → no threshold even at tier 6', () => {
+    const races = [{ id: 'r1', date: '2026-07-15', distanceMi: 3.1, timeSec: 1200, updated_at: NOW }];
+    const p = generateNextWeek({ runState: RPE_LOG, globals: globals({ speedState: 6, races, ...DATA_GLOBALS }), today: TODAY });
+    expect(p.weekStart).toBe('2026-07-13');         // the race (Jul 15) is in this week
+    expect(p.days.every(d => d.kind !== 'threshold' && !d.fartlek)).toBe(true);
+    expect(p.notes.join(' ')).toMatch(/race this week counts as the hard day/i);
+  });
+
+  it('coach/season overlay: no app-scheduled hard sessions on/after xcStartDate', () => {
+    const s = { ...defaultSettings(NOW), xcStartDate: '2026-07-13' }; // proposed week starts the season
+    const p = generateNextWeek({ runState: RPE_LOG, globals: globals({ speedState: 6, ...DATA_GLOBALS, settings: s }), today: TODAY, settings: s });
+    expect(p.days.every(d => d.kind !== 'threshold' && !d.fartlek)).toBe(true);
+    expect(p.notes.join(' ')).toMatch(/coach/i);
+    expect(p.days.some(d => d.strides)).toBe(true); // neuromuscular touches stay in season
   });
 
   it('never makes up missed miles: after a skipped week, resumes near the last sustained week', () => {

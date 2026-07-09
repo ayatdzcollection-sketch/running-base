@@ -201,6 +201,7 @@ function DraftRow({ day, onDec, onInc, overCap, cap }: {
         {day.kind === 'long' && <span className="tag tag-amber text-[9px] px-1.5 py-0">LONG</span>}
         {day.kind === 'threshold' && <span className="tag tag-rose text-[9px] px-1.5 py-0">threshold</span>}
         {day.strides && <span className="tag tag-teal text-[9px] px-1.5 py-0">+ strides</span>}
+        {day.fartlek && <span className="tag tag-sky text-[9px] px-1.5 py-0">+ fartlek</span>}
         <div className="ml-auto flex items-center gap-1.5">
           <button onClick={onDec} className="w-8 h-8 rounded-lg bg-card-alt border border-border text-slate-400 text-base leading-none hover:border-slate-600 transition">−</button>
           <span className="w-11 text-center font-display text-sm font-semibold tabular-nums text-slate-200">{day.miles?.toFixed(1) ?? '–'}</span>
@@ -231,7 +232,7 @@ function AcceptedWeek({ weekStart, days, onRemove }: {
         <div className="mt-1.5 space-y-0.5">
           {days.map(d => (
             <p key={d.date} className="text-[10px] text-slate-500 tabular-nums">
-              {d.dayLabel}: {d.kind === 'rest' ? 'rest' : `${d.miles ?? '–'} mi ${d.kind}${d.strides ? ' + strides' : ''}`}
+              {d.dayLabel}: {d.kind === 'rest' ? 'rest' : `${d.miles ?? '–'} mi ${d.kind}${d.strides ? ' + strides' : ''}${d.fartlek ? ' + fartlek' : ''}`}
             </p>
           ))}
         </div>

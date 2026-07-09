@@ -7,18 +7,26 @@ interface Props {
   flare: boolean;
   streak: number;
   pfNeeded: number;
+  /** Phase 2D: the tier usable TODAY (stored tier minus active blockers). */
+  effectiveTier?: SpeedStateNum;
+  /** First active blocker's label when speed is being held below the tier. */
+  heldBy?: string | null;
 }
 
-// The 7 progression states (flare/deload is the 8th override, shown separately).
-const STATE_LABELS = [
-  'Base only', 'Buildups', 'Short strides', 'Flat strides',
-  'Intro hills', 'Intro threshold', 'Structured speed',
+// The 9 ladder tiers (0–8). Flare/deload is an override shown separately.
+const TIER_LABELS = [
+  'Locked', 'Buildups', 'Short strides', 'Flat strides', 'Hill strides',
+  'Light fartlek', 'Cruise intervals', 'Tempo', 'VO₂ / race',
 ];
 
-export default function HipSpeedStatus({ speedState, hipHold, flare, streak, pfNeeded }: Props) {
-  const idx = Math.min(speedState, 7) - 1; // 0-based into the 7 progression states
-  const speedLabel = flare ? 'Flare / deload' : STATE_LABELS[idx] ?? SPEED_STATE_NAMES[speedState];
-  const nextStateName = speedState < 7 ? STATE_LABELS[speedState] : null;
+export default function HipSpeedStatus({
+  speedState, hipHold, flare, streak, pfNeeded, effectiveTier, heldBy,
+}: Props) {
+  const tier = Math.min(Math.max(speedState, 0), 8);
+  const eff = effectiveTier != null ? Math.min(effectiveTier, tier) : tier;
+  const suppressed = !flare && eff < tier;
+  const speedLabel = flare ? 'Flare / deload' : TIER_LABELS[tier] ?? SPEED_STATE_NAMES[speedState];
+  const nextTierName = tier < 8 ? TIER_LABELS[tier + 1] : null;
   const chip = 'inline-flex items-center px-[11px] py-1 rounded-full font-display text-[11px] font-semibold tracking-[0.05em] border';
 
   return (
@@ -32,20 +40,36 @@ export default function HipSpeedStatus({ speedState, hipHold, flare, streak, pfN
         <span className={`${chip} ${hipHold ? 'bg-amber-500/[0.12] text-amber-300 border-amber-500/30' : 'bg-teal-500/[0.12] text-teal-300 border-teal-500/35'}`}>
           Hip: {hipHold ? 'Hold' : 'Clear'}
         </span>
+        {suppressed && (
+          <span className={`${chip} bg-amber-500/[0.12] text-amber-300 border-amber-500/30`}>
+            Held at: {TIER_LABELS[eff]}
+          </span>
+        )}
       </div>
 
-      {/* 7-segment state bar */}
+      {/* 8-segment tier bar (tiers 1–8; tier 0 = nothing lit) */}
       <div className="flex flex-col gap-1.5">
         <div className="flex gap-1">
-          {STATE_LABELS.map((_, i) => (
-            <div key={i} className="flex-1 h-[5px] rounded-[3px]"
-              style={{ background: flare ? 'rgba(251,113,133,.22)' : i <= idx ? '#2dd4bf' : '#1e293b' }} />
-          ))}
+          {TIER_LABELS.slice(1).map((_, i) => {
+            const t = i + 1; // tier this segment represents
+            const lit = !flare && t <= tier;
+            const dimmed = lit && suppressed && t > eff;
+            return (
+              <div key={t} className="flex-1 h-[5px] rounded-[3px]"
+                style={{
+                  background: flare ? 'rgba(251,113,133,.22)'
+                    : dimmed ? 'rgba(245,158,11,.35)'
+                    : lit ? '#2dd4bf' : '#1e293b',
+                }} />
+            );
+          })}
         </div>
         <span className="text-[11.5px] text-slate-500">
           {flare
             ? 'Progression paused. The plan repeats until the hip settles.'
-            : `State ${speedState} of 7${nextStateName ? ` · next: ${nextStateName}` : ' · top of the base ladder'}`}
+            : suppressed
+              ? `Tier ${tier} earned · temporarily held at ${TIER_LABELS[eff]}${heldBy ? ` (${heldBy.toLowerCase()})` : ''}. Nothing is lost — it resumes when the signal clears.`
+              : `Tier ${tier} of 8${nextTierName ? ` · next: ${nextTierName}` : ' · top of the ladder'}`}
         </span>
       </div>
 

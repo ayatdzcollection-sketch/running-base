@@ -26,7 +26,8 @@ import {
 } from './lib/metrics';
 import { morningAnswer } from './lib/subjective';
 import { enforceGateConsistency } from './lib/speed';
-import { computeTodaySpeed } from './lib/todaySpeed';
+import { computeTodaySpeed, planWeekSpeedAddOns, todaySpeedGuard } from './lib/todaySpeed';
+import { returnFromBreakSpeedPatch } from './lib/speedGuard';
 import { computeAdaptiveProfile, toModulation } from './lib/adaptive';
 import AccessCodeModal from './components/AccessCodeModal';
 import AdaptiveInsight from './components/AdaptiveInsight';
@@ -133,6 +134,9 @@ export default function App() {
   const todaySpeed = FLAGS.TODAY_SPEED
     ? computeTodaySpeed({ runState, globals, today, plan, acceptedWeeks: globals.acceptedWeeks })
     : null;
+  // Phase 2D guard: the tier usable TODAY (stored tier minus active blockers)
+  // plus the blocker list — display + suppression only, never an unlock path.
+  const speedGuard = todaySpeedGuard({ runState, globals, today, plan, acceptedWeeks: globals.acceptedWeeks });
 
   // ── Live derived safety metrics (§2, §3) ─────────────────
   // Today's ceiling comes from the 30 days BEFORE today (excludes today's
@@ -308,9 +312,10 @@ export default function App() {
 
   // Return from break: length-aware conservative reseed. Runs `returnFromBreak`
   // to shape the plan (startMpw scaled by break length; startDate = next Monday
-  // from today). For breaks ≥ ~3 weeks, also reset the speed layer so intensity
-  // is re-earned; for shorter breaks the speed state persists. Logged runs are
-  // NEVER deleted and completed weeks are never rewritten.
+  // from today). The speed layer downgrades by break length (Phase 2D):
+  // ≥21 days → full relock to tier 0 + clearances reset; 7–20 days → one tier
+  // down (re-earn the last rung); <7 days → unchanged. Logged runs are NEVER
+  // deleted and completed weeks are never rewritten.
   const handleReturnFromBreak = useCallback(() => {
     setGlobals(prev => {
       if (!prev.breakStart) return prev;
@@ -319,22 +324,11 @@ export default function App() {
         prev.settings ?? null, runState, today, prev.breakStart, nowIso,
       );
       saveSettingsLocal(nextSettings);
-      const longBreak = breakDays >= 21;
       const next: GlobalState = {
         ...prev,
         settings: nextSettings,
         breakStart: null,
-        ...(longBreak ? {
-          speedState: 1 as const,          // speed re-earned after a real detraining break
-          speedStateSince: today,          // reset the readiness streak baseline too
-          hipSafeFlag: false,
-          ptClearedSpeed: false,
-          ptClearedIntensity: false,
-          delayUntil: null,
-          lastFastSessionDate: null,
-          lastLongRunDate: null,
-          painFreeEasyRunStreak: 0,
-        } : {}),
+        ...returnFromBreakSpeedPatch(breakDays, prev, today),
         acceptedWeeks: {},                 // stale drafts belong to before the break
         updated_at: nowIso,
       };
@@ -382,17 +376,21 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Auto-enforcement (§3, §4) ─────────────────────────────
+  // ── Auto-enforcement (§3, §4 — Phase 2D relock rules) ──────
   // Priority order, single effect to avoid render loops:
-  //  1. Two pain-cap breaches in 7 days → forced state 8 (flare/deload) — wins.
-  //  2. A clearance revoked under the current state → downgrade to the safe
-  //     pre-gate state (hills need hip-safe + PT speed; structured needs PT
-  //     intensity).
-  //  3. While hills are unlocked (state ≥ 5): ANY logged hip pain in the last
-  //     7 days locks hills and drops the state to 4 (Yokozawa caution).
+  //  1. Two pain-cap breaches in 7 days (flare) → RELOCK the ladder to tier 0
+  //     (Bucket C and everything else is re-earned once it settles) — wins.
+  //  2. A clearance revoked under the current tier → downgrade to the safe
+  //     pre-gate tier (hill strides need hip-safe + PT speed; VO₂/race needs
+  //     PT intensity).
+  //  3. While hill strides are unlocked (tier ≥ 4): ANY logged hip pain in the
+  //     last 7 days locks hills and drops the tier to 3 (Yokozawa caution).
+  // Transient signals (recovery, RPE, drift, race/down week…) deliberately do
+  // NOT touch the stored tier — they suppress via speedGuard, so a 2A/2B
+  // warning never erases earned buildup/stride progress.
   useEffect(() => {
-    if (flare && globals.speedState !== 8) {
-      updateGlobals({ speedState: 8, painFreeEasyRunStreak: 0 });
+    if (flare && globals.speedState !== 0) {
+      updateGlobals({ speedState: 0, painFreeEasyRunStreak: 0 });
       return;
     }
     if (flare) return;
@@ -401,13 +399,13 @@ export default function App() {
       updateGlobals(gatePatch);
       return;
     }
-    if (globals.speedState >= 5) {
+    if (globals.speedState >= 4) {
       const from = addDaysStr(today, -7);
       const anyHipPain = Object.values(runState).some(
         e => e.date > from && e.date <= today &&
           ((e.painDuring ?? 0) > 0 || (e.painNextAM ?? 0) > 0),
       );
-      if (anyHipPain) updateGlobals({ speedState: 4 });
+      if (anyHipPain) updateGlobals({ speedState: 3 });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flare, globals.speedState, globals.hipSafeFlag, globals.ptClearedSpeed, globals.ptClearedIntensity, runState, today]);
@@ -514,7 +512,14 @@ export default function App() {
       case 'week':
         return <WeekProgress runState={runState} plan={plan} today={today} week={todayWeek} blockTotalTarget={blockTotalTarget} />;
       case 'hipspeed':
-        return <HipSpeedStatus speedState={globals.speedState} hipHold={flare || breach} flare={flare} streak={streak} pfNeeded={pfNeeded} />;
+        return (
+          <HipSpeedStatus
+            speedState={globals.speedState} hipHold={flare || breach} flare={flare}
+            streak={streak} pfNeeded={pfNeeded}
+            effectiveTier={speedGuard.effectiveTier}
+            heldBy={speedGuard.blockers[0]?.label ?? null}
+          />
+        );
       case 'adaptive':
         return adaptiveProfile ? <AdaptiveInsight profile={adaptiveProfile} /> : null;
       case 'pain':
@@ -533,7 +538,7 @@ export default function App() {
           />
         );
       case 'speed':
-        return <SpeedPlan runState={runState} globals={globals} today={today} onUpdateGlobals={updateGlobals} />;
+        return <SpeedPlan runState={runState} globals={globals} today={today} guard={speedGuard} onUpdateGlobals={updateGlobals} />;
       case 'weeks':
         return (
           <div className="space-y-2">
@@ -543,6 +548,7 @@ export default function App() {
                 key={week.weekNum} week={week} runState={runState} today={today}
                 defaultOpen={week.allDays.some(d => d.date === today)}
                 onUpdate={updateEntry} painCap={globals.painCap} speedState={globals.speedState}
+                speedAddOns={planWeekSpeedAddOns(week, runState, globals, today)}
               />
             ))}
           </div>

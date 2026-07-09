@@ -1,16 +1,21 @@
 // ============================================================
-// GENERATE-FUTURE-WEEKS ENGINE
+// GENERATE-FUTURE-WEEKS ENGINE (Phase 2D)
 //
 // Proposes (never auto-commits) the upcoming week from ACTUAL
-// completed training, obeying speedState. Hard rules:
+// completed training, obeying the speed ladder + guard. Hard rules:
 //  * build from actuals, not the static plan
 //  * long run = nextLong (Frandsen cap in half-mile steps)
 //  * never make up missed miles; resume near last sustained week
 //  * auto down week every 3rd–4th build week or after a pain spike
-//  * speedState < 7 or delayUntil in future → ZERO hard sessions
-//  * strides only at state ≥ 3 with recent pain-free running
-//  * hills only at state ≥ 5 && hipSafeFlag (this pass generates none)
-//  * VO₂/race-pace only at state ≥ 7 && ptClearedIntensity
+//  * hard work obeys the EFFECTIVE tier (stored tier minus every active
+//    blocker — recovery, RPE, drift, spike, race week, missing data…)
+//  * hard-effort budget: base ≤1 unit/wk, season ≤2 incl. races; races in the
+//    proposed week consume budget FIRST (a race IS the hard day)
+//  * cruise threshold only at tier ≥ 6; light fartlek only at tier 5 (0.5 u)
+//  * strides only at tier ≥ 2 with recent pain-free running
+//  * VO₂/race-pace (tier 8) is NEVER generated — season-gated, coach-led
+//  * coach/season overlay (on/after xcStartDate): ZERO app-scheduled hard
+//    sessions — the app becomes a monitor; neuromuscular touches stay
 //  * no fast session within 48h of the long run; no back-to-back fast days
 //  * flare (2 pain days in 7) → easy/rest only, long clamped to trailing30
 //  * the coach award is display-only: it is NOT an input to this function,
@@ -24,6 +29,7 @@ import {
   addDaysStr, nextMonday, mondayOf, trailing30Longest, nextLongFrom, floorToHalf,
   flareActive, painFreeStreak, weeklyActuals,
 } from './metrics';
+import { evaluateSpeedGuard, racesInWeek, inSeason } from './speedGuard';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -75,7 +81,6 @@ export function generateNextWeek({ runState, globals, today, settings, adaptive 
   const flare = flareActive(runState, today, globals.painCap);
   const streak = painFreeStreak(runState, globals.painCap, globals.painTrackingSince);
   const delayed = !!globals.delayUntil && globals.delayUntil > today;
-  const effectiveState = flare ? 8 : globals.speedState;
 
   // ── Weekly volume target from actuals ──────────────────────
   // Only COMPLETED calendar weeks count toward the trend — the current
@@ -177,7 +182,7 @@ export function generateNextWeek({ runState, globals, today, settings, adaptive 
   const wsum = weights.reduce((a, b) => a + b, 0) || 1;
   const easyMiles = weights.map(w => roundHalf((easyBudget * w) / wsum));
 
-  const flareEasyOnly = effectiveState === 8;
+  const flareEasyOnly = flare;
   for (let i = 0; i < 7; i++) {
     const date = addDaysStr(weekStart, i);
     const dayLabel = DAY_LABELS[i];
@@ -204,35 +209,70 @@ export function generateNextWeek({ runState, globals, today, settings, adaptive 
     }
   }
 
-  // ── Speed content, gated by state ───────────────────────────
-  if (effectiveState >= 7 && !delayed && globals.ptClearedIntensity) {
-    notes.push('State 7: structured speed is unlocked, but this generator still proposes threshold-first weeks. Add VO₂/race-pace manually with your coach.');
+  // ── Speed content, gated by the EFFECTIVE tier + hard budget (Phase 2D) ──
+  // The guard folds every blocker (recovery, rising RPE, pain drift, spike,
+  // race week, missing data…) into the tier this proposal may use. The
+  // proposed week's races consume hard-budget units FIRST: a race IS the hard
+  // day (Evidence Spec §7).
+  const guard = evaluateSpeedGuard(runState, globals, today, { isDownWeek });
+  const tier = guard.effectiveTier;
+  const seasonWeek = inSeason(settings ?? globals.settings ?? null, weekStart);
+  const weekRaces = racesInWeek(globals.races, weekStart);
+  const S = TUNABLES.SPEED;
+  const budget = (isDownWeek || flare) ? 0 : (seasonWeek ? S.HARD_BUDGET_SEASON : S.HARD_BUDGET_BASE);
+  let unitsUsed = weekRaces.length; // races count 1 hard unit each
+
+  if (weekRaces.length > 0) {
+    notes.push('A race this week counts as the hard day. Taper rules: no additional hard work is scheduled — the race is the workout.');
   }
+
+  if (tier >= 8 && !delayed && !seasonWeek) {
+    notes.push('Tier 8 (VO₂/race-specific) is unlocked but SEASON-GATED: the app never schedules it in base. Plan sharpening with your coach in season.');
+  }
+
   // One cruise-interval threshold on the 2nd run day, only if it stays ≥48h
-  // clear of the long run (skipped on very short weeks where it can't).
+  // clear of the long run (skipped on very short weeks where it can't) —
+  // never in coach/season mode (the coach owns hard sessions), never over
+  // budget, never on a down week.
   const thresholdIdx = 1;
   const thresholdFits = lastRunIdx - thresholdIdx >= 2;
-  if (effectiveState >= 6 && !delayed && !isDownWeek && thresholdFits) {
+  if (seasonWeek) {
+    notes.push('Coach/season mode: the app schedules no hard sessions — your coach leads workouts. Easy volume + optional strides only; total hard work (coach sessions + races) should stay ≤2/week.');
+  } else if (tier >= 6 && !delayed && !isDownWeek && thresholdFits && unitsUsed + 1 <= budget + 1e-9) {
     const tue = days[thresholdIdx];
     const fastMiles = roundHalf(Math.min(weekTotal * TUNABLES.THRESHOLD_MAX_WEEK_PCT, 3));
     tue.kind = 'threshold';
     tue.why = `Cruise intervals (3–5 × 5 min, 60–90s jog), ~${fastMiles} mi fast = ≤10% of the week. ≥48h clear of the long run.`;
-  } else if (effectiveState < 7 || delayed) {
+    unitsUsed += 1;
+  } else if (tier === 5 && !delayed && !isDownWeek && thresholdFits && unitsUsed + S.FARTLEK_UNITS <= budget + 1e-9) {
+    // Light fartlek — the bridge to sustained effort (0.5 hard unit).
+    const fd = days[thresholdIdx];
+    if (fd.kind === 'easy') {
+      fd.fartlek = { surges: S.FARTLEK.SURGES, durationS: S.FARTLEK.DURATION_S };
+      fd.why += ` Optional: ${S.FARTLEK.SURGES} × ${S.FARTLEK.DURATION_S}s relaxed pickups inside the run (light fartlek, counts half a hard unit). Skip if anything niggles.`;
+      unitsUsed += S.FARTLEK_UNITS;
+      notes.push('Light fartlek offered (optional): a few relaxed 30–60s pickups inside an easy run — the gentlest introduction to sustained effort.');
+    }
+  } else if (tier < 6 || delayed) {
     notes.push(
       delayed
         ? `Speed is delayed until ${globals.delayUntil}. Zero hard sessions generated.`
-        : 'No hard intervals, hills, VO₂, or race-pace generated. Speed state keeps them locked.',
+        : tier < globals.speedState
+          ? 'No hard sessions generated: a current signal (recovery, pain trend, spike, race or down week) is holding speed below your earned tier this week.'
+          : 'No hard intervals, hills, VO₂, or race-pace generated. Speed state keeps them locked.',
     );
+  } else if (unitsUsed >= budget) {
+    notes.push('Hard-effort budget for the week is already spent — no additional hard sessions scheduled.');
   }
 
-  // Optional strides: state ≥ 3 and recent runs pain-free. Low-dose add-on,
+  // Optional strides: tier ≥ 2 and recent runs pain-free. Low-dose add-on,
   // Mon + Thu — never the threshold day, never the day before/of the long run
   // in a way that stacks fast work (strides are add-ons, not workouts).
-  if (!flareEasyOnly && effectiveState >= TUNABLES.STRIDES_MIN_STATE && streak >= 3 && !delayed) {
+  if (!flareEasyOnly && tier >= TUNABLES.STRIDES_MIN_STATE && streak >= TUNABLES.STRIDES_MIN_STREAK && !delayed) {
     const spec = { reps: 6, durationS: 20, recoveryS: 90 }; // well inside validity limits
     const strideDays = [...new Set([0, Math.max(0, lastRunIdx - 1)])]; // first day + day before long
     for (const i of strideDays) {
-      if (days[i].kind === 'easy') {
+      if (days[i].kind === 'easy' && !days[i].fartlek) {
         days[i].strides = spec;
         days[i].why += ` Optional: ${spec.reps} × ${spec.durationS}s strides, full recovery. Add-on, skip if anything niggles.`;
       }
@@ -309,7 +349,9 @@ export function checkAcceptedWeeks(
   const out: AcceptedWeekConflict[] = [];
   const flare = flareActive(runState, today, globals.painCap);
   const delayed = !!globals.delayUntil && globals.delayUntil > today;
-  const state = flare ? 8 : globals.speedState;
+  // The effective tier folds flare + every Phase 2D blocker (recovery, drift,
+  // spike, race week, missing data…) into what hard work is currently safe.
+  const tier = evaluateSpeedGuard(runState, globals, today).effectiveTier;
   const curMonday = mondayOf(today);
 
   // Validate the long-run ceiling against the SIMULATED progression, not a fixed
@@ -343,9 +385,14 @@ export function checkAcceptedWeeks(
       reasons.push(`Long run ${longDay.miles} mi now exceeds the ${cap} mi ceiling from recent training.`);
       suggested = suggested.map(d => (d.kind === 'long' ? { ...d, miles: cap, why: `Clamped to the current ${cap} mi ceiling.` } : d));
     }
-    if (fastDay && (state < 6 || delayed || flare)) {
-      reasons.push('A hard session is planned but speed is currently locked, delayed, or flared.');
+    if (fastDay && (tier < 6 || delayed || flare)) {
+      reasons.push('A hard session is planned but speed is currently locked, suppressed, delayed, or flared.');
       suggested = suggested.map(d => (d.kind === 'threshold' ? { ...d, kind: 'easy' as const, why: 'Demoted to easy. Speed is not unlocked yet.' } : d));
+    }
+    const fartlekDay = days.find(d => d.fartlek);
+    if (fartlekDay && (tier < 5 || delayed || flare)) {
+      reasons.push('A light-fartlek day is planned but the fartlek tier is currently locked or suppressed.');
+      suggested = suggested.map(d => (d.fartlek ? { ...d, fartlek: undefined, why: 'Fartlek removed. Plain easy run — speed is not available right now.' } : d));
     }
     if (fastDay && longDay && Math.abs(daysBetween(fastDay.date, longDay.date)) < 2) {
       reasons.push('A hard session sits within 48h of the long run.');

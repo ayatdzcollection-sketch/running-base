@@ -50,11 +50,15 @@ export const TUNABLES = {
    *  a climb toward a distant peak; a near peak still moves at buildStep. */
   PEAK_RAMP_WEEKS: 4,
 
-  // ── Speed permission machine ───────────────────────────────
-  /** Pain-free easy-run streak required to step INTO each state (key = target). */
-  REQUIRED_STREAK: { 2: 3, 3: 3, 4: 4, 5: 4, 6: 4, 7: 4 } as Record<number, number>,
-  /** Strides below this state are never offered by the generator. */
-  STRIDES_MIN_STATE: 3,
+  // ── Speed permission machine (Phase 2D ladder, Evidence Spec §5) ──
+  /** Pain-free easy-run streak required to step INTO each tier (key = target).
+   *  Tiers: 1 buildups · 2 short strides · 3 flat strides · 4 hill strides ·
+   *  5 light fartlek · 6 cruise/threshold · 7 continuous tempo · 8 VO₂/race. */
+  REQUIRED_STREAK: { 1: 3, 2: 3, 3: 4, 4: 4, 5: 4, 6: 4, 7: 4, 8: 4 } as Record<number, number>,
+  /** Strides below this tier are never offered by the generator (tier 2 = short strides). */
+  STRIDES_MIN_STATE: 2,
+  /** Live pain-free streak (runs) required before strides are offered/kept. */
+  STRIDES_MIN_STREAK: 3,
   /** Stride validity — anything outside this is a hidden anaerobic session. */
   STRIDES: {
     MAX_REPS: 8,
@@ -65,6 +69,36 @@ export const TUNABLES = {
   THRESHOLD_MAX_WEEK_PCT: 0.1,
   /** Never place a fast session within this many hours of the long run. */
   FAST_LONG_SPACING_H: 48,
+
+  // ── Phase 2D speed guard (blockers, missing-data rule, hard budget) ──
+  // Evidence Spec §3/§8/§10. Every rule here is downward-only: it can suppress,
+  // hold, downgrade, or relock speed — never unlock or accelerate anything.
+  SPEED: {
+    /** Tiers at/above this are ADVANCED (light fartlek and up): they require
+     *  recent check-in + RPE data and earned evidence; basic tiers 1–4 stay
+     *  available on pain-free stable training alone (missing-data rule). */
+    ADVANCED_MIN_TIER: 5,
+    /** Recent readable weekly check-ins required before an advanced tier can
+     *  unlock or be prescribed. Missing data = capped at tier 4, never punished. */
+    ADVANCED_MIN_CHECKIN_WEEKS: 1,
+    /** Morning-pain blocker: any next-AM pain ≥ this (or worse than during-run
+     *  pain) inside the window below holds hard work 24–48h. */
+    MORNING_PAIN_MIN: 2,
+    MORNING_PAIN_WINDOW_DAYS: 2,
+    /** Hold the ladder (no new unlocks) for this many days after the XC/coach
+     *  season starts — the transition into daily practice is itself a load
+     *  spike (volume+intensity+terrain; Spike25). */
+    SEASON_TRANSITION_HOLD_DAYS: 14,
+    /** Tier 8 (VO₂/race) may only unlock in-season or within this many days
+     *  before the season start ("in/near season"). */
+    NEAR_SEASON_DAYS: 21,
+    /** Weekly hard-effort budget (Bucket-C units). Races count 1 unit each;
+     *  light fartlek counts FARTLEK_UNITS; neuromuscular touches count 0. */
+    HARD_BUDGET_BASE: 1,
+    HARD_BUDGET_SEASON: 2,
+    FARTLEK_UNITS: 0.5,
+    FARTLEK: { SURGES: 5, DURATION_S: 45 },
+  },
 
   // ── Phase 2A body-response signals (adaptive.ts) ───────────
   // Every one of these can only HOLD, REDUCE, or DELOAD the plan — never loosen
@@ -188,6 +222,10 @@ export const TUNABLES = {
        *  later retuned, no consumer may ever exceed this. Structural guarantee,
        *  re-enforced by a clamp at every consumption site. */
       HARD_CEILING: 1.15,
+      /** Phase 2D cooldown: after ANY revocation (veto), trust stays paused for
+       *  this many days after the warning clears before it can re-activate —
+       *  so earned-trust never flickers on/off across a boundary signal. */
+      COOLDOWN_DAYS: 7,
     },
   },
 } as const;

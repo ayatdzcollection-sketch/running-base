@@ -32,7 +32,7 @@ const SubjectiveRow = memo(function SubjectiveRow({
   const [detail, setDetail] = useState(false);
 
   const selected = chipFor(entry?.painDuring, painCap);
-  const stridesAllowed = speedState >= 2; // no low-dose work exists at state 1
+  const stridesAllowed = speedState >= 1; // no low-dose work exists at tier 0 (speed locked)
   const hasData = selected != null || entry?.rpe != null || !!entry?.didStrides;
 
   function pick(chip: Chip) {

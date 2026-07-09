@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeTodaySpeed } from '../todaySpeed';
+import { computeTodaySpeed, SKIP_CONDITIONS } from '../todaySpeed';
 import { getPlan } from '../../config/plan';
 import { defaultGlobalState } from '../migrate';
 import type { GlobalState, ProposedDay, RunState } from '../types';
@@ -33,18 +33,18 @@ const base = { plan, acceptedWeeks: {} as GlobalState['acceptedWeeks'] };
 
 describe('computeTodaySpeed — suppression rules', () => {
   it('long-run day → explicit "no strides" row (dose none)', () => {
-    const row = computeTodaySpeed({ runState: painFreeRuns(6), globals: globals({ speedState: 3 }), today: LONG_DAY, ...base });
+    const row = computeTodaySpeed({ runState: painFreeRuns(6), globals: globals({ speedState: 2 }), today: LONG_DAY, ...base });
     expect(row).not.toBeNull();
     expect(row!.dose).toBe('none');
     expect(row!.name).toMatch(/no strides/i);
   });
 
-  it('flare (state 8) → no row', () => {
-    const row = computeTodaySpeed({ runState: painFreeRuns(6), globals: globals({ speedState: 8 }), today: EASY_DAY, ...base });
+  it('speed locked (tier 0) → no row at all', () => {
+    const row = computeTodaySpeed({ runState: painFreeRuns(6), globals: globals({ speedState: 0 }), today: EASY_DAY, ...base });
     expect(row).toBeNull();
   });
 
-  it('an active pain flare → no row even at a normal state', () => {
+  it('an active pain flare → no row even at a high earned tier', () => {
     const flared: RunState = {
       ...painFreeRuns(6),
       '2026-07-05': run('2026-07-05', { painDuring: 5 }),
@@ -54,12 +54,12 @@ describe('computeTodaySpeed — suppression rules', () => {
   });
 
   it('delayUntil in the future → no row', () => {
-    const g = globals({ speedState: 3, delayUntil: '2026-09-01' });
+    const g = globals({ speedState: 2, delayUntil: '2026-09-01' });
     expect(computeTodaySpeed({ runState: painFreeRuns(6), globals: g, today: EASY_DAY, ...base })).toBeNull();
   });
 
   it('a rest day → no row', () => {
-    expect(computeTodaySpeed({ runState: painFreeRuns(6), globals: globals({ speedState: 3 }), today: REST_DAY, ...base })).toBeNull();
+    expect(computeTodaySpeed({ runState: painFreeRuns(6), globals: globals({ speedState: 2 }), today: REST_DAY, ...base })).toBeNull();
   });
 
   it('an accepted-week long day suppresses (sourced from acceptedWeeks, not the plan)', () => {
@@ -68,7 +68,7 @@ describe('computeTodaySpeed — suppression rules', () => {
         { date: '2026-07-14', dayLabel: 'Tue', kind: 'long', miles: 6, why: 'x' } as ProposedDay,
       ],
     };
-    const row = computeTodaySpeed({ runState: painFreeRuns(6), globals: globals({ speedState: 3 }), today: '2026-07-14', plan, acceptedWeeks });
+    const row = computeTodaySpeed({ runState: painFreeRuns(6), globals: globals({ speedState: 2 }), today: '2026-07-14', plan, acceptedWeeks });
     expect(row?.dose).toBe('none');
   });
 
@@ -82,49 +82,59 @@ describe('computeTodaySpeed — suppression rules', () => {
   });
 });
 
-describe('computeTodaySpeed — which low-dose rung by state', () => {
-  it('state 1 (base only) → no add-on', () => {
-    expect(computeTodaySpeed({ runState: painFreeRuns(6), globals: globals({ speedState: 1 }), today: EASY_DAY, ...base })).toBeNull();
+describe('computeTodaySpeed — which rung by tier', () => {
+  it('tier 0 (speed locked) → no add-on', () => {
+    expect(computeTodaySpeed({ runState: painFreeRuns(6), globals: globals({ speedState: 0 }), today: EASY_DAY, ...base })).toBeNull();
   });
 
-  it('state 2 → buildups', () => {
-    const row = computeTodaySpeed({ runState: painFreeRuns(6), globals: globals({ speedState: 2 }), today: EASY_DAY, ...base });
+  it('tier 1 → buildups', () => {
+    const row = computeTodaySpeed({ runState: painFreeRuns(6), globals: globals({ speedState: 1 }), today: EASY_DAY, ...base });
     expect(row!.name).toBe('Buildups');
     expect(row!.optional).toBe(true);
   });
 
-  it('state 3 with a pain-free streak → short strides', () => {
-    const row = computeTodaySpeed({ runState: painFreeRuns(6), globals: globals({ speedState: 3 }), today: EASY_DAY, ...base });
+  it('tier 2 with a pain-free streak → short strides', () => {
+    const row = computeTodaySpeed({ runState: painFreeRuns(6), globals: globals({ speedState: 2 }), today: EASY_DAY, ...base });
     expect(row!.name).toBe('Short strides');
   });
 
-  it('state 4 → flat strides', () => {
-    const row = computeTodaySpeed({ runState: painFreeRuns(6), globals: globals({ speedState: 4 }), today: EASY_DAY, ...base });
-    expect(row!.name).toBe('Flat neuromuscular strides');
+  it('tier 3 → flat strides', () => {
+    const row = computeTodaySpeed({ runState: painFreeRuns(6), globals: globals({ speedState: 3 }), today: EASY_DAY, ...base });
+    expect(row!.name).toBe('Flat strides');
   });
 
-  it('strides fall back to buildups when the live streak has slipped below 3', () => {
-    // At state 3 but only 1 clean run since a recent breach → not enough for strides.
+  it('strides fall back to buildups when the live streak has slipped', () => {
+    // At tier 2 but a recent breach reset the streak → not enough for strides.
     const state: RunState = {
       '2026-07-06': run('2026-07-06', { painDuring: 5 }), // breach resets the streak
     };
-    const row = computeTodaySpeed({ runState: state, globals: globals({ speedState: 3, painCap: 3 }), today: EASY_DAY, ...base });
+    const row = computeTodaySpeed({ runState: state, globals: globals({ speedState: 2, painCap: 3 }), today: EASY_DAY, ...base });
     // one breach in 7 isn't a flare (needs 2), so a row still shows — as buildups.
     expect(row?.name).toBe('Buildups');
   });
 
-  it('hills/threshold never surface as the daily add-on (always low-dose)', () => {
-    const g = globals({ speedState: 6 }); // threshold unlocked
+  it('hills/threshold never surface as the daily add-on; a data-less tier 6 falls to strides', () => {
+    // Stored tier 6 (cruise earned) but NO check-in/RPE data → the missing-data
+    // rule caps prescription at the basic tiers. Basic touches keep working.
+    const g = globals({ speedState: 6 });
     const row = computeTodaySpeed({ runState: painFreeRuns(6), globals: g, today: EASY_DAY, ...base });
     expect(row!.dose).toBe('low');
-    expect(['Buildups', 'Short strides', 'Flat neuromuscular strides']).toContain(row!.name);
+    expect(['Buildups', 'Short strides', 'Flat strides']).toContain(row!.name);
+  });
+
+  it('every offered row carries the skip conditions (§9)', () => {
+    for (const tier of [1, 2, 3] as const) {
+      const row = computeTodaySpeed({ runState: painFreeRuns(6), globals: globals({ speedState: tier }), today: EASY_DAY, ...base });
+      expect(row!.skip).toBe(SKIP_CONDITIONS);
+      expect(row!.skip).toMatch(/pain, soreness, poor recovery/i);
+    }
   });
 });
 
-describe('computeTodaySpeed — race/award are not inputs', () => {
-  it('identical output regardless of logged races on globals', () => {
-    const g1 = globals({ speedState: 3 });
-    const g2 = globals({ speedState: 3, races: [{ id: 'a', date: '2026-06-20', distanceMi: 3.1, timeSec: 1000, updated_at: NOW }] });
+describe('computeTodaySpeed — race/award are not inputs (past races)', () => {
+  it('identical output regardless of PAST logged races on globals', () => {
+    const g1 = globals({ speedState: 2 });
+    const g2 = globals({ speedState: 2, races: [{ id: 'a', date: '2026-06-20', distanceMi: 3.1, timeSec: 1000, updated_at: NOW }] });
     const a = computeTodaySpeed({ runState: painFreeRuns(6), globals: g1, today: EASY_DAY, ...base });
     const b = computeTodaySpeed({ runState: painFreeRuns(6), globals: g2, today: EASY_DAY, ...base });
     expect(a).toEqual(b);

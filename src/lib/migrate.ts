@@ -14,12 +14,24 @@
 import type { GlobalState, SpeedStateNum } from './types';
 import { TUNABLES } from '../config/tunables';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
+
+/** Schema 2 → 3: the speed ladder was renumbered to the Phase 2D 0–8 tiers
+ *  (Evidence Spec §5). Old scale: 1 base-only … 7 structured, 8 flare/deload.
+ *  New scale: 0 locked · 1 buildups · 2 short strides · 3 flat strides ·
+ *  4 hill strides · 5 light fartlek (new) · 6 cruise intervals · 7 tempo ·
+ *  8 VO₂/race. Conservative mapping: old 6 (threshold, covered cruise+tempo)
+ *  lands on 6 (cruise only — tempo is re-earned); old 7 (structured) lands on
+ *  8; old 8 (flare) relocks to 0 (a flare is a forced deload — the ladder is
+ *  re-earned once it settles, which is what the old flow required anyway). */
+const SPEED_STATE_V2_TO_V3: Record<number, SpeedStateNum> = {
+  1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 6, 7: 8, 8: 0,
+};
 
 export function defaultGlobalState(nowIso: string): GlobalState {
   return {
     schemaVersion: SCHEMA_VERSION,
-    speedState: 1,                 // base only
+    speedState: 0,                 // speed locked — base only
     hipSafeFlag: false,
     ptClearedSpeed: false,
     ptClearedIntensity: false,
@@ -60,8 +72,15 @@ export function migrateGlobalState(raw: unknown, nowIso: string): GlobalState {
   }
 
   // Clamp obviously-corrupt values without discarding the rest of the state.
+  // Blobs from schema ≤2 used the old 1–8 scale → remap onto the 0–8 tiers.
+  // (Idempotent: a remapped blob is stamped schemaVersion 3 below, so a second
+  // migrate pass takes the plain-clamp path and changes nothing.)
+  const inVer = Number(raw.schemaVersion);
+  const legacyScale = !Number.isInteger(inVer) || inVer < 3;
   const st = Number(out.speedState);
-  out.speedState = (Number.isInteger(st) && st >= 1 && st <= 8 ? st : 1) as SpeedStateNum;
+  out.speedState = legacyScale
+    ? (Number.isInteger(st) && st >= 1 && st <= 8 ? SPEED_STATE_V2_TO_V3[st] : 0)
+    : ((Number.isInteger(st) && st >= 0 && st <= 8 ? st : 0) as SpeedStateNum);
   const cap = Number(out.painCap);
   out.painCap = Number.isFinite(cap) && cap >= 0 && cap <= 10 ? cap : defaults.painCap;
   if (out.speedStateSince != null && typeof out.speedStateSince !== 'string') out.speedStateSince = null;

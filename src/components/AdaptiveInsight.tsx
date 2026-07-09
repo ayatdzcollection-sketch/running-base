@@ -35,11 +35,17 @@ export default function AdaptiveInsight({ profile }: { profile: AdaptiveProfile 
         <span className={`inline-flex items-center px-[11px] py-1 rounded-full font-display text-[11px] font-semibold tracking-[0.05em] border ${tone.chip}`}>
           {profile.headline}
         </span>
-        {earned && (
-          <span className="inline-flex items-center px-[9px] py-1 rounded-full font-display text-[10px] font-semibold tracking-[0.08em] border bg-emerald-500/10 text-emerald-300 border-emerald-500/30">
-            EARNED-TRUST
-          </span>
-        )}
+        {/* Phase 2D: earned-trust status chip — always visible, four states. */}
+        <span className={`inline-flex items-center px-[9px] py-1 rounded-full font-display text-[10px] font-semibold tracking-[0.08em] border ${
+          earned ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+          : profile.earnedTrust.blockedBy ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+          : profile.earnedTrust.cooldownDaysLeft != null ? 'bg-sky-500/10 text-sky-300 border-sky-500/30'
+          : 'bg-slate-500/10 text-slate-400 border-border'}`}>
+          {earned ? 'EARNED-TRUST · ACTIVE'
+            : profile.earnedTrust.blockedBy ? 'EARNED-TRUST · PAUSED'
+            : profile.earnedTrust.cooldownDaysLeft != null ? `EARNED-TRUST · RE-EARNING (${profile.earnedTrust.cooldownDaysLeft}d)`
+            : 'EARNED-TRUST · NOT YET'}
+        </span>
       </div>
 
       {/* Earned-trust callout — calm, confidence-framed (not a reward). */}
@@ -53,6 +59,26 @@ export default function AdaptiveInsight({ profile }: { profile: AdaptiveProfile 
             (+{Math.round((profile.earnedTrust.growthMax - 1) * 100)}% vs the usual +10%). Still capped by the
             long-run, pain, recovery, and peak rules — and it pauses the moment any of those signals worsen.
           </p>
+        </div>
+      )}
+
+      {/* Phase 2D clarity: WHY trust is inactive — the pause reason, the
+          cooldown countdown, or exactly what evidence is still missing. */}
+      {!earned && (
+        <div className="rounded-lg border border-border bg-ink px-3 py-2.5 flex flex-col gap-1">
+          <span className="font-display text-[10px] font-semibold tracking-[0.1em] text-slate-500">
+            {profile.earnedTrust.blockedBy ? 'WHY TRUST IS PAUSED'
+              : profile.earnedTrust.cooldownDaysLeft != null ? 'RE-EARNING AFTER A WARNING'
+              : 'WHAT EARNS THE WIDER CAP'}
+          </span>
+          <p className="m-0 text-[11.5px] leading-snug text-slate-500">{profile.earnedTrust.reason}</p>
+          {profile.earnedTrust.missing.length > 0 && (
+            <ul className="m-0 mt-0.5 pl-4 list-disc marker:text-slate-600 flex flex-col gap-0.5">
+              {profile.earnedTrust.missing.map((m, i) => (
+                <li key={i} className="text-[11px] leading-snug text-slate-500">{m}</li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
