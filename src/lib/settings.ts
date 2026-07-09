@@ -381,7 +381,10 @@ export interface StepCarry {
  * kicks in on/after xcStartDate — coach-primary hold, no build, long run flat.
  *
  * Structural safety (invariants that survive every settings combo):
- *  • no build week grows more than +10% of the last BUILD week (trajectory)
+ *  • no build week grows more than +10% of the last BUILD week (trajectory) —
+ *    or, when Phase 2C earned-trust is active, up to the earned cap
+ *    (mod.earnedGrowthMax, hard-limited to EARNED_TRUST.HARD_CEILING); the
+ *    default (no/identity mod) stays at exactly +10%/wk
  *  • no week's total ever exceeds peakMpw
  *  • no single run ever exceeds the peak WEEK (long capped at floorToHalf(peak))
  *  • the long-run ladder advances only via nextLongFrom(prevLong) — ≤110%
@@ -391,15 +394,16 @@ export interface StepCarry {
  *  • buildStep drives the rate honestly — changing the display window does
  *    not compress or stretch the training slope
  *
- * Individual adaptation (`mod`, optional): a downward-only modulation of the
- * RATE. `growthFactor` (≤1) scales ONLY the positive build increment; `downEvery`
- * may only TIGHTEN the absorption cadence (min with the setting); `holdLong`
- * (Phase 2A long-run readiness gate) freezes the long-run ladder for this cycle
- * without freezing the weekly trajectory. Absent `mod` (or an identity `mod`
- * with holdLong falsy) leaves every week byte-identical. Phase 2A computes this
- * `mod` from real body signals (easy-run RPE trend, sub-threshold pain drift,
- * long-run readiness); it can never loosen a cap, raise the peak, or accelerate
- * the build.
+ * Individual adaptation (`mod`, optional): `growthFactor` (≤1) scales ONLY the
+ * positive build increment; `downEvery` may only TIGHTEN the absorption cadence
+ * (min with the setting); `holdLong` (Phase 2A long-run readiness gate) freezes
+ * the long-run ladder for this cycle without freezing the weekly trajectory.
+ * Those three are downward-only. Phase 2C adds `earnedGrowthMax` — the one field
+ * that may WIDEN a ceiling (the +10%/wk weekly-growth cap → the earned cap),
+ * present only when earned-trust is active. Absent `mod` (or an identity `mod`
+ * with holdLong falsy and no earnedGrowthMax) leaves every week byte-identical.
+ * Even with earnedGrowthMax set, `mod` can never loosen the long-run ladder, the
+ * peak ceiling, or the pain gate — only the weekly-volume growth increment.
  */
 export function stepWeek(
   i: number, prev: StepCarry, eff: EffectiveSettings, mod?: AdaptiveModulation | null,
@@ -429,16 +433,30 @@ export function stepWeek(
     // Ramp toward peakMpw. `buildStep` is the MINIMUM weekly increase; when the
     // peak is still far the plan closes a share (~1/PEAK_RAMP_WEEKS) of the gap
     // each week so that raising or lowering the peak visibly reshapes the future
-    // — but never faster than the +10%/wk safety ceiling, and never past the
-    // peak. The gap term uses a FIXED reference horizon, NOT weeksShown, so the
-    // display window never changes the training slope (no horizon compression).
-    // A near peak (small gap) moves at buildStep; a distant peak accelerates up
-    // to the safety cap; peakMpw is always the terminal ceiling.
-    const cap = prev.traj * (TUNABLES.WEEKLY_GROWTH_MAX - 1);
+    // — but never faster than the weekly-growth safety ceiling, and never past
+    // the peak. The gap term uses a FIXED reference horizon, NOT weeksShown, so
+    // the display window never changes the training slope (no horizon
+    // compression). A near peak (small gap) moves at buildStep; a distant peak
+    // accelerates up to the safety cap; peakMpw is always the terminal ceiling.
+    //
+    // Phase 2C earned-trust: the ONLY input that may WIDEN this ceiling. When the
+    // modulation carries `earnedGrowthMax` (present only when trust is earned) the
+    // build week may grow up to that cap instead of the +10%/wk default —
+    // defensively re-clamped to HARD_CEILING so no malformed mod can exceed it.
+    // Absent = the default +10%/wk cap, byte-identical to Phase 2B. Down and
+    // maintenance weeks never reach this branch, so earned-trust is never active
+    // on an absorption week; peakMpw and the long-run ladder still bind below.
+    const weeklyGrowthMax = mod?.earnedGrowthMax != null
+      ? Math.min(mod.earnedGrowthMax, TUNABLES.ADAPTIVE.EARNED_TRUST.HARD_CEILING)
+      : TUNABLES.WEEKLY_GROWTH_MAX;
+    const cap = prev.traj * (weeklyGrowthMax - 1);
     const gapSeek = Math.max(0, eff.peakMpw - prev.traj) / TUNABLES.PEAK_RAMP_WEEKS;
     // `growthFactor` (≤1) eases the increment for a fragile responder. It's applied
-    // AFTER the +10%/wk cap, so the eased step is still ≤ cap and ≥ 0 — the safety
-    // ceiling and the peak still bind, and identity (factor 1) is exact.
+    // AFTER the growth cap, so the eased step is still ≤ cap and ≥ 0 — the safety
+    // ceiling and the peak still bind, and identity (factor 1) is exact. (Earned
+    // trust and easing never coexist: any easing sets growthFactor < 1, which
+    // disables earned-trust upstream, so earnedGrowthMax is absent whenever
+    // growthFactor < 1.)
     const step = Math.min(cap, Math.max(eff.buildStep, gapSeek)) * growthFactor;
     total = Math.min(prev.traj + step, eff.peakMpw);
   }

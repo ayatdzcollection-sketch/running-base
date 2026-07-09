@@ -7,7 +7,7 @@
 
 import type { GlobalState, RawSettings, RunState, SpeedStateNum } from './types';
 import { TUNABLES } from '../config/tunables';
-import { painFreeStreak, flareActive, mondayOf, addDaysStr } from './metrics';
+import { painFreeStreak, flareActive, mondayOf, addDaysStr, laterDate } from './metrics';
 import { requiredStreakFor } from './settings';
 
 // ── General restriction model ────────────────────────────────
@@ -114,8 +114,13 @@ export function evaluateReadiness(
 
   // 1. Pain-free easy-run streak — the STRICTER of the built-in requirement
   //    and the user's pfNeeded setting (settings can only tighten it). Runs
-  //    predating pain tracking don't count as proven pain-free evidence.
-  const streak = painFreeStreak(runState, painCap, globals.painTrackingSince);
+  //    predating pain tracking don't count as proven pain-free evidence — and
+  //    neither do runs from BEFORE the current state was entered (speedStateSince):
+  //    each advance needs a FRESH streak at the new state, so one long streak
+  //    can't unlock the whole ladder in a single sitting. (speedStateSince
+  //    absent/null → falls back to the pain-tracking baseline, unchanged.)
+  const streakSince = laterDate(globals.painTrackingSince, globals.speedStateSince);
+  const streak = painFreeStreak(runState, painCap, streakSince);
   const required = requiredStreakFor(target, settings);
   items.push({
     key: 'streak',

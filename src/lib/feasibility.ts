@@ -37,17 +37,31 @@ export interface DaysRoute {
 
 export interface PeakFeasibility {
   hasBoundary: boolean;      // is there an XC/maintenance boundary at all?
-  feasible: boolean;         // is the target safely reachable before the boundary?
+  feasible: boolean;         // is the target safely reachable before the boundary UNDER THE DEFAULT +10%/wk cap?
   delivering: boolean;       // does the CURRENT plan actually reach it before the boundary?
   targetPeak: number;
   reachedByPlan: number;     // current settings ramp's highest week before the boundary
-  maxSafeReachable: number;  // the most any safe ramp reaches before the boundary
+  maxSafeReachable: number;  // the most any DEFAULT-cap safe ramp reaches before the boundary
   boundaryDate: string | null;
   buildWeeks: number;        // build weeks available before the boundary
   limiter: PeakLimiter;
   daysRoute: DaysRoute | null; // adding a run day would help (null if it wouldn't / n/a)
   reasons: string[];
   suggestions: string[];
+  // ── Phase 2C earned-trust (diagnostic only; never forces the target) ──
+  /** Is earned-trust ACTIVE right now (the passed modulation carried a wider
+   *  cap)? When false, the earned figures below are a clearly-conditional
+   *  "if you earned it" hypothetical, never an assumption that data is clean. */
+  earnedTrustActive: boolean;
+  /** The most a safe ramp reaches before the boundary UNDER THE EARNED cap.
+   *  Always ≥ maxSafeReachable. A conditional ceiling, computed from the earned
+   *  cap constant — not a claim that earned-trust is currently active. */
+  maxSafeReachableEarned: number;
+  /** Would the target be reachable under the earned cap (even if not the default)? */
+  feasibleEarned: boolean;
+  /** Plain-language note about the earned-trust route, or null when it adds
+   *  nothing (target already reachable on the default cap). */
+  earnedNote: string | null;
 }
 
 function normDownEvery(d: number): number {
@@ -63,14 +77,20 @@ function ordinal(n: number): string {
 
 /**
  * The most a plan can safely reach in `buildWeeks` weeks with `days` run days,
- * climbing at the +10%/wk cap, dipping on the down-week cadence, laddering the
- * long run (capped at the peak), and never letting a week exceed days × longRun.
- * Returns the reachable total and whether the DISTRIBUTION ceiling (days × long)
- * was the binding constraint on the final build week.
+ * climbing at the weekly-growth cap, dipping on the down-week cadence, laddering
+ * the long run (capped at the peak), and never letting a week exceed
+ * days × longRun. Returns the reachable total and whether the DISTRIBUTION
+ * ceiling (days × long) was the binding constraint on the final build week.
+ *
+ * `growthMax` is the week-over-week growth multiplier: the +10%/wk population
+ * default, or the wider earned-trust cap when probing the earned-trust route.
+ * It only ever affects the growth term, never the long-run ladder or the
+ * distribution ceiling — earned-trust cannot loosen those.
  */
 function simMaxSafe(
   startMpw: number, days: number, downEvery: number,
   trailingLongest: number, targetPeak: number, buildWeeks: number,
+  growthMax: number = TUNABLES.WEEKLY_GROWTH_MAX,
 ): { reachable: number; distBoundAtEnd: boolean } {
   const cap = floorToHalf(targetPeak);
   // W1 (engine index 0) already ladders the long one step off the seed, so mirror
@@ -87,7 +107,7 @@ function simMaxSafe(
       total = traj * (1 - TUNABLES.SCHEDULED_DOWN_CUT); // dip off the trajectory; long held
     } else {
       long = Math.min(nextLongFrom(long), cap);
-      const growthCap = traj * TUNABLES.WEEKLY_GROWTH_MAX;
+      const growthCap = traj * growthMax;
       const distCap = days * long;
       total = Math.min(growthCap, distCap);
       distBoundAtEnd = distCap < growthCap - 1e-9;
@@ -107,13 +127,29 @@ function simMaxSafe(
  * really shown. `maxSafeReachable` deliberately stays the UNMODULATED population
  * safety ceiling — it answers "is the peak physically reachable under the safety
  * rules", independent of any individual easing. Absent/identity `mod` (today's
- * behavior) leaves the whole assessment unchanged.
+ * behavior) leaves the DEFAULT-cap assessment unchanged.
+ *
+ * Phase 2C earned-trust: this layer ALSO reports whether the earned (wider) cap
+ * would help — `maxSafeReachableEarned` / `feasibleEarned` / `earnedNote`. That
+ * earned ceiling is a CONDITIONAL ("if trust is earned and kept"), computed from
+ * the earned-cap constant, never an assumption that today's optional data is
+ * clean. `earnedTrustActive` reflects only whether the passed `mod` actually
+ * carries the earned cap right now. The plan is still never forced to the target.
  */
 export function assessPeakFeasibility(eff: EffectiveSettings, mod?: AdaptiveModulation | null): PeakFeasibility {
   const target = eff.peakMpw;
   const days = Math.round(Math.min(6, Math.max(3, eff.daysPerWeek)));
   const downEvery = normDownEvery(eff.downEvery);
   const boundary = eff.xcStartDate || null;
+  const earnedTrustActive = mod?.earnedGrowthMax != null;
+  // The earned cap used for the "could earned-trust help?" probe. Re-clamped to
+  // HARD_CEILING so the diagnostic can never advertise a cap the engine wouldn't
+  // honor. This is a constant-driven hypothetical, independent of active state.
+  const earnedCap = Math.min(
+    TUNABLES.ADAPTIVE.EARNED_TRUST.GROWTH_MAX, TUNABLES.ADAPTIVE.EARNED_TRUST.HARD_CEILING,
+  );
+  const defPct = Math.round((TUNABLES.WEEKLY_GROWTH_MAX - 1) * 100);
+  const earnedPct = Math.round((earnedCap - 1) * 100);
 
   // No maintenance boundary → the rolling plan will reach the peak eventually.
   if (!boundary || boundary <= eff.startDate) {
@@ -121,6 +157,7 @@ export function assessPeakFeasibility(eff: EffectiveSettings, mod?: AdaptiveModu
       hasBoundary: false, feasible: true, delivering: true, targetPeak: target,
       reachedByPlan: target, maxSafeReachable: target, boundaryDate: boundary,
       buildWeeks: Infinity, limiter: 'none', daysRoute: null, reasons: [], suggestions: [],
+      earnedTrustActive, maxSafeReachableEarned: target, feasibleEarned: true, earnedNote: null,
     };
   }
 
@@ -132,9 +169,15 @@ export function assessPeakFeasibility(eff: EffectiveSettings, mod?: AdaptiveModu
     else break;
   }
 
-  // Max-safe ramp with the CURRENT run days.
+  // Max-safe ramp with the CURRENT run days, at the DEFAULT +10%/wk cap.
   const cur = simMaxSafe(eff.startMpw, days, downEvery, eff.trailingLongest, target, buildWeeks);
   const maxSafeReachable = roundHalf(cur.reachable);
+
+  // Same ramp under the EARNED (wider) cap — a conditional "if trust holds"
+  // ceiling. Always ≥ maxSafeReachable. Uses the same distribution/long-run
+  // rules, so earned-trust only ever buys a little extra weekly growth.
+  const earned = simMaxSafe(eff.startMpw, days, downEvery, eff.trailingLongest, target, buildWeeks, earnedCap);
+  const maxSafeReachableEarned = roundHalf(Math.max(earned.reachable, cur.reachable));
 
   // What the CURRENT settings ramp actually reaches before the boundary — using
   // the same (optional) individual modulation the displayed plan applies.
@@ -143,6 +186,7 @@ export function assessPeakFeasibility(eff: EffectiveSettings, mod?: AdaptiveModu
 
   const feasible = maxSafeReachable >= target - 0.5;
   const delivering = reachedByPlan >= target - 0.5;
+  const feasibleEarned = maxSafeReachableEarned >= target - 0.5;
 
   // ── ROUTE: would ONE more run day help? Test days+1 (higher distribution
   //    ceiling). It only helps when distribution — not weekly growth or weeks —
@@ -196,9 +240,28 @@ export function assessPeakFeasibility(eff: EffectiveSettings, mod?: AdaptiveModu
     suggestions.push('Raise the minimum build step to climb toward the peak sooner.');
   }
 
+  // ── Earned-trust note: only when it changes the story. If the target is
+  //    already reachable on the DEFAULT cap, earned-trust adds nothing here. ──
+  let earnedNote: string | null = null;
+  if (!feasible) {
+    if (feasibleEarned) {
+      earnedNote = earnedTrustActive
+        ? `Reachable only while earned-trust stays active (its wider +${earnedPct}%/wk cap). `
+          + `If pain, recovery, or RPE signals worsen, the plan falls back to the safer +${defPct}%/wk path `
+          + `(safe max ~${maxSafeReachable} mi) and won't force the number.`
+        : `Not reachable under the normal +${defPct}%/wk cap (safe max ~${maxSafeReachable} mi), but earning trust — `
+          + `several clean weeks with steady effort and good recovery — would unlock a wider +${earnedPct}%/wk cap `
+          + `that reaches ~${maxSafeReachableEarned} mi. Earned-trust can't be forced; it's earned by clean training.`;
+    } else {
+      earnedNote = `Even the earned +${earnedPct}%/wk cap only reaches ~${maxSafeReachableEarned} mi before ${boundary}, `
+        + `so earning trust alone wouldn't close the gap.`;
+    }
+  }
+
   return {
     hasBoundary: true, feasible, delivering, targetPeak: target,
     reachedByPlan, maxSafeReachable, boundaryDate: boundary, buildWeeks,
     limiter, daysRoute, reasons, suggestions,
+    earnedTrustActive, maxSafeReachableEarned, feasibleEarned, earnedNote,
   };
 }

@@ -54,6 +54,13 @@ export interface GlobalState {
   ptClearedIntensity: boolean;
   /** Snapshot only — the live value is always recomputed from the run log. */
   painFreeEasyRunStreak: number;
+  /** Date (YYYY-MM-DD) the CURRENT speedState was entered. The readiness gate
+   *  counts pain-free runs only from this date forward, so one long streak can't
+   *  unlock the whole ladder at once — each advance requires a FRESH streak of
+   *  pain-free runs at the new state. null/absent = never stamped (legacy/first
+   *  advance uses the pain-tracking baseline, exactly as before). Stamped on
+   *  every speedState change. */
+  speedStateSince?: string | null;
   /** Date (YYYY-MM-DD) pain tracking began for this athlete. Runs BEFORE this
    *  never count as "proven pain-free" toward speed progression — they predate
    *  the pain feature, so we can't assume they were pain-free. Set once, on the

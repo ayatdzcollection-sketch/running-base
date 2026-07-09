@@ -107,6 +107,63 @@ describe('state machine (§4)', () => {
   });
 });
 
+// ── The streak must be re-earned at each state (cascade bug fix) ──────────────
+// Before the fix, one long pain-free streak satisfied EVERY higher state's
+// requirement, so a runner could climb the whole ladder in one sitting and the
+// counter never reset on advance. The readiness streak now counts only runs
+// logged since the current state was entered (speedStateSince).
+describe('readiness streak resets per state entry (§4 cascade fix)', () => {
+  /** n consecutive pain-free runs starting AT startDate, going forward. */
+  function runsFrom(startDate: string, n: number): RunState {
+    const state: RunState = {};
+    for (let i = 0; i < n; i++) {
+      const d = new Date(startDate + 'T12:00:00Z');
+      d.setUTCDate(d.getUTCDate() + i);
+      const date = d.toISOString().slice(0, 10);
+      state[date] = run(date);
+    }
+    return state;
+  }
+
+  it('a streak earned BEFORE the current state was entered does not count', () => {
+    // Just advanced to state 3 today; all 10 pain-free runs predate today.
+    const g = globals({ speedState: 3, speedStateSince: TODAY });
+    const report = evaluateReadiness(4, painFreeRuns(10), g, TODAY);
+    expect(report.items.find(i => i.key === 'streak')?.detail).toBe('currently 0');
+    expect(canSetState(4, painFreeRuns(10), g, TODAY).allowed).toBe(false);
+  });
+
+  it('one long streak cannot cascade up multiple states in a row', () => {
+    // A fat pre-existing streak legitimately unlocks the FIRST advance (1→2)…
+    const before = globals({ speedState: 1, speedStateSince: null });
+    expect(canSetState(2, painFreeRuns(6), before, TODAY).allowed).toBe(true);
+    // …but once state 2 is entered TODAY, the SAME old runs no longer count, so
+    // 2→3 is blocked until fresh pain-free runs accumulate at state 2.
+    const after = globals({ speedState: 2, speedStateSince: TODAY });
+    expect(canSetState(3, painFreeRuns(6), after, TODAY).allowed).toBe(false);
+  });
+
+  it('a FRESH streak since state entry re-enables an advance', () => {
+    // Entered state 3 on 2026-07-01; four pain-free runs on/after that date.
+    const g = globals({ speedState: 3, speedStateSince: '2026-07-01' });
+    const fresh = runsFrom('2026-07-01', 4); // Jul 1–4, all ≥ speedStateSince
+    expect(evaluateReadiness(4, fresh, g, TODAY).items.find(i => i.key === 'streak')?.ok).toBe(true);
+    expect(canSetState(4, fresh, g, TODAY).allowed).toBe(true);
+  });
+
+  it('pain-tracking baseline still wins when it is later than state entry', () => {
+    // Runs before painTrackingSince never count, even if speedStateSince is older.
+    const g = globals({ speedState: 2, speedStateSince: '2026-06-20', painTrackingSince: '2026-07-05' });
+    const oldRuns = runsFrom('2026-06-21', 6); // all before painTrackingSince
+    expect(canSetState(3, oldRuns, g, TODAY).allowed).toBe(false);
+  });
+
+  it('absent speedStateSince is backward-compatible (uses the pain-tracking baseline)', () => {
+    const g = globals({ speedState: 1 }); // speedStateSince defaults to null
+    expect(canSetState(2, painFreeRuns(4), g, TODAY).allowed).toBe(true);
+  });
+});
+
 describe('speed type gating', () => {
   const hills = SPEED_TYPES.find(t => t.key === 'hills')!;
   const vo2 = SPEED_TYPES.find(t => t.key === 'vo2')!;

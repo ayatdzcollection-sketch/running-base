@@ -122,6 +122,15 @@ export function flareActive(runState: RunState, today: string, painCap: number):
  * run that predates the pain feature as proven pain-free evidence for unlocking
  * speed. Any logged breach resets the streak to 0 naturally.
  */
+/** The later (max) of two optional YYYY-MM-DD dates; null only when both are
+ *  absent. ISO date strings compare lexically == chronologically. Used to gate
+ *  the readiness streak on the LATER of pain-tracking start and state entry. */
+export function laterDate(a: string | null | undefined, b: string | null | undefined): string | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  return a >= b ? a : b;
+}
+
 export function painFreeStreak(runState: RunState, painCap: number, since?: string | null): number {
   const runs = Object.values(runState)
     .filter(e => (e.done || e.miles_actual != null) && (!since || e.date >= since))

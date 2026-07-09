@@ -1,11 +1,12 @@
 import type { AdaptiveProfile } from '../lib/adaptive';
 
 // Shows how the runner's own response personalizes their plan. Transparent and
-// motivating, and honest about the one direction it moves: it can only ease the
-// build or hold the long run, never push past the population-capped rate. As of
-// Phase 2A this modulation shapes BOTH the displayed rolling plan (future/unlocked
-// weeks) and the weeks you Generate — the card explains the same adjustment the
-// plan applies. Display + reasons only.
+// motivating, and honest about which direction it moves. As of Phase 2C it
+// moves in EITHER direction, but asymmetrically: it can ease the build or hold
+// the long run (Phase 2A/2B), OR — only when recent training is provably clean —
+// let the build use a slightly wider weekly cap (Phase 2C earned-trust). It
+// never loosens a hard safety cap (long-run, pain, peak). This modulation shapes
+// BOTH the displayed rolling plan and the weeks you Generate. Display + reasons only.
 
 const TONE: Record<AdaptiveProfile['readiness'], { chip: string; bar: string }> = {
   building: { chip: 'bg-teal-500/10 text-teal-300 border-teal-500/30', bar: '#2dd4bf' },
@@ -15,7 +16,12 @@ const TONE: Record<AdaptiveProfile['readiness'], { chip: string; bar: string }> 
 };
 
 export default function AdaptiveInsight({ profile }: { profile: AdaptiveProfile }) {
-  const tone = TONE[profile.readiness];
+  const earned = profile.earnedTrust.active;
+  // Earned-trust reads as a confident "building" state (emerald) rather than the
+  // ordinary teal, to distinguish "wider earned cap" from plain full-rate.
+  const tone = earned
+    ? { chip: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30', bar: '#34d399' }
+    : TONE[profile.readiness];
   const pct = Math.round(profile.growthFactor * 100);
 
   return (
@@ -29,7 +35,26 @@ export default function AdaptiveInsight({ profile }: { profile: AdaptiveProfile 
         <span className={`inline-flex items-center px-[11px] py-1 rounded-full font-display text-[11px] font-semibold tracking-[0.05em] border ${tone.chip}`}>
           {profile.headline}
         </span>
+        {earned && (
+          <span className="inline-flex items-center px-[9px] py-1 rounded-full font-display text-[10px] font-semibold tracking-[0.08em] border bg-emerald-500/10 text-emerald-300 border-emerald-500/30">
+            EARNED-TRUST
+          </span>
+        )}
       </div>
+
+      {/* Earned-trust callout — calm, confidence-framed (not a reward). */}
+      {earned && (
+        <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/[0.06] px-3 py-2.5 flex flex-col gap-1">
+          <span className="font-display text-[10px] font-semibold tracking-[0.1em] text-emerald-300">
+            SLIGHTLY WIDER WEEKLY CAP
+          </span>
+          <p className="m-0 text-[11.5px] leading-snug text-slate-400">
+            Recent training has been clean, so the build can use a slightly wider weekly cap
+            (+{Math.round((profile.earnedTrust.growthMax - 1) * 100)}% vs the usual +10%). Still capped by the
+            long-run, pain, recovery, and peak rules — and it pauses the moment any of those signals worsen.
+          </p>
+        </div>
+      )}
 
       {/* Build-rate bar: how much of the normal (already-capped) step is in play. */}
       <div className="flex flex-col gap-1.5">
@@ -55,9 +80,9 @@ export default function AdaptiveInsight({ profile }: { profile: AdaptiveProfile 
           <p key={i} className="m-0 text-[11.5px] leading-snug text-slate-500">{r}</p>
         ))}
         <p className="m-0 text-[11px] leading-snug text-slate-600">
-          This eases your upcoming rolling plan and the weeks you Generate — it only ever slows
-          the build or holds the long run, never raises your caps or unlocks speed. Locked and
-          completed weeks are never changed.
+          {earned
+            ? 'Earned-trust only widens the weekly volume step a little — it never raises the long-run cap, the peak, or unlocks speed. It reverts to the normal cap instantly if pain, recovery, or RPE signals worsen. Locked and completed weeks are never changed.'
+            : 'This shapes your upcoming rolling plan and the weeks you Generate — easing the build or holding the long run, never raising your hard caps or unlocking speed. Locked and completed weeks are never changed.'}
         </p>
       </div>
     </section>

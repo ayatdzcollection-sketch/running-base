@@ -316,6 +316,129 @@ function recoveryReason(kind: 'caution' | 'poor' | 'poor-repeated', sig: Recover
   }
 }
 
+// ============================================================
+// PHASE 2C — earned-trust growth (the one and only UPWARD signal).
+//
+// Everything above this line can only HOLD / REDUCE / DELOAD. Earned-trust is
+// the single exception: when recent training is provably clean it may widen the
+// week-over-week VOLUME growth ceiling a little (default +10%/wk → up to the
+// earned cap, hard-limited by HARD_CEILING). It never loosens a hard safety
+// constraint — the long-run ladder, the pain gate, the peak ceiling and the
+// completed-week lock are all untouched — and it is grounded ONLY in actual
+// logged evidence:
+//
+//   • EARNED SLOWLY — needs MIN_CLEAN_WEEKS clean completed weeks, MIN_ADHERENCE
+//     adherence, a present + non-rising easy-run RPE trend (enough samples), and
+//     MIN_CHECKIN_WEEKS present + good weekly check-ins. Missing RPE or missing
+//     check-ins are UNKNOWN: they neither grant nor block — they just leave the
+//     plan on the default cap. Trust is never manufactured from absent data.
+//   • REVOKED INSTANTLY — any single warning (break mode, a pain breach, rising
+//     pain drift, rising RPE, a cautionary/poor check-in, a long-run-readiness
+//     hold, or any downward modulation at all) disables it for that computation.
+// ============================================================
+
+/** Inputs the earned-trust decision reads. All are already-computed, observed
+ *  signals — the detector adds no new data source, just a pure verdict. */
+export interface EarnedTrustInput {
+  onBreak: boolean;
+  cleanWeeks: number;
+  adherence: number;
+  growthFactor: number;      // the post-caution factor (< 1 ⇒ some signal is easing)
+  holdLong: boolean;
+  breachDays90: number;
+  unsettledRate: number;
+  rpeTrend: RpeTrend;
+  painDrift: PainDrift;
+  recovery: RecoverySignal;
+}
+
+export interface EarnedTrust {
+  active: boolean;
+  /** The weekly-growth cap (multiplier) the plan may use. When INACTIVE this is
+   *  exactly TUNABLES.WEEKLY_GROWTH_MAX, so nothing downstream changes; when
+   *  active it is min(GROWTH_MAX, HARD_CEILING). */
+  growthMax: number;
+  cleanWeeks: number;
+  adherence: number;
+  /** The first active warning that disabled trust (revocation), else null. */
+  blockedBy: string | null;
+  /** Calm, non-reward explanation of the current state (active / paused / not
+   *  yet earned) for the UI. */
+  reason: string;
+}
+
+/**
+ * Pure earned-trust verdict. Deterministic, no I/O, fully unit-testable.
+ *
+ * Order matters: VETOES are checked first so an active warning is reported as a
+ * revocation ("paused because …"); only when nothing is wrong AND the concrete
+ * positive evidence is all present does trust activate. Insufficient-but-clean
+ * evidence reads as "not yet earned", never as a punishment.
+ */
+export function assessEarnedTrust(inp: EarnedTrustInput): EarnedTrust {
+  const ET = TUNABLES.ADAPTIVE.EARNED_TRUST;
+  const defaultMax = TUNABLES.WEEKLY_GROWTH_MAX;
+  const defPct = Math.round((defaultMax - 1) * 100);
+  const base = { growthMax: defaultMax, cleanWeeks: inp.cleanWeeks, adherence: inp.adherence };
+
+  if (!ET.ENABLED) {
+    return { active: false, ...base, blockedBy: null, reason: `Normal safety cap active (+${defPct}%/wk).` };
+  }
+
+  // ── Vetoes — ANY one instantly disables earned-trust (revoke instantly). ──
+  // Ordered most-informative-first so the reported reason is the clearest one.
+  const veto: string | null =
+    inp.onBreak ? 'break mode is active'
+    : inp.breachDays90 > 0 ? 'a recent pain-cap breach'
+    : inp.unsettledRate > 0.3 ? 'recent pain has been slow to settle overnight'
+    : inp.painDrift.status === 'rising' ? 'next-morning soreness is drifting up'
+    : inp.rpeTrend.status === 'rising' ? 'easy-run RPE is trending up'
+    : inp.recovery.status === 'poor' ? 'a poor recovery check-in'
+    : inp.recovery.status === 'caution' ? 'a cautionary recovery check-in'
+    : inp.holdLong ? 'the last long run needs another smooth week'
+    // Backstop: any residual downward modulation (e.g. a lone breach in 90d that
+    // only softly eased) still keeps the plan on the default cap.
+    : inp.growthFactor < 1 - 1e-9 ? 'a caution signal is easing the build'
+    : null;
+
+  if (veto) {
+    return {
+      active: false, ...base, blockedBy: veto,
+      reason: `Earned-trust paused: ${veto}. The build stays on the normal +${defPct}%/wk safety cap.`,
+    };
+  }
+
+  // ── Positive evidence — every item must be PRESENT and clean. Missing RPE or
+  //    missing check-ins fail these gates (unknown ≠ good), never grant trust. ──
+  const enoughCleanWeeks = inp.cleanWeeks >= ET.MIN_CLEAN_WEEKS;
+  const enoughAdherence = inp.adherence >= ET.MIN_ADHERENCE;
+  const rpeConfirmed = inp.rpeTrend.status === 'stable'; // ⇒ ≥ RPE_MIN_SAMPLES samples, not rising
+  const recoveryConfirmed =
+    inp.recovery.status === 'normal'
+    && inp.recovery.weeksConsidered >= ET.MIN_CHECKIN_WEEKS
+    && inp.recovery.cautionWeeks === 0; // no caution/poor anywhere in the window
+  const hasEvidence = enoughCleanWeeks && enoughAdherence && rpeConfirmed && recoveryConfirmed;
+
+  if (!hasEvidence) {
+    return {
+      active: false, ...base, blockedBy: null,
+      reason:
+        `Normal safety cap active (+${defPct}%/wk). Earned-trust needs ${ET.MIN_CLEAN_WEEKS}+ clean weeks with `
+        + `strong adherence, steady easy-run effort, and good recovery check-ins before the build widens.`,
+    };
+  }
+
+  const growthMax = Math.min(ET.GROWTH_MAX, ET.HARD_CEILING);
+  const pct = Math.round((growthMax - 1) * 100);
+  return {
+    active: true, ...base, growthMax, blockedBy: null,
+    reason:
+      `Earned-trust active: ${inp.cleanWeeks} clean weeks with strong adherence, steady easy-run effort, and good `
+      + `recovery check-ins — the build may use a slightly wider +${pct}%/wk cap. Still capped by the long-run, pain, `
+      + `recovery, and peak rules.`,
+  };
+}
+
 export interface AdaptiveProfile {
   // ── observed signals (individual response) ──
   breachDays90: number;            // pain-cap breach days in the last 90 days
@@ -329,6 +452,8 @@ export interface AdaptiveProfile {
   longRun: LongRunReadiness;       // how the last long run felt
   // ── Phase 2B weekly check-in recovery signal (observed; only ever tightens) ──
   recovery: RecoverySignal;        // composite sleep/soreness/energy/stress read
+  // ── Phase 2C earned-trust (the only signal that may build FASTER) ──
+  earnedTrust: EarnedTrust;        // clean-evidence verdict + the earned growth cap
   // ── derived modulation (safety-subordinate; only tightens) ──
   growthFactor: number;            // 0.4..1.0 multiplier on the build increment
   downEvery: number;               // suggested down-week cadence (≤ the setting)
@@ -479,42 +604,73 @@ export function computeAdaptiveProfile(
     downEvery = Math.min(downEvery, TUNABLES.ADAPTIVE.RECOVERY.POOR_DOWNEVERY);
   }
 
+  // ── Phase 2C — earned-trust (the only UPWARD signal) ────────────────────────
+  // Read from the SAME observed signals as everything above, plus break state.
+  // It never touches growthFactor / downEvery / holdLong (those only tighten);
+  // instead it may widen the weekly growth CEILING the plan builds under. Any
+  // caution above (growthFactor < 1, holdLong) or a warning signal disables it,
+  // so earned-trust and any easing are mutually exclusive by construction.
+  const onBreak = !!globals.breakStart && globals.breakStart <= today;
+  const earnedTrust = assessEarnedTrust({
+    onBreak, cleanWeeks, adherence, growthFactor, holdLong,
+    breachDays90, unsettledRate, rpeTrend, painDrift, recovery,
+  });
+
   const readiness: AdaptiveReadiness =
     growthFactor >= 0.95 ? 'building'
     : growthFactor >= 0.75 ? 'steady'
     : growthFactor >= 0.55 ? 'cautious'
     : 'hold';
 
-  if (growthFactor >= 0.95) {
+  if (earnedTrust.active) {
+    reasons.push(earnedTrust.reason);
+  } else if (growthFactor >= 0.95) {
     reasons.push(cleanWeeks >= 3
       ? `${cleanWeeks} clean weeks. Building at the full safe rate.`
       : 'Building at the full safe rate.');
   }
 
   const headline =
-    readiness === 'building' ? 'Building at the full safe rate'
+    earnedTrust.active ? 'Building at a slightly wider earned rate'
+    : readiness === 'building' ? 'Building at the full safe rate'
     : readiness === 'steady' ? 'Building steadily, slightly eased'
     : readiness === 'cautious' ? 'Easing the build to protect the hip'
     : 'Holding the build until things settle';
 
   return {
     breachDays90, lastBreachDaysAgo, unsettledRate, cleanWeeks, adherence,
-    rpeTrend, painDrift, longRun, recovery,
+    rpeTrend, painDrift, longRun, recovery, earnedTrust,
     growthFactor, downEvery, holdLong, readiness, headline, reasons,
   };
 }
 
 /** The modulation the plan engine consumes. Absent = population rate (factor 1).
- *  Every field can only tighten: growthFactor ≤ 1, downEvery may only shorten the
- *  cadence, holdLong only freezes the long-run ladder — none can loosen a cap. */
+ *  The Phase 2A/2B fields can only tighten: growthFactor ≤ 1, downEvery may only
+ *  shorten the cadence, holdLong only freezes the long-run ladder — none can
+ *  loosen a cap. The Phase 2C `earnedGrowthMax` is the single field that may
+ *  WIDEN one ceiling (the week-over-week volume growth cap) — and it is present
+ *  ONLY when earned-trust is active, so an omitted value is exact Phase 2B
+ *  identity (consumers fall back to TUNABLES.WEEKLY_GROWTH_MAX). It still never
+ *  loosens the long-run cap, the peak ceiling, or the pain gate. */
 export interface AdaptiveModulation {
   growthFactor: number;   // ≤ 1, tightens the weekly build increment only
   downEvery: number;      // down-week cadence (min with the setting)
   /** Hold the long-run ladder this cycle (long-run readiness gate). Optional so
    *  an omitted/false value is exact identity — the long run ladders normally. */
   holdLong?: boolean;
+  /** Earned-trust weekly-growth cap (multiplier). Present ONLY when earned-trust
+   *  is active; omitted otherwise so the default +10%/wk cap binds unchanged.
+   *  Consumers MUST re-clamp it to EARNED_TRUST.HARD_CEILING defensively. */
+  earnedGrowthMax?: number;
 }
 
 export function toModulation(p: AdaptiveProfile): AdaptiveModulation {
-  return { growthFactor: p.growthFactor, downEvery: p.downEvery, holdLong: p.holdLong };
+  const mod: AdaptiveModulation = {
+    growthFactor: p.growthFactor, downEvery: p.downEvery, holdLong: p.holdLong,
+  };
+  // Emit earnedGrowthMax ONLY when earned-trust is active. Omitting it entirely
+  // when inactive keeps the modulation byte-identical to Phase 2B (an absent key,
+  // not an undefined one), so the default plan is provably unchanged.
+  if (p.earnedTrust.active) mod.earnedGrowthMax = p.earnedTrust.growthMax;
+  return mod;
 }

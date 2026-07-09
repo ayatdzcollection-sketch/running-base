@@ -2,9 +2,19 @@ import { describe, it, expect } from 'vitest';
 import {
   floorToHalf, nextLongFrom, trailing30Longest, nextLong,
   painFreeStreak, flareActive, recentBreach, nextMonday, mondayOf,
-  weeklyActuals, pendingMorningCheck,
+  weeklyActuals, pendingMorningCheck, laterDate,
 } from '../metrics';
 import type { RunState } from '../types';
+
+describe('laterDate', () => {
+  it('returns the later of two ISO dates, or the non-null one', () => {
+    expect(laterDate('2026-07-01', '2026-07-05')).toBe('2026-07-05');
+    expect(laterDate('2026-07-05', '2026-07-01')).toBe('2026-07-05');
+    expect(laterDate(null, '2026-07-05')).toBe('2026-07-05');
+    expect(laterDate('2026-07-05', null)).toBe('2026-07-05');
+    expect(laterDate(null, undefined)).toBeNull();
+  });
+});
 
 function run(date: string, miles: number | null, extra: Partial<RunState[string]> = {}): RunState[string] {
   return { date, done: true, miles_actual: miles, updated_at: date + 'T12:00:00Z', ...extra };

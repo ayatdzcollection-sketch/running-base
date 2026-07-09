@@ -153,5 +153,41 @@ export const TUNABLES = {
        *  (a shallow deload). Only ever shortens the cadence, never loosens it. */
       POOR_DOWNEVERY: 3,
     },
+
+    // ── Phase 2C: earned-trust growth (the ONLY upward signal) ─────────────
+    // The first — and deliberately most tightly constrained — place the app may
+    // build FASTER than the population default. It never loosens a hard safety
+    // constraint (long-run cap, pain gate, peak ceiling, completed-week lock);
+    // it only widens the week-over-week VOLUME growth ceiling a little, and only
+    // when recent training is provably clean.
+    //
+    //   Asymmetric by construction: earned SLOWLY (needs several clean completed
+    //   weeks with strong adherence AND present, good body signals), revoked
+    //   INSTANTLY (any one warning below disables it for that computation). It is
+    //   grounded in ACTUAL logged evidence, never in the absence of data — a
+    //   missing RPE history or missing check-in is UNKNOWN, so it can neither
+    //   grant nor block trust; it simply leaves the plan on the default cap.
+    EARNED_TRUST: {
+      /** Master switch. false → every consumer is byte-identical to Phase 2B
+       *  (earnedGrowthMax is never emitted, so the default +10%/wk cap binds). */
+      ENABLED: true,
+      /** Consecutive clean completed weeks (no pain breach, real running, inside
+       *  the pain-tracking era) required before trust is earned. Earn slowly —
+       *  one good day/week is never enough. */
+      MIN_CLEAN_WEEKS: 3,
+      /** Minimum recent adherence (completed vs a modest planned baseline) to
+       *  earn trust. Stricter than the 0.7 floor that merely AVOIDS an ease. */
+      MIN_ADHERENCE: 0.85,
+      /** Minimum readable, good recent weekly check-ins required as corroborating
+       *  evidence. Missing check-ins → unknown → trust is simply not earned. */
+      MIN_CHECKIN_WEEKS: 2,
+      /** The earned weekly-growth cap (multiplier). Modestly above the +10%/wk
+       *  default. Conservative first pass; tune upward only with evidence. */
+      GROWTH_MAX: 1.12,
+      /** ABSOLUTE hard ceiling on the earned cap — no matter how GROWTH_MAX is
+       *  later retuned, no consumer may ever exceed this. Structural guarantee,
+       *  re-enforced by a clamp at every consumption site. */
+      HARD_CEILING: 1.15,
+    },
   },
 } as const;

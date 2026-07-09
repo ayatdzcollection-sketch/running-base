@@ -49,7 +49,12 @@ export interface GeneratorInput {
   settings?: RawSettings | null;
   /** Optional individual adaptation. growthFactor (≤1) scales the positive build
    *  increment DOWN for a fragile responder; downEvery may only tighten the
-   *  cadence. Absent = population rate. Never loosens any safety floor. */
+   *  cadence. Absent = population rate. Never loosens any safety floor.
+   *  NOTE (Phase 2C): this generator deliberately IGNORES `adaptive.earnedGrowthMax`.
+   *  The Generate-a-week tool builds from ACTUAL logged runs and keeps a strict
+   *  +10%/wk nudge regardless of earned-trust; only the forward rolling
+   *  projection (stepWeek) widens its cap. Keeping the from-actuals draft
+   *  conservative is intentional — see Phase 2D follow-ups to unify if desired. */
   adaptive?: AdaptiveModulation | null;
 }
 

@@ -22,7 +22,7 @@ import { sanitizeOrder, sanitizeHidden } from './lib/layout';
 import type { PlanDay } from './lib/types';
 import {
   trailing30Longest, nextLongFrom, painFreeStreak,
-  flareActive, recentBreach, addDaysStr, pendingMorningCheck,
+  flareActive, recentBreach, addDaysStr, pendingMorningCheck, laterDate,
 } from './lib/metrics';
 import { morningAnswer } from './lib/subjective';
 import { enforceGateConsistency } from './lib/speed';
@@ -101,6 +101,9 @@ export default function App() {
   // no change; drives the plain-language "body-response adjustment" explanation.)
   const bodyAdjusted = !!adaptiveMod
     && (adaptiveMod.growthFactor < 1 - 1e-9 || adaptiveMod.holdLong === true);
+  // Phase 2C: is earned-trust ACTIVE (the build may use a slightly wider cap)?
+  // Mutually exclusive with bodyAdjusted by construction (any easing disables it).
+  const earnedTrustActive = !!adaptiveProfile?.earnedTrust.active;
 
   const { plan } = resolveEffectivePlan(settings, runState, today, { breakStart, modulation: adaptiveMod });
   const award = getAward(settings);
@@ -136,7 +139,12 @@ export default function App() {
   // own log, so an over-cap actual reads rose instead of raising its own cap).
   const trailingLongest = trailing30Longest(runState, today, false);
   const nextLong = nextLongFrom(trailingLongest);
-  const streak = painFreeStreak(runState, globals.painCap, globals.painTrackingSince);
+  // Readiness streak for the speed gate + its display: counted only since the
+  // current state was entered (or pain-tracking start, whichever is later), so
+  // the pips reset after each advance and match evaluateReadiness exactly.
+  const streak = painFreeStreak(
+    runState, globals.painCap, laterDate(globals.painTrackingSince, globals.speedStateSince),
+  );
   const flare = flareActive(runState, today, globals.painCap);
   const breach = recentBreach(runState, today, globals.painCap);
   const morningCheckDate = pendingMorningCheck(runState, today);
@@ -219,13 +227,24 @@ export default function App() {
   const updateGlobals = useCallback(
     (patch: Partial<GlobalState>) => {
       setGlobals(prev => {
-        const next: GlobalState = { ...prev, ...patch, updated_at: new Date().toISOString() };
+        // Stamp speedStateSince whenever the speed state actually changes, so the
+        // readiness streak re-accumulates from fresh pain-free runs at the new
+        // state (one long streak can't cascade up the whole ladder). A caller
+        // that sets speedStateSince itself wins.
+        const stateChanged =
+          patch.speedState != null && patch.speedState !== prev.speedState
+          && patch.speedStateSince === undefined;
+        const next: GlobalState = {
+          ...prev, ...patch,
+          ...(stateChanged ? { speedStateSince: today } : {}),
+          updated_at: new Date().toISOString(),
+        };
         saveGlobalLocal(next);
         if (accessCode && hasSupabase) debouncedGlobalUpsert.current(next, accessCode);
         return next;
       });
     },
-    [accessCode],
+    [accessCode, today],
   );
 
   // ── Settings (v3) — canonical copy in globals.settings, bb_settings mirror ──
@@ -307,6 +326,7 @@ export default function App() {
         breakStart: null,
         ...(longBreak ? {
           speedState: 1 as const,          // speed re-earned after a real detraining break
+          speedStateSince: today,          // reset the readiness streak baseline too
           hipSafeFlag: false,
           ptClearedSpeed: false,
           ptClearedIntensity: false,
@@ -694,6 +714,22 @@ export default function App() {
             </div>
           )}
 
+          {/* Earned-trust active banner — calm, confidence-framed (Phase 2C). Only
+              shows when the wider cap is genuinely in play. Suppressed during
+              break/flare/breach (which disable earned-trust anyway) and never
+              coexists with the body-response banner (mutually exclusive). */}
+          {!onBreak && !flare && !breach && earnedTrustActive && adaptiveProfile && (
+            <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/[0.07] px-4 py-3.5 flex flex-col gap-[5px]">
+              <span className="font-display text-[10.5px] font-semibold tracking-[0.12em] text-emerald-300">EARNED-TRUST ACTIVE</span>
+              <p className="m-0 text-[13px] leading-relaxed text-slate-300">
+                Recent training has been clean — {adaptiveProfile.earnedTrust.cleanWeeks} clean weeks with strong
+                adherence, steady effort, and good recovery — so the build can use a slightly wider weekly cap
+                (+{Math.round((adaptiveProfile.earnedTrust.growthMax - 1) * 100)}% vs the usual +10%). Still capped
+                by the long-run, pain, recovery, and peak rules, and it pauses instantly if any of those signals worsen.
+              </p>
+            </div>
+          )}
+
           {/* Peak-not-reachable banner — makes a too-high peak read as "not
               reachable before XC", not "broken". Paused during a break/flare. */}
           {!onBreak && !flare && peakFeas && !peakFeas.feasible && (
@@ -712,6 +748,12 @@ export default function App() {
                   ? ` Adding a ${peakFeas.daysRoute.toDays}${peakFeas.daysRoute.feasible ? 'th day could reach it' : `th day could raise the safe max to ~${peakFeas.daysRoute.reachable} mi`}. Tap to adjust.`
                   : ' Tap to adjust in Settings.'}
               </p>
+              {/* Phase 2C: whether the earned (wider) cap could close the gap. */}
+              {peakFeas.earnedNote && (
+                <p className="m-0 mt-0.5 text-[12px] leading-relaxed text-emerald-300/80">
+                  {peakFeas.earnedNote}
+                </p>
+              )}
             </button>
           )}
 

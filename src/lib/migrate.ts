@@ -24,6 +24,7 @@ export function defaultGlobalState(nowIso: string): GlobalState {
     ptClearedSpeed: false,
     ptClearedIntensity: false,
     painFreeEasyRunStreak: 0,      // snapshot; live value derived from logs
+    speedStateSince: null,         // date current speedState was entered (readiness streak resets here)
     painTrackingSince: null,       // stamped on first post-update load (App)
     painCap: TUNABLES.PAIN_CAP_DEFAULT, // 3/10 — research ceiling is 5, we run tighter
     lastFastSessionDate: null,
@@ -63,6 +64,7 @@ export function migrateGlobalState(raw: unknown, nowIso: string): GlobalState {
   out.speedState = (Number.isInteger(st) && st >= 1 && st <= 8 ? st : 1) as SpeedStateNum;
   const cap = Number(out.painCap);
   out.painCap = Number.isFinite(cap) && cap >= 0 && cap <= 10 ? cap : defaults.painCap;
+  if (out.speedStateSince != null && typeof out.speedStateSince !== 'string') out.speedStateSince = null;
   if (!isRecord(out.readiness)) out.readiness = {};
   if (!isRecord(out.acceptedWeeks)) out.acceptedWeeks = {};
   // v3 additive fields — clamp corrupt shapes without discarding valid data.
