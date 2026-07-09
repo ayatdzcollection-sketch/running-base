@@ -10,6 +10,7 @@
 // ============================================================
 
 import type { RawSettings, RunState, SpeedStateNum } from './types';
+import type { AdaptiveModulation } from './adaptive';
 import type { WeekConfig } from '../config/plan';
 import { PLAN_START_DATE, WEEK_CONFIGS, HR, AWARD } from '../config/plan';
 import { DEFAULT_HIDDEN_IDS } from '../config/homeBlocks';
@@ -203,48 +204,6 @@ export function requiredStreakFor(target: SpeedStateNum, eff: RawSettings | null
   return Math.max(builtin, eff?.pfNeeded ?? 0);
 }
 
-// ── Re-seed from recent actuals (shared primitive) ───────────
-// Rebuild the future plan from RECENT ACTUAL training, not from the old peak.
-// The plan is rolling, so this isn't "a fresh block" — it's a re-anchor at the
-// current fitness/tissue-tolerance level. Preferences (goal, days/week,
-// planning window, governors, layout) carry over unchanged. Never touches the
-// run log. Callers that reset the speed layer (e.g. Return-from-break) do so
-// separately so that policy stays outside this function.
-export function resetToRecentActuals(
-  current: RawSettings | null,
-  runState: RunState,
-  today: string,
-  nowIso: string,
-): RawSettings {
-  const base = current ?? defaultSettings(nowIso);
-  // Use COMPLETE weeks only — the partial current week undercounts recent volume
-  // (same reasoning as the generator's trend calculation).
-  const curMonday = mondayOf(today);
-  const complete = today >= addDaysStr(curMonday, 6);
-  const weeks = weeklyActuals(runState, today).filter(
-    w => w.weekStart < curMonday || (w.weekStart === curMonday && complete),
-  );
-  const lastSustained = [...weeks].reverse().find(w => w.miles > 0);
-  // Conservative re-entry: 80% of the last sustained week, floored, and never
-  // above what the settings clamp would already allow.
-  const recent = lastSustained ? lastSustained.miles : 0;
-  const startMpw = recent > 0 ? Math.max(8, Math.round(recent * 0.8)) : Math.min(base.startMpw, 15);
-  const seed = Math.max(2, Math.min(trailing30Longest(runState, today), 15));
-
-  const startDate = nextMonday(today);
-  return {
-    ...base,
-    startDate,
-    // Push the XC/maintenance line out past the new visible window so a stale
-    // (now-past) xcStartDate can't flip the reseed straight into maintenance.
-    xcStartDate: addDaysStr(startDate, clampWeeksShown(base.weeksShown) * 7),
-    startMpw,
-    peakMpw: Math.max(base.peakMpw, startMpw),
-    trailingLongest: seed,
-    updated_at: nowIso,
-  };
-}
-
 // ── Return from break ───────────────────────────────────────
 // The end-of-break flow. Length-aware, evidence-flavored (detraining after ~3
 // weeks off is real; a few days off is not). Scales the pre-break sustained
@@ -293,7 +252,13 @@ export function returnFromBreak(
   const settings: RawSettings = {
     ...base,
     startDate,
-    xcStartDate: addDaysStr(startDate, clampWeeksShown(base.weeksShown) * 7),
+    // Preserve a still-future XC/coach season date: it's the athlete's real
+    // season anchor, not a byproduct of the window. Only recompute a fallback
+    // when the stored date is missing or now stale (on/before the new start),
+    // so a mid-July return can't shove a real September season past its date.
+    xcStartDate: base.xcStartDate && base.xcStartDate > startDate
+      ? base.xcStartDate
+      : addDaysStr(startDate, clampWeeksShown(base.weeksShown) * 7),
     startMpw,
     peakMpw: Math.max(base.peakMpw, startMpw),
     trailingLongest: seed,
@@ -372,6 +337,14 @@ function normDownEvery(downEvery: number): number {
   return Math.max(2, Math.round(downEvery));
 }
 
+/** Growth-factor guard for individual adaptation. The modulation may only SLOW
+ *  or HOLD the build, never accelerate it, so the factor is clamped to [0,1]:
+ *  1 (or an absent/NaN factor) is identity, 0 holds volume flat. This keeps the
+ *  hook safety-subordinate even if a caller passes an out-of-range value. */
+function clampGrowth(f: number): number {
+  return Number.isFinite(f) ? Math.max(0, Math.min(1, f)) : 1;
+}
+
 /**
  * Is week `j` a SCHEDULED down (absorption) week? Every `downEvery`th week
  * (excluding the very first). The rolling model has no "final week" — the plan
@@ -417,12 +390,23 @@ export interface StepCarry {
  *    from the last real BUILD level, never from the reduced down-week total
  *  • buildStep drives the rate honestly — changing the display window does
  *    not compress or stretch the training slope
+ *
+ * Individual adaptation (`mod`, optional): a downward-only modulation of the
+ * RATE. `growthFactor` (≤1) scales ONLY the positive build increment; `downEvery`
+ * may only TIGHTEN the absorption cadence (min with the setting). Absent `mod`
+ * (or an identity `mod`) leaves every week byte-identical — this is the hook
+ * Phase 2A wires real body signals into; today it stays identity. It can never
+ * loosen a cap, raise the peak, or accelerate the build.
  */
 export function stepWeek(
-  i: number, prev: StepCarry, eff: EffectiveSettings,
+  i: number, prev: StepCarry, eff: EffectiveSettings, mod?: AdaptiveModulation | null,
 ): { config: WeekConfig; total: number; long: number; traj: number } {
   const days = Math.round(Math.min(6, Math.max(3, eff.daysPerWeek)));
-  const downEvery = normDownEvery(eff.downEvery);
+  // Adaptation may only tighten the cadence (min), never loosen it. Identity =
+  // no mod, or a mod whose downEvery is ≥ the setting.
+  const downEvery = normDownEvery(mod ? Math.min(eff.downEvery, mod.downEvery) : eff.downEvery);
+  // growthFactor scales the positive build increment only. Identity = 1.
+  const growthFactor = mod ? clampGrowth(mod.growthFactor) : 1;
   const isDown = isScheduledDownIdx(i, downEvery);
   const isMaint = isMaintenanceIdx(i, eff);
 
@@ -449,7 +433,10 @@ export function stepWeek(
     // to the safety cap; peakMpw is always the terminal ceiling.
     const cap = prev.traj * (TUNABLES.WEEKLY_GROWTH_MAX - 1);
     const gapSeek = Math.max(0, eff.peakMpw - prev.traj) / TUNABLES.PEAK_RAMP_WEEKS;
-    const step = Math.min(cap, Math.max(eff.buildStep, gapSeek));
+    // `growthFactor` (≤1) eases the increment for a fragile responder. It's applied
+    // AFTER the +10%/wk cap, so the eased step is still ≤ cap and ≥ 0 — the safety
+    // ceiling and the peak still bind, and identity (factor 1) is exact.
+    const step = Math.min(cap, Math.max(eff.buildStep, gapSeek)) * growthFactor;
     total = Math.min(prev.traj + step, eff.peakMpw);
   }
 
@@ -488,13 +475,17 @@ export function stepWeek(
 
 /** Build a full WeekConfig[] purely from settings (no locked-week splicing).
  *  Optional `count` overrides the visible-window size — the engine is rolling,
- *  so callers can extend as far as they like beyond `weeksShown`. */
-export function buildWeekConfigsFromSettings(eff: EffectiveSettings, count?: number): WeekConfig[] {
+ *  so callers can extend as far as they like beyond `weeksShown`. Optional `mod`
+ *  applies the same downward-only individual adaptation as stepWeek (identity by
+ *  default). */
+export function buildWeekConfigsFromSettings(
+  eff: EffectiveSettings, count?: number, mod?: AdaptiveModulation | null,
+): WeekConfig[] {
   const weeksN = clampWeeksShown(count ?? eff.weeksShown);
   const configs: WeekConfig[] = [];
   let carry: StepCarry = { long: eff.trailingLongest, traj: eff.startMpw };
   for (let i = 0; i < weeksN; i++) {
-    const { config, long, traj } = stepWeek(i, carry, eff);
+    const { config, long, traj } = stepWeek(i, carry, eff, mod);
     configs.push(config);
     carry = { long, traj };
   }

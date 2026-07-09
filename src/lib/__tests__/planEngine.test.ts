@@ -67,11 +67,11 @@ describe('completed weeks stay locked and logged runs are preserved', () => {
     expect(totals(a).slice(2)).not.toEqual(totals(b).slice(2));            // W3+ changed
   });
 
-  it('never mutates runState (no logged run deleted or rewritten), even on full reset', () => {
+  it('never mutates runState (no logged run deleted or rewritten) across settings changes', () => {
     const log = scenarioLog();
     const before = JSON.stringify(log);
     resolveEffectivePlan(scenarioSettings({ peakMpw: 40, weeksShown: 10, daysPerWeek: 4 }), log, TODAY);
-    resolveEffectivePlan(scenarioSettings(), log, TODAY, { fullReset: true });
+    resolveEffectivePlan(scenarioSettings(), log, TODAY);
     expect(JSON.stringify(log)).toBe(before);
   });
 });

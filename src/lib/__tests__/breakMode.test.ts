@@ -139,11 +139,29 @@ describe('returnFromBreak', () => {
     expect(seedFactor).toBe(0.45);
   });
 
-  it('startDate advances to next Monday from today; xcStartDate is pushed past the fresh window', () => {
+  it('startDate advances to next Monday from today; a STALE xcStartDate falls back past the fresh window', () => {
     const today = '2026-08-20'; // Thursday
+    // Default xcStartDate (2026-08-17) is now on/before the reseeded start → stale.
     const { settings: s2 } = returnFromBreak(s({ weeksShown: 8 }), scenarioLog(), today, '2026-07-06', NOW);
     expect(s2.startDate).toBe(addDaysStr(today, 4)); // next Monday = 2026-08-24
     expect(s2.xcStartDate).toBe(addDaysStr(s2.startDate, 8 * 7));
+    expect(s2.xcStartDate > s2.startDate).toBe(true);
+  });
+
+  it('preserves a still-future XC/season date on return (Fix 2 — does not shove a real season past its date)', () => {
+    const today = '2026-07-16'; // Thursday → reseeded start = next Monday 2026-07-20
+    const withXc = s({ weeksShown: 12, xcStartDate: '2026-09-07' }); // a real, future season
+    const { settings: s2 } = returnFromBreak(withXc, scenarioLog(), today, '2026-07-06', NOW);
+    expect(s2.xcStartDate).toBe('2026-09-07');          // preserved verbatim
+    expect(s2.xcStartDate > s2.startDate).toBe(true);   // still ahead of the reseeded start
+    // NOT the fallback (start + weeksShown*7).
+    expect(s2.xcStartDate).not.toBe(addDaysStr(s2.startDate, 12 * 7));
+  });
+
+  it('recomputes a safe fallback XC date when the stored one is missing (empty)', () => {
+    const today = '2026-07-16';
+    const { settings: s2 } = returnFromBreak(s({ weeksShown: 6, xcStartDate: '' }), scenarioLog(), today, '2026-07-06', NOW);
+    expect(s2.xcStartDate).toBe(addDaysStr(s2.startDate, 6 * 7));
     expect(s2.xcStartDate > s2.startDate).toBe(true);
   });
 

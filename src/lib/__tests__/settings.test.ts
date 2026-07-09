@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   defaultSettings, migrateSettings, effectiveSettings,
-  buildWeekConfigsFromSettings, requiredStreakFor, resetToRecentActuals,
+  buildWeekConfigsFromSettings, requiredStreakFor,
 } from '../settings';
-import { nextLongFrom, trailing30Longest } from '../metrics';
+import { nextLongFrom } from '../metrics';
 import type { RawSettings, RunState } from '../types';
 
 const NOW = '2026-07-07T12:00:00Z';
@@ -126,53 +126,6 @@ describe('buildWeekConfigsFromSettings — safety baked into the shape', () => {
   it('daysPerWeek shapes the run/rest layout (4 days → 4 run entries, long last)', () => {
     const cfgs = buildWeekConfigsFromSettings(raw({ daysPerWeek: 4 }));
     expect(cfgs[0].miles).toHaveLength(4);
-  });
-});
-
-describe('resetToRecentActuals — fresh base from recent training, not old peak', () => {
-  const NOW2 = '2026-07-07T12:00:00Z';
-  const run = (date: string, miles: number): RunState[string] =>
-    ({ date, done: true, miles_actual: miles, updated_at: date + 'T12:00:00Z' });
-  // An OLD peak week (~40 mpw) months ago, then a REDUCED recent week (~10 mpw).
-  const brokenSeason: RunState = {
-    '2026-04-06': run('2026-04-06', 8), '2026-04-08': run('2026-04-08', 8), '2026-04-10': run('2026-04-10', 8),
-    '2026-04-11': run('2026-04-11', 8), '2026-04-12': run('2026-04-12', 8), // old peak week = 40
-    '2026-06-29': run('2026-06-29', 3), '2026-07-01': run('2026-07-01', 3), '2026-07-03': run('2026-07-03', 4), // recent = 10
-  };
-
-  it('seeds startMpw from the RECENT sustained week (~80%), not the old peak', () => {
-    const s = resetToRecentActuals(defaultSettings(NOW2), brokenSeason, '2026-07-07', NOW2);
-    expect(s.startMpw).toBeLessThanOrEqual(12);        // ~80% of recent 10, nowhere near 40
-    expect(s.startMpw).toBeGreaterThanOrEqual(8);
-  });
-
-  it('sets the start date to the upcoming Monday and seeds the long run from recent longest', () => {
-    const s = resetToRecentActuals(defaultSettings(NOW2), brokenSeason, '2026-07-07', NOW2);
-    expect(s.startDate).toBe('2026-07-13');
-    expect(s.trailingLongest).toBeLessThanOrEqual(4);  // recent longest ~4, not the old 8
-  });
-
-  it('carries over preferences (goal, days/week, block length, governors)', () => {
-    const custom = { ...defaultSettings(NOW2), goalMiles: 200, daysPerWeek: 4, weeksShown: 10, capPct: 108 };
-    const s = resetToRecentActuals(custom, brokenSeason, '2026-07-07', NOW2);
-    expect(s.goalMiles).toBe(200);
-    expect(s.daysPerWeek).toBe(4);
-    expect(s.weeksShown).toBe(10);
-    expect(s.capPct).toBe(108);
-  });
-
-  it('with no logged history, falls back to a conservative floor', () => {
-    const s = resetToRecentActuals(null, {}, '2026-07-07', NOW2);
-    expect(s.startMpw).toBeLessThanOrEqual(15);
-    expect(s.startDate).toBe('2026-07-13');
-  });
-
-  it("the first long run of a reset block still obeys the trailing-30-day cap", () => {
-    const s = resetToRecentActuals(defaultSettings(NOW2), brokenSeason, '2026-07-07', NOW2);
-    const cfgs = buildWeekConfigsFromSettings(s);
-    const firstLong = cfgs[0].miles[cfgs[0].miles.length - 1];
-    const cap = nextLongFrom(trailing30Longest(brokenSeason, '2026-07-07'));
-    expect(firstLong).toBeLessThanOrEqual(cap + 1e-9);
   });
 });
 

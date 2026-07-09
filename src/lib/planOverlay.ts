@@ -5,15 +5,18 @@
 // Hard rules:
 //  • settings === null → the pure static plan, byte-identical to getPlan().
 //  • Regeneration replaces only FUTURE, UNLOCKED weeks. A locked week (past,
-//    current, or any week with a logged run) keeps its original prescription.
-//  • Full reset (typed confirmation in the UI) regenerates every week's
-//    prescription — but NEVER touches bb_run_state; logged actuals are
-//    per-date and independent of the prescription shown.
+//    current, or any week with a logged run) keeps its original prescription:
+//    the static WEEK_CONFIGS scaffold for the canonical plan, or the settings
+//    engine's own output once the plan has been reseeded off PLAN_START_DATE.
+//  • Regeneration NEVER touches bb_run_state; logged actuals are per-date and
+//    independent of the prescription shown, so a completed week's real miles
+//    survive any settings change.
 // ============================================================
 
 import type { BuiltPlan, WeekConfig } from '../config/plan';
 import { buildPlan, getPlan, WEEK_CONFIGS, PLAN_START_DATE } from '../config/plan';
 import type { RawSettings, RunState } from './types';
+import type { AdaptiveModulation } from './adaptive';
 import { mondayOf, addDaysStr } from './metrics';
 import {
   effectiveSettings, stepWeek, clampWeeksShown, type ClampNote, type StepCarry,
@@ -63,7 +66,7 @@ export function resolveEffectivePlan(
   raw: RawSettings | null,
   runState: RunState,
   today: string,
-  opts?: { fullReset?: boolean; count?: number; breakStart?: string | null },
+  opts?: { count?: number; breakStart?: string | null; modulation?: AdaptiveModulation | null },
 ): ResolvedPlan {
   const staticPlan = getPlan();
   const weekSource = new Map<string, 'static' | 'settings'>();
@@ -81,8 +84,17 @@ export function resolveEffectivePlan(
 
   for (let i = 0; i < weeksN; i++) {
     const weekStart = addDaysStr(eff.startDate, i * 7);
-    const staticCfg = WEEK_CONFIGS[i];
-    const locked = !opts?.fullReset && isWeekLocked(weekStart, runState, today);
+    const locked = isWeekLocked(weekStart, runState, today);
+    // The static WEEK_CONFIGS scaffold is the frozen "originally prescribed"
+    // value ONLY for the canonical plan whose start aligns with PLAN_START_DATE.
+    // Once settings reseed the start date (Return-from-break re-anchors it to a
+    // future Monday), the summer block no longer maps to these calendar weeks —
+    // splicing WEEK_CONFIGS[i] there would overwrite a conservative return-to-
+    // running seed (e.g. 8 mi) with the original 20 mi Week 1 and propagate that
+    // trajectory upward. In the reseeded case a locked week instead keeps the
+    // value the settings engine generates for it (the reseeded baseline), never
+    // the display-index static fallback.
+    const staticCfg = eff.startDate === PLAN_START_DATE ? WEEK_CONFIGS[i] : undefined;
 
     if (locked && staticCfg) {
       // Keep the completed/current week exactly as originally prescribed, and
@@ -98,17 +110,21 @@ export function resolveEffectivePlan(
         traj: staticCfg.isDownWeek ? carry.traj : configTotal(staticCfg),
       };
       weekSource.set(weekStart, 'static');
-    } else {
-      // Break Mode: STOP generating settings-derived weeks at/after breakStart.
-      // Any locked week (has a logged run) still appears via the branch above;
-      // future unlocked weeks during a break are simply omitted from display.
-      if (opts?.breakStart && weekStart >= opts.breakStart) break;
-      const { config, long, traj } = stepWeek(i, carry, eff);
-      configs.push(config);
-      startDates.push(weekStart);
-      carry = { long, traj };
-      weekSource.set(weekStart, 'settings');
+      continue;
     }
+
+    // Break Mode: STOP projecting settings-derived weeks at/after breakStart —
+    // but only UNLOCKED future weeks. A locked week (past/current or a logged
+    // run) always renders so history and completed weeks are never dropped.
+    if (!locked && opts?.breakStart && weekStart >= opts.breakStart) break;
+
+    // Individual adaptation applies ONLY to future/unlocked weeks; a locked week
+    // reflects what was actually run, so it's generated at identity (no mod).
+    const { config, long, traj } = stepWeek(i, carry, eff, locked ? null : opts?.modulation);
+    configs.push(config);
+    startDates.push(weekStart);
+    carry = { long, traj };
+    weekSource.set(weekStart, 'settings');
   }
 
   // buildPlan assumes contiguous weeks from eff.startDate. That still holds:

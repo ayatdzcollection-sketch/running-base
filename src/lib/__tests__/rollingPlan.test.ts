@@ -108,7 +108,7 @@ describe('rolling progression preserves the previous progression fix', () => {
     const log = scenarioLog();
     const before = JSON.stringify(log);
     resolveEffectivePlan(scenarioSettings({ weeksShown: 20 }), log, TODAY);
-    resolveEffectivePlan(scenarioSettings({ weeksShown: 4 }), log, TODAY, { fullReset: true, count: 30 });
+    resolveEffectivePlan(scenarioSettings({ weeksShown: 4 }), log, TODAY, { count: 30 });
     expect(JSON.stringify(log)).toBe(before);
   });
 

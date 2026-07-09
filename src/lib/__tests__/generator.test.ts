@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { generateNextWeek, generateWeeks, checkAcceptedWeeks, checkPlannedLongRunConflict } from '../generator';
 import { defaultGlobalState } from '../migrate';
 import { defaultSettings } from '../settings';
+import { addDaysStr } from '../metrics';
 import { validStrides } from '../speed';
 import type { GlobalState, ProposedDay, RunState } from '../types';
 
@@ -242,6 +243,48 @@ describe('checkAcceptedWeeks — non-destructive safer suggestions', () => {
     const accepted = { '2026-07-20': futureWeek(8.0) };
     const logged: RunState = { ...CURRENT_LOG, '2026-07-20': run('2026-07-20', 4) };
     expect(checkAcceptedWeeks(accepted, logged, globals(), TODAY)).toHaveLength(0);
+  });
+
+  // ── Fix 6: a legitimately laddered multi-week progression must not self-conflict.
+  // generateWeeks ladders the long run 5.0 → 5.5 → 6.0, each ≤110% of the PRIOR
+  // simulated week. The re-check must simulate the same ladder forward, not compare
+  // every week to today's trailing longest (which flagged weeks 2..N and flattened
+  // the ramp the generator had just produced).
+  const ladderWeek = (ws: string, long: number): ProposedDay[] => ([
+    { date: ws, dayLabel: 'Mon', kind: 'easy', miles: 4, why: 'x' },
+    { date: addDaysStr(ws, 1), dayLabel: 'Tue', kind: 'easy', miles: 4, why: 'x' },
+    { date: addDaysStr(ws, 2), dayLabel: 'Wed', kind: 'easy', miles: 4, why: 'x' },
+    { date: addDaysStr(ws, 3), dayLabel: 'Thu', kind: 'easy', miles: 3, why: 'x' },
+    { date: addDaysStr(ws, 4), dayLabel: 'Fri', kind: 'long', miles: long, why: 'x' },
+  ]);
+
+  it('does NOT flag a safe laddered long-run progression across accepted weeks (Fix 6)', () => {
+    const accepted = {
+      '2026-07-20': ladderWeek('2026-07-20', 5.0), // nextLongFrom(4.5) = 5.0
+      '2026-07-27': ladderWeek('2026-07-27', 5.5), // nextLongFrom(5.0) = 5.5
+      '2026-08-03': ladderWeek('2026-08-03', 6.0), // nextLongFrom(5.5) = 6.0
+    };
+    expect(checkAcceptedWeeks(accepted, CURRENT_LOG, globals(), TODAY)).toHaveLength(0);
+  });
+
+  it('still flags a long run that jumps BEYOND the safe laddered step (safety intact)', () => {
+    const accepted = {
+      '2026-07-20': ladderWeek('2026-07-20', 5.0), // safe first step
+      '2026-07-27': ladderWeek('2026-07-27', 8.0), // 5.0 → 8.0 is a >110% jump
+    };
+    const conflicts = checkAcceptedWeeks(accepted, CURRENT_LOG, globals(), TODAY);
+    expect(conflicts.map(c => c.weekStart)).toEqual(['2026-07-27']);
+    expect(conflicts[0].suggested.find(d => d.kind === 'long')!.miles).toBe(5.5); // clamped to nextLongFrom(5.0)
+  });
+
+  it('is insertion-order independent (weeks checked chronologically)', () => {
+    // Same ladder, provided out of order — must still pass cleanly.
+    const accepted = {
+      '2026-08-03': ladderWeek('2026-08-03', 6.0),
+      '2026-07-20': ladderWeek('2026-07-20', 5.0),
+      '2026-07-27': ladderWeek('2026-07-27', 5.5),
+    };
+    expect(checkAcceptedWeeks(accepted, CURRENT_LOG, globals(), TODAY)).toHaveLength(0);
   });
 });
 

@@ -21,6 +21,7 @@
 // ============================================================
 
 import type { EffectiveSettings } from './settings';
+import type { AdaptiveModulation } from './adaptive';
 import { buildWeekConfigsFromSettings } from './settings';
 import { TUNABLES } from '../config/tunables';
 import { addDaysStr, nextLongFrom, floorToHalf } from './metrics';
@@ -100,8 +101,15 @@ function simMaxSafe(
 /**
  * Assess whether eff.peakMpw is safely reachable before eff.xcStartDate.
  * Pure — reads only settings, mutates nothing.
+ *
+ * Optional `mod` (individual adaptation) is threaded into the ACTUAL-ramp
+ * measurement (`reachedByPlan`) so `delivering` tracks the plan the athlete is
+ * really shown. `maxSafeReachable` deliberately stays the UNMODULATED population
+ * safety ceiling — it answers "is the peak physically reachable under the safety
+ * rules", independent of any individual easing. Absent/identity `mod` (today's
+ * behavior) leaves the whole assessment unchanged.
  */
-export function assessPeakFeasibility(eff: EffectiveSettings): PeakFeasibility {
+export function assessPeakFeasibility(eff: EffectiveSettings, mod?: AdaptiveModulation | null): PeakFeasibility {
   const target = eff.peakMpw;
   const days = Math.round(Math.min(6, Math.max(3, eff.daysPerWeek)));
   const downEvery = normDownEvery(eff.downEvery);
@@ -128,8 +136,9 @@ export function assessPeakFeasibility(eff: EffectiveSettings): PeakFeasibility {
   const cur = simMaxSafe(eff.startMpw, days, downEvery, eff.trailingLongest, target, buildWeeks);
   const maxSafeReachable = roundHalf(cur.reachable);
 
-  // What the CURRENT settings ramp actually reaches before the boundary.
-  const cfgs = buildWeekConfigsFromSettings(eff, Math.max(1, buildWeeks));
+  // What the CURRENT settings ramp actually reaches before the boundary — using
+  // the same (optional) individual modulation the displayed plan applies.
+  const cfgs = buildWeekConfigsFromSettings(eff, Math.max(1, buildWeeks), mod);
   const reachedByPlan = roundHalf(Math.max(...cfgs.map(c => c.miles.reduce((a, b) => a + b, 0))));
 
   const feasible = maxSafeReachable >= target - 0.5;

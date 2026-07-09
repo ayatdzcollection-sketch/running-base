@@ -296,19 +296,32 @@ export function checkAcceptedWeeks(
   today: string,
 ): AcceptedWeekConflict[] {
   const out: AcceptedWeekConflict[] = [];
-  const cap = nextLongFrom(trailing30Longest(runState, today));
   const flare = flareActive(runState, today, globals.painCap);
   const delayed = !!globals.delayUntil && globals.delayUntil > today;
   const state = flare ? 8 : globals.speedState;
   const curMonday = mondayOf(today);
 
-  for (const [ws, days] of Object.entries(accepted)) {
+  // Validate the long-run ceiling against the SIMULATED progression, not a fixed
+  // today-anchored cap. generateWeeks legitimately ladders the long run week over
+  // week (each ≤110% of the PRIOR simulated week), so a single cap from today's
+  // trailing longest would flag every laddered week 2..N as a conflict and flatten
+  // the ramp the generator just produced. Carry the simulated trailing-longest
+  // forward across accepted weeks in date order, mirroring generateWeeks' scratch.
+  let simLong = trailing30Longest(runState, today);
+  const entries = Object.entries(accepted).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+
+  for (const [ws, days] of entries) {
     if (ws <= curMonday) continue; // past/current — locked, never re-suggest
     const weekEnd = addDaysStr(ws, 6);
     const hasLogged = Object.values(runState).some(
       e => e.date >= ws && e.date <= weekEnd && (e.done || e.miles_actual != null),
     );
     if (hasLogged) continue; // a logged run locks the week
+
+    // The safe next step from the PRIOR (simulated) week — for the first future
+    // week this is exactly nextLongFrom(today's trailing longest), matching the
+    // generator's own first proposal.
+    const cap = nextLongFrom(simLong);
 
     const reasons: string[] = [];
     let suggested = days.map(d => ({ ...d }));
@@ -329,6 +342,12 @@ export function checkAcceptedWeeks(
     }
 
     if (reasons.length) out.push({ weekStart: ws, original: days, suggested, reasons });
+
+    // Advance the simulated ladder by this week's long run (what will be run if
+    // accepted as-is), so the NEXT accepted week is checked against a step from
+    // here — exactly as generateWeeks chains its scratch log. trailing30Longest
+    // is a max, so simLong is monotonic across a ~monthly ladder.
+    if (longDay && longDay.miles != null) simLong = Math.max(simLong, longDay.miles);
   }
   return out;
 }

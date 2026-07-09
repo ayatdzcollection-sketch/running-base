@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  defaultSettings, migrateSettings, buildWeekConfigsFromSettings, resetToRecentActuals,
+  defaultSettings, migrateSettings, buildWeekConfigsFromSettings,
 } from '../settings';
 import { addDaysStr } from '../metrics';
 import { WEEK_CONFIGS } from '../../config/plan';
@@ -104,10 +104,7 @@ describe('long run can never exceed the peak week', () => {
   });
 });
 
-describe('resetToRecentActuals pushes the XC line past the fresh plan start', () => {
-  it('so a stale xcStartDate does not flip the reseed straight into maintenance', () => {
-    const reset = resetToRecentActuals(s({ weeksShown: 7 }), {}, '2026-09-01', NOW);
-    expect(reset.xcStartDate).toBe(addDaysStr(reset.startDate, 7 * 7));
-    expect(reset.xcStartDate > reset.startDate).toBe(true); // not instantly in-season
-  });
-});
+// Note: the "re-anchor from recent actuals" primitive (resetToRecentActuals) was
+// removed as dead code — Break Mode's Return-from-break (returnFromBreak) is the
+// single reseed path. Its stale-vs-future xcStartDate handling is covered in
+// breakMode.test.ts.
