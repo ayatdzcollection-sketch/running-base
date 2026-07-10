@@ -553,6 +553,14 @@ function computeCoreSignals(
     : null;
 
   // 2. How fast does pain settle overnight? (Silbernagel signal.)
+  //    Needs UNSETTLED_MIN_SAMPLES comparable pain DAYS before the rate is
+  //    trusted — otherwise one isolated below-cap niggle that didn't settle
+  //    reads as "100% unsettled" and eases the whole trajectory (and vetoes
+  //    earned-trust) off a single data point. Below the minimum the rate is
+  //    UNKNOWN (0), the same "missing/insufficient data does nothing" contract
+  //    every other trend detector uses. `unsettled > 0` is still tracked so an
+  //    isolated niggle can surface a calm WATCH note without moving the plan.
+  const A = TUNABLES.ADAPTIVE;
   let painDays = 0;
   let unsettled = 0;
   for (const e of Object.values(runState)) {
@@ -562,7 +570,8 @@ function computeCoreSignals(
       if (e.painNextAM != null && e.painNextAM > (e.painDuring ?? 0)) unsettled++;
     }
   }
-  const unsettledRate = painDays > 0 ? unsettled / painDays : 0;
+  const unsettledComparable = painDays >= A.UNSETTLED_MIN_SAMPLES;
+  const unsettledRate = unsettledComparable ? unsettled / painDays : 0;
 
   // 3. Consecutive clean completed weeks (no breach, some running), newest
   //    first. Weeks that predate pain tracking don't count — we can't call an
@@ -610,9 +619,19 @@ function computeCoreSignals(
       reasons.push('A pain day above your cap in the last 90 days. Progressing a touch more cautiously while things stay clean.');
     }
   }
-  if (unsettledRate > 0.3) {
-    f *= 0.8;
-    reasons.push('Pain has been slow to settle overnight. Slower steps for now.');
+  // Graded overnight-settle response. Repeated unsettled pain (≥ min samples,
+  // over the proportion bar) EASES the build modestly and carries copy that
+  // matches the "across several runs" evidence. An isolated below-cap niggle
+  // that didn't settle — but not enough comparable days to trust a pattern — is
+  // recorded and MONITORED only: no growthFactor change, a calm watch line so
+  // the athlete knows it was seen. (A real breach handles its own copy above;
+  // the watch note is suppressed when a breach is present so it never
+  // contradicts the stronger message.)
+  if (unsettledRate > A.UNSETTLED_RATE_MIN) {
+    f *= A.UNSETTLED_EASE;
+    reasons.push('Low-grade soreness has persisted across several runs, so the build is easing slightly while it settles.');
+  } else if (unsettled > 0 && breachDays90 === 0) {
+    reasons.push('Minor soreness was logged and didn’t fully settle overnight. The plan is watching it, but your mileage build is unchanged unless it repeats or worsens.');
   }
   if (adherence < 0.7) {
     f *= 0.85;
