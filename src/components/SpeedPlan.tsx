@@ -67,18 +67,34 @@ export default function SpeedPlan({ runState, globals, today, guard, onUpdateGlo
       </div>
 
       {/* Active blockers — why speed is held below the earned tier right now.
-          Calm framing: "protecting you", never "behind". */}
+          Calm framing: "protecting you", never "behind". When the ONLY hold is
+          missing optional readiness data, this is purely informational (nothing
+          is wrong), so it renders in a neutral tone, not amber. */}
       {guard.blockers.length > 0 && (
-        <div className="mx-2.5 mb-2 rounded-xl bg-amber-500/[0.06] border border-amber-500/20 px-3 py-2.5 flex flex-col gap-1">
-          <span className="font-display text-[10px] font-semibold tracking-[0.1em] text-amber-300">
-            SPEED HOLDS THIS WEEK · usable tier {guard.effectiveTier}
-          </span>
-          {guard.blockers.map(b => (
-            <p key={b.key} className="m-0 text-[11px] leading-snug text-slate-400">
-              <span className="text-amber-300/90">{b.label}:</span> {b.detail}
+        guard.blockers.every(b => b.key === 'missingData') ? (
+          <div className="mx-2.5 mb-2 rounded-xl bg-ink border border-border px-3 py-2.5 flex flex-col gap-1">
+            <span className="font-display text-[10px] font-semibold tracking-[0.1em] text-slate-500">
+              ADVANCED SPEED · WAITING ON READINESS DATA
+            </span>
+            <p className="m-0 text-[11px] leading-snug text-slate-400">
+              Nothing is wrong. Basic buildups and strides stay available as usual, and normal running
+              is never held back by missing logs. Advanced speed (light fartlek and up) just needs more
+              readiness evidence before it can be offered — logging easy-run RPE and a weekly check-in
+              is what unlocks it.
             </p>
-          ))}
-        </div>
+          </div>
+        ) : (
+          <div className="mx-2.5 mb-2 rounded-xl bg-amber-500/[0.06] border border-amber-500/20 px-3 py-2.5 flex flex-col gap-1">
+            <span className="font-display text-[10px] font-semibold tracking-[0.1em] text-amber-300">
+              SPEED HOLDS THIS WEEK · usable tier {guard.effectiveTier}
+            </span>
+            {guard.blockers.map(b => (
+              <p key={b.key} className="m-0 text-[11px] leading-snug text-slate-400">
+                <span className="text-amber-300/90">{b.label}:</span> {b.detail}
+              </p>
+            ))}
+          </div>
+        )
       )}
 
       {/* Ready-to-advance CTA — surfaced here so progression isn't buried. */}

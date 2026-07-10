@@ -1,5 +1,5 @@
 import type { GlobalState, RaceResult, RawSettings, RunEntry, RunState } from './types';
-import { migrateGlobalState } from './migrate';
+import { migrateGlobalState, SCHEMA_VERSION } from './migrate';
 import { migrateSettings } from './settings';
 import { mergeRaces, PROTO_DIST_MI } from './races';
 import { supabase } from './supabase';
@@ -186,8 +186,26 @@ export function mergeStates(local: RunState, remote: RunEntry[]): RunState {
 // clobber locally-newer settings, and neither device loses race/accepted
 // data the other hasn't seen. Same non-destructive spirit as mergeStates.
 
+/** Effective schema of a blob (0 when absent/corrupt). Used by the schema
+ *  guard below so an older-schema interpretation can never out-vote newer
+ *  semantics on recency alone. */
+function schemaOf(g: GlobalState): number {
+  const v = Number((g as { schemaVersion?: unknown }).schemaVersion);
+  return Number.isFinite(v) ? v : 0;
+}
+
 export function mergeGlobalStates(local: GlobalState, remote: GlobalState): GlobalState {
-  const base: GlobalState = remote.updated_at > local.updated_at ? { ...remote } : { ...local };
+  // Schema guard (Phase 2D hardening): a blob written under a NEWER schema
+  // always wins the base election, regardless of updated_at. Fields like
+  // speedState were RENUMBERED at schema 3, so letting an older-schema blob
+  // win on recency would silently reinterpret them under stale semantics.
+  // Equal schemas fall back to newest-updated_at, byte-identical to before.
+  const lv = schemaOf(local);
+  const rv = schemaOf(remote);
+  const base: GlobalState =
+    rv > lv ? { ...remote }
+    : lv > rv ? { ...local }
+    : remote.updated_at > local.updated_at ? { ...remote } : { ...local };
 
   // settings: newest settings.updated_at wins, independent of the blob winner.
   const ls = local.settings ?? null;
@@ -371,8 +389,29 @@ export async function pullGlobalFromSupabase(code: string): Promise<GlobalState 
   return remote;
 }
 
+/** Schema write guard (Phase 2D hardening): this build may only publish
+ *  global state written under EXACTLY its own schema.
+ *   • blob schema > build schema → a newer build owns that row; pushing our
+ *     older interpretation over it would corrupt renumbered fields (this is
+ *     the guard the v2→v3 speed-ladder migration wished the v2 build had).
+ *   • blob schema < build schema → the blob bypassed migration; migrate
+ *     stamps the current version on every load/pull/restore path, so this
+ *     should be impossible — refuse rather than publish stale semantics.
+ *  Local persistence (saveGlobalLocal) is deliberately NOT guarded: the
+ *  device always keeps its own state; only the shared row is protected. */
+export function canWriteGlobalSchema(state: GlobalState): boolean {
+  return schemaOf(state) === SCHEMA_VERSION;
+}
+
 export async function upsertGlobalToSupabase(state: GlobalState, code: string): Promise<void> {
   if (!supabase) return;
+  if (!canWriteGlobalSchema(state)) {
+    console.warn(
+      `Global-state sync write skipped: blob schema ${schemaOf(state)} ≠ this build's schema ${SCHEMA_VERSION}. ` +
+      'Refusing to overwrite newer/unknown semantics — update this device to sync again.',
+    );
+    return;
+  }
   const { error } = await supabase
     .from('athlete_state')
     .upsert(

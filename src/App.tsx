@@ -518,6 +518,7 @@ export default function App() {
             streak={streak} pfNeeded={pfNeeded}
             effectiveTier={speedGuard.effectiveTier}
             heldBy={speedGuard.blockers[0]?.label ?? null}
+            heldInfoOnly={speedGuard.blockers.length > 0 && speedGuard.blockers.every(b => b.key === 'missingData')}
           />
         );
       case 'adaptive':

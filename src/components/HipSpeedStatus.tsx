@@ -11,6 +11,9 @@ interface Props {
   effectiveTier?: SpeedStateNum;
   /** First active blocker's label when speed is being held below the tier. */
   heldBy?: string | null;
+  /** True when the ONLY hold is missing optional RPE/check-in readiness data —
+   *  informational, not a warning: render neutral instead of amber. */
+  heldInfoOnly?: boolean;
 }
 
 // The 9 ladder tiers (0–8). Flare/deload is an override shown separately.
@@ -20,7 +23,7 @@ const TIER_LABELS = [
 ];
 
 export default function HipSpeedStatus({
-  speedState, hipHold, flare, streak, pfNeeded, effectiveTier, heldBy,
+  speedState, hipHold, flare, streak, pfNeeded, effectiveTier, heldBy, heldInfoOnly,
 }: Props) {
   const tier = Math.min(Math.max(speedState, 0), 8);
   const eff = effectiveTier != null ? Math.min(effectiveTier, tier) : tier;
@@ -41,8 +44,10 @@ export default function HipSpeedStatus({
           Hip: {hipHold ? 'Hold' : 'Clear'}
         </span>
         {suppressed && (
-          <span className={`${chip} bg-amber-500/[0.12] text-amber-300 border-amber-500/30`}>
-            Held at: {TIER_LABELS[eff]}
+          <span className={`${chip} ${heldInfoOnly
+            ? 'bg-slate-500/10 text-slate-400 border-border'
+            : 'bg-amber-500/[0.12] text-amber-300 border-amber-500/30'}`}>
+            {heldInfoOnly ? `Basics: ${TIER_LABELS[eff]}` : `Held at: ${TIER_LABELS[eff]}`}
           </span>
         )}
       </div>
@@ -58,7 +63,7 @@ export default function HipSpeedStatus({
               <div key={t} className="flex-1 h-[5px] rounded-[3px]"
                 style={{
                   background: flare ? 'rgba(251,113,133,.22)'
-                    : dimmed ? 'rgba(245,158,11,.35)'
+                    : dimmed ? (heldInfoOnly ? 'rgba(148,163,184,.30)' : 'rgba(245,158,11,.35)')
                     : lit ? '#2dd4bf' : '#1e293b',
                 }} />
             );
@@ -68,7 +73,9 @@ export default function HipSpeedStatus({
           {flare
             ? 'Progression paused. The plan repeats until the hip settles.'
             : suppressed
-              ? `Tier ${tier} earned · temporarily held at ${TIER_LABELS[eff]}${heldBy ? ` (${heldBy.toLowerCase()})` : ''}. Nothing is lost — it resumes when the signal clears.`
+              ? heldInfoOnly
+                ? `Tier ${tier} earned · basic strides stay available. Nothing is wrong — advanced work just needs recent RPE and check-in logs before it can be offered.`
+                : `Tier ${tier} earned · temporarily held at ${TIER_LABELS[eff]}${heldBy ? ` (${heldBy.toLowerCase()})` : ''}. Nothing is lost — it resumes when the signal clears.`
               : `Tier ${tier} of 8${nextTierName ? ` · next: ${nextTierName}` : ' · top of the ladder'}`}
         </span>
       </div>
