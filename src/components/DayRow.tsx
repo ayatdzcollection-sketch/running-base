@@ -86,10 +86,13 @@ const DayRow = memo(function DayRow({ day, entry, onUpdate, isToday, painCap, sp
           <span className="text-sm text-slate-500 tabular-nums">–</span>
         ) : (
           <span className={`font-display text-sm tabular-nums
-            ${day.isLongRun ? 'text-amber-400/80' : 'text-slate-400'}`}>
+            ${day.isLongRun ? 'text-amber-400/80' : day.kind === 'threshold' ? 'text-rose-400/80' : 'text-slate-400'}`}>
             {day.prescribed} mi
             {day.isLongRun && (
               <span className="ml-1 text-amber-500/50 text-xs">long</span>
+            )}
+            {day.kind === 'threshold' && (
+              <span className="ml-1 text-rose-400/60 text-xs">threshold</span>
             )}
           </span>
         )}

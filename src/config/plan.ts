@@ -46,6 +46,9 @@ export interface WeekConfig {
   miles: number[];
   note?: string;
   isDownWeek?: boolean;
+  /** Optional per-run-day kinds (aligned with `miles`), used when a confirmed
+   *  accepted week is spliced into the display so day types survive. */
+  kinds?: ProposedKind[];
 }
 
 // No-settings FALLBACK scaffold. Mirrors the settings-driven engine's rolling
@@ -64,7 +67,7 @@ export const WEEK_CONFIGS: WeekConfig[] = [
 ];
 
 // ── Derived plan (computed from config above) ──────────────
-import type { PlanDay, PlanWeek, RawSettings } from '../lib/types';
+import type { PlanDay, PlanWeek, ProposedKind, RawSettings } from '../lib/types';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -114,16 +117,20 @@ export function buildPlan(weekConfigs: WeekConfig[], planStart: string): BuiltPl
     const lastRunIdx = runCount - 1;
     const weekEnd = addDays(weekStart, lastRunIdx); // long-run day
 
-    const runDays: PlanDay[] = cfg.miles.map((miles, j) => ({
-      date: addDays(weekStart, j),
-      weekNum,
-      dayLabel: DAY_LABELS[j] ?? `D${j + 1}`,
-      type: 'run' as const,
-      prescribed: miles,
-      isLongRun: j === lastRunIdx,
-      isDownWeek: !!cfg.isDownWeek,
-      weekNote: cfg.note,
-    }));
+    const runDays: PlanDay[] = cfg.miles.map((miles, j) => {
+      const kind = cfg.kinds?.[j];
+      return {
+        date: addDays(weekStart, j),
+        weekNum,
+        dayLabel: DAY_LABELS[j] ?? `D${j + 1}`,
+        type: 'run' as const,
+        prescribed: miles,
+        isLongRun: j === lastRunIdx,
+        isDownWeek: !!cfg.isDownWeek,
+        weekNote: cfg.note,
+        ...(kind ? { kind } : {}),
+      };
+    });
 
     // Rest days fill the remaining weekday slots after the run days.
     const restIdx: number[] = [];

@@ -603,6 +603,12 @@ function computeCoreSignals(
     reasons.push('Several pain days lately. Progressing more cautiously.');
   } else if (breachDays90 >= 1) {
     f *= 0.85;
+    // Every reduction carries a visible reason: when the lone breach is older
+    // than the two-week line above, this is the only explanation the banner
+    // has — without it the plan eased silently (empty body-response banner).
+    if (lastBreachDaysAgo == null || lastBreachDaysAgo > 14) {
+      reasons.push('A pain day above your cap in the last 90 days. Progressing a touch more cautiously while things stay clean.');
+    }
   }
   if (unsettledRate > 0.3) {
     f *= 0.8;

@@ -22,6 +22,9 @@ export interface PlanDay {
   isLongRun: boolean;
   isDownWeek: boolean;
   weekNote?: string;
+  /** Accepted-week day kind (e.g. 'threshold'), carried so the displayed plan
+   *  and the speed-day classification agree. Absent = plain plan day. */
+  kind?: ProposedKind;
 }
 
 export interface PlanWeek {

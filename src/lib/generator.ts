@@ -27,7 +27,7 @@ import type { AdaptiveModulation } from './adaptive';
 import { TUNABLES } from '../config/tunables';
 import {
   addDaysStr, nextMonday, mondayOf, trailing30Longest, nextLongFrom, floorToHalf,
-  flareActive, painFreeStreak, weeklyActuals,
+  flareActive, painFreeStreak, weeklyActuals, isReducedWeek,
 } from './metrics';
 import { evaluateSpeedGuard, racesInWeek, inSeason } from './speedGuard';
 
@@ -98,6 +98,17 @@ export function generateNextWeek({ runState, globals, today, settings, adaptive 
   const lastSustained = [...weeks].reverse().find(w => w.miles > 0);
   const lastFullWeekStart = addDaysStr(currentWeekStart, -7);
 
+  // Was the last completed week a PLANNED-style down week? Shared detector
+  // (SCHEDULED_DOWN_CUT + rounding slack, consecutive weeks only), and the cut
+  // must be no deeper than an emergency deload (DOWN_WEEK_CUT) — a crash week
+  // still rebuilds gradually from what was actually run. The predecessor must
+  // be a real training week (≥3 runs) to serve as the trajectory.
+  const prevWeek = weeks.length >= 2 ? weeks[weeks.length - 2] : undefined;
+  const lastWeekIsDown = !!lastWeek && !!prevWeek
+    && prevWeek.runCount >= 3
+    && isReducedWeek(lastWeek, prevWeek)
+    && lastWeek.miles >= prevWeek.miles * (1 - TUNABLES.DOWN_WEEK_CUT) - 1e-9;
+
   let baseVolume: number;
   if (!lastSustained) {
     baseVolume = 5 * t30 * 0.8; // no history at all — conservative floor
@@ -107,6 +118,14 @@ export function generateNextWeek({ runState, globals, today, settings, adaptive 
     baseVolume = lastSustained.miles;
     notes.push(
       `You missed last week, so this resumes near your last sustained week (${lastSustained.miles.toFixed(1)} mi). Missed miles are never made up.`,
+    );
+  } else if (lastWeekIsDown && prevWeek) {
+    // Resume the build from the PRE-down trajectory, capped at +10% over it —
+    // a down week is a temporary absorption dip and never becomes the new
+    // baseline (mirrors the rolling plan's trajectory carry in stepWeek).
+    baseVolume = prevWeek.miles * TUNABLES.WEEKLY_GROWTH_MAX;
+    notes.push(
+      `Resuming from your pre-down trajectory (${prevWeek.miles.toFixed(1)} mi): last week was a down week, which is a temporary dip — never the new baseline. Growth stays capped at +10% of the trajectory.`,
     );
   } else {
     // Nudge toward the recent trend, capped at +10% over last week. No leaps.
@@ -130,14 +149,21 @@ export function generateNextWeek({ runState, globals, today, settings, adaptive 
   }
 
   // ── Down-week logic ─────────────────────────────────────────
-  // A logged week ≤80% of its predecessor counts as a down week.
+  // A logged week at/below the scheduled ~15% cut (shared isReducedWeek
+  // detector) counts as a down week and resets the cadence. The old ad-hoc
+  // ~20% threshold could not see the rolling plan's own scheduled down weeks,
+  // so the cadence re-fired immediately after a real one — stacking down weeks
+  // back-to-back and spiralling volume downward.
   let buildsSinceDown = 0;
   for (let i = weeks.length - 1; i >= 1; i--) {
-    if (weeks[i].miles <= weeks[i - 1].miles * 0.8) break;
+    if (isReducedWeek(weeks[i], weeks[i - 1])) break;
     buildsSinceDown++;
   }
   const painSpike = flare;
-  const isDownWeek = painSpike || buildsSinceDown >= downEvery;
+  // Never two cadence-driven down weeks in a row (a flare can still force
+  // one). Structurally the counter already resets after a detected down week;
+  // the explicit guard keeps the invariant even if detection semantics drift.
+  const isDownWeek = painSpike || (buildsSinceDown >= downEvery && !lastWeekIsDown);
   if (isDownWeek) {
     baseVolume = baseVolume * (1 - TUNABLES.DOWN_WEEK_CUT);
     notes.push(
