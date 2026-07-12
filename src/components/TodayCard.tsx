@@ -11,7 +11,6 @@ interface Props {
   entry: RunEntry | undefined;
   onUpdate: (date: string, updates: Partial<RunEntry>) => void;
   planStart: string;
-  planEnd: string;
   /** Live ceiling computed from trailing-30-day actuals (§2). */
   nextLong: number;
   trailingLongest: number;
@@ -22,7 +21,7 @@ interface Props {
 }
 
 export default function TodayCard({
-  today, day, entry, onUpdate, planStart, planEnd,
+  today, day, entry, onUpdate, planStart,
   nextLong, trailingLongest, hrBand, hrHardCap, todaySpeed,
 }: Props) {
   const [localMiles, setLocalMiles] = useState(
@@ -43,7 +42,7 @@ export default function TodayCard({
     onUpdate(today, { miles_actual: isNaN(num) ? null : Math.max(0, num) });
   }
 
-  // ── Before / after plan ──────────────────────────────────
+  // ── Before the plan starts ────────────────────────────────
   if (today < planStart) {
     return (
       <div className="card text-center py-8 space-y-2">
@@ -53,12 +52,19 @@ export default function TodayCard({
       </div>
     );
   }
-  if (today > planEnd) {
+
+  // ── No resolved day (plan window doesn't cover today) ────
+  // The plan is rolling — it never "completes". This only appears when the
+  // display window can't reach today (very old start date, or a paused break).
+  if (!day) {
     return (
       <div className="card text-center py-8 space-y-2">
-        <p className="text-2xl">🏁</p>
-        <p className="font-display text-xl font-semibold text-slate-200">Block complete</p>
-        <p className="text-slate-500 text-sm">7 weeks done. XC season. Go.</p>
+        <span className="tag tag-teal mx-auto">No planned day</span>
+        <p className="font-display text-xl font-semibold text-slate-200 mt-2">{weekdayName(today)}</p>
+        <p className="text-slate-500 text-sm">
+          The plan window doesn't cover today. Extend the planning window in Settings — or, if
+          you're coming back from time off, use Return from break to re-seed the plan.
+        </p>
       </div>
     );
   }
@@ -88,13 +94,11 @@ export default function TodayCard({
   }
 
   // ── Rest day ─────────────────────────────────────────────
-  if (!day || day.type === 'rest') {
-    const dow = new Date(today + 'T12:00:00Z').getUTCDay();
-    const label = dow === 6 ? 'Saturday' : 'Sunday';
+  if (day.type === 'rest') {
     return (
       <div className="card text-center py-8 space-y-2">
         <span className="tag tag-teal mx-auto">Rest day</span>
-        <p className="font-display text-xl font-semibold text-slate-200 mt-2">{label}</p>
+        <p className="font-display text-xl font-semibold text-slate-200 mt-2">{weekdayName(today)}</p>
         <p className="text-slate-500 text-sm">Off. Let it absorb. Strength work if cleared.</p>
       </div>
     );
@@ -109,6 +113,9 @@ export default function TodayCard({
   const clamped = prescribed > cap;
   const target = clamped ? cap : prescribed;
   const isLong = day.isLongRun;
+  // Accepted-week day kind (H4): a confirmed threshold day shows as the
+  // workout it is, matching the speed-day classification exactly.
+  const isThreshold = day.kind === 'threshold';
 
   const fmtDay = `${day.dayLabel} ${fmtDateShort(today)}`;
 
@@ -116,8 +123,8 @@ export default function TodayCard({
     <div className="card space-y-5">
       {/* Header */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className={`tag ${isLong ? 'tag-amber' : 'tag-teal'}`}>
-          {isLong ? 'Long run' : 'Easy run'}
+        <span className={`tag ${isLong ? 'tag-amber' : isThreshold ? 'tag-rose' : 'tag-teal'}`}>
+          {isLong ? 'Long run' : isThreshold ? 'Threshold' : 'Easy run'}
         </span>
         {day.isDownWeek && <span className="tag tag-sky">Down week</span>}
         <span className="text-slate-500 text-sm ml-auto">{fmtDay}</span>
@@ -130,7 +137,7 @@ export default function TodayCard({
         </span>
         <span className="font-display text-[17px] font-semibold text-slate-500">mi</span>
         <span className="ml-auto text-xs text-slate-500">
-          {clamped ? 'ceiling today' : isLong ? 'long run' : 'planned today'}
+          {clamped ? 'ceiling today' : isLong ? 'long run' : isThreshold ? 'threshold day' : 'planned today'}
         </span>
       </div>
 
@@ -257,4 +264,9 @@ function fmtDateShort(dateStr: string): string {
   const d = new Date(dateStr + 'T12:00:00Z');
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   return `${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+function weekdayName(dateStr: string): string {
+  const names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  return names[new Date(dateStr + 'T12:00:00Z').getUTCDay()];
 }

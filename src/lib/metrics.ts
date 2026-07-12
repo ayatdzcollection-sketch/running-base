@@ -169,6 +169,24 @@ export interface WeekActual {
   runCount: number;
 }
 
+/**
+ * Does a completed week read as a planned absorption (down) week relative to
+ * the week immediately before it? True when the drop is at least the scheduled
+ * ~15% cut (SCHEDULED_DOWN_CUT), with half-step rounding slack. Only
+ * consecutive calendar weeks compare meaningfully — a gap is not a down week.
+ *
+ * This is the ONE detector for "that was a down week" in actuals: the
+ * generator's cadence counter and the load-spike guard both use it, so the
+ * rolling plan's own scheduled down weeks are recognized everywhere (the old
+ * per-site ~20% thresholds could not see the 15% cut, which made a real down
+ * week read as a build and its resume read as a jump).
+ */
+export function isReducedWeek(week: WeekActual, prevWeek: WeekActual | null | undefined): boolean {
+  if (!prevWeek || prevWeek.miles <= 0) return false;
+  if (addDaysStr(prevWeek.weekStart, 7) !== week.weekStart) return false;
+  return week.miles <= prevWeek.miles * (1 - TUNABLES.SCHEDULED_DOWN_CUT) + TUNABLES.HALF_STEP + 1e-9;
+}
+
 /** Actual miles per calendar week, ascending by week. Done-without-miles days count 0 here (actuals only). */
 export function weeklyActuals(runState: RunState, upTo: string): WeekActual[] {
   const byWeek = new Map<string, WeekActual>();

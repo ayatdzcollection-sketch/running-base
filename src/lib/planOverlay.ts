@@ -15,8 +15,9 @@
 
 import type { BuiltPlan, WeekConfig } from '../config/plan';
 import { buildPlan, getPlan, WEEK_CONFIGS, PLAN_START_DATE } from '../config/plan';
-import type { RawSettings, RunState } from './types';
+import type { ProposedDay, RawSettings, RunState } from './types';
 import type { AdaptiveModulation } from './adaptive';
+import { TUNABLES } from '../config/tunables';
 import { mondayOf, addDaysStr } from './metrics';
 import {
   effectiveSettings, stepWeek, clampWeeksShown, type ClampNote, type StepCarry,
@@ -37,8 +38,9 @@ export function isWeekLocked(weekStart: string, runState: RunState, today: strin
 
 export interface ResolvedPlan {
   plan: BuiltPlan;
-  /** weekStart → whether that week came from the static plan or settings. */
-  weekSource: Map<string, 'static' | 'settings'>;
+  /** weekStart → whether that week came from the static plan, settings, or a
+   *  confirmed accepted (generated) week. */
+  weekSource: Map<string, 'static' | 'settings' | 'accepted'>;
   clamps: ClampNote[];
 }
 
@@ -47,6 +49,28 @@ function configTotal(cfg: WeekConfig): number {
 }
 function configLong(cfg: WeekConfig): number {
   return cfg.miles[cfg.miles.length - 1];
+}
+
+/** A confirmed accepted week (GenerateWeek output) as a displayable WeekConfig.
+ *  Run days in date order; day kinds carried so threshold/long/easy survive
+ *  into the displayed plan. null when the entry has no run days. */
+function acceptedConfig(days: ProposedDay[]): WeekConfig | null {
+  const run = [...days]
+    .sort((a, b) => (a.date < b.date ? -1 : 1))
+    .filter(d => d.kind !== 'rest' && d.miles != null);
+  if (run.length === 0) return null;
+  return {
+    miles: run.map(d => d.miles as number),
+    kinds: run.map(d => d.kind),
+    note: 'accepted',
+  };
+}
+
+/** The long run of an accepted config: the day marked 'long', else the last
+ *  run day (the generator always places the long run last). */
+function acceptedLong(cfg: WeekConfig): number {
+  const i = cfg.kinds?.indexOf('long') ?? -1;
+  return i >= 0 ? cfg.miles[i] : configLong(cfg);
 }
 
 /**
@@ -66,14 +90,35 @@ export function resolveEffectivePlan(
   raw: RawSettings | null,
   runState: RunState,
   today: string,
-  opts?: { count?: number; breakStart?: string | null; modulation?: AdaptiveModulation | null },
+  opts?: {
+    count?: number;
+    breakStart?: string | null;
+    modulation?: AdaptiveModulation | null;
+    /** Confirmed generated weeks (globals.acceptedWeeks). When present, an
+     *  accepted week IS the displayed prescription for its week — the
+     *  "confirmed, locked into the plan" promise made real. Absent/empty =
+     *  behavior unchanged. */
+    acceptedWeeks?: Record<string, ProposedDay[]> | null;
+  },
 ): ResolvedPlan {
   const staticPlan = getPlan();
-  const weekSource = new Map<string, 'static' | 'settings'>();
+  const weekSource = new Map<string, 'static' | 'settings' | 'accepted'>();
+  const accepted = opts?.acceptedWeeks ?? null;
 
   if (!raw) {
-    for (const w of staticPlan.weeks) weekSource.set(w.startDate, 'static');
-    return { plan: staticPlan, weekSource, clamps: [] };
+    // Static plan: splice accepted weeks onto the fixed grid where their
+    // Monday aligns; everything else is the untouched static scaffold.
+    if (!accepted || Object.keys(accepted).length === 0) {
+      for (const w of staticPlan.weeks) weekSource.set(w.startDate, 'static');
+      return { plan: staticPlan, weekSource, clamps: [] };
+    }
+    const cfgs = WEEK_CONFIGS.map((cfg, i) => {
+      const ws = addDaysStr(PLAN_START_DATE, i * 7);
+      const acc = accepted[ws] ? acceptedConfig(accepted[ws]) : null;
+      weekSource.set(ws, acc ? 'accepted' : 'static');
+      return acc ?? cfg;
+    });
+    return { plan: buildPlan(cfgs, PLAN_START_DATE), weekSource, clamps: [] };
   }
 
   const { eff, clamps } = effectiveSettings(raw, runState, today);
@@ -96,6 +141,29 @@ export function resolveEffectivePlan(
     // the display-index static fallback.
     const staticCfg = eff.startDate === PLAN_START_DATE ? WEEK_CONFIGS[i] : undefined;
 
+    // Break Mode cuts UNLOCKED future weeks first — a paused plan projects
+    // nothing past breakStart, accepted or not (break flows also clear
+    // acceptedWeeks; this guards resurrected drafts too). Locked weeks
+    // (past/current or logged) always render so history is never dropped.
+    if (!locked && opts?.breakStart && weekStart >= opts.breakStart) break;
+
+    // A confirmed accepted week is the authoritative displayed prescription
+    // for its week — it was what the athlete explicitly confirmed (and, for a
+    // locked week, what they actually trained under). The volume/long-run
+    // carry continues THROUGH it so following settings weeks ladder from the
+    // accepted values. Down-week detection reuses the shared scheduled-cut
+    // rule so an accepted absorption week never re-baselines the trajectory.
+    const accCfg = accepted?.[weekStart] ? acceptedConfig(accepted[weekStart]) : null;
+    if (accCfg) {
+      const total = configTotal(accCfg);
+      const isDown = total <= carry.traj * (1 - TUNABLES.SCHEDULED_DOWN_CUT) + TUNABLES.HALF_STEP + 1e-9;
+      configs.push({ ...accCfg, isDownWeek: isDown });
+      startDates.push(weekStart);
+      carry = { long: acceptedLong(accCfg), traj: isDown ? carry.traj : total };
+      weekSource.set(weekStart, 'accepted');
+      continue;
+    }
+
     if (locked && staticCfg) {
       // Keep the completed/current week exactly as originally prescribed, and
       // carry its long run forward so the next settings week continues the
@@ -112,11 +180,6 @@ export function resolveEffectivePlan(
       weekSource.set(weekStart, 'static');
       continue;
     }
-
-    // Break Mode: STOP projecting settings-derived weeks at/after breakStart —
-    // but only UNLOCKED future weeks. A locked week (past/current or a logged
-    // run) always renders so history and completed weeks are never dropped.
-    if (!locked && opts?.breakStart && weekStart >= opts.breakStart) break;
 
     // Individual adaptation applies ONLY to future/unlocked weeks; a locked week
     // reflects what was actually run, so it's generated at identity (no mod).

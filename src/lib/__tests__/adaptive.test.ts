@@ -51,16 +51,22 @@ describe('computeAdaptiveProfile — individual signals', () => {
     expect(p.reasons.join(' ')).toMatch(/pain day in the last two weeks/i);
   });
 
-  it('slow-to-settle pain lowers the factor', () => {
-    // pain during the run that got WORSE by morning, several times
+  it('slow-to-settle pain lowers the factor once there are enough comparable days', () => {
+    // Three SUB-CAP runs whose pain came back worse by morning (unsettled) —
+    // below the breach cap, so this isolates the overnight-settle signal, not
+    // the breach path. Needs UNSETTLED_MIN_SAMPLES (3) comparable pain days
+    // before the rate is trusted (isolated-sample overreaction fix).
     const slow: RunState = {
       ...cleanLog(6),
-      '2026-05-20': run('2026-05-20', 4, { painDuring: 2, painNextAM: 4 }),
-      '2026-05-27': run('2026-05-27', 4, { painDuring: 2, painNextAM: 4 }),
+      '2026-06-19': run('2026-06-19', 4, { painDuring: 1, painNextAM: 2 }),
+      '2026-06-26': run('2026-06-26', 4, { painDuring: 1, painNextAM: 2 }),
+      '2026-07-03': run('2026-07-03', 4, { painDuring: 1, painNextAM: 2 }),
     };
     const p = computeAdaptiveProfile(slow, globals({ painCap: 3 }), TODAY);
+    expect(p.breachDays90).toBe(0);                 // sub-cap: not breaches
     expect(p.unsettledRate).toBeGreaterThan(0.3);
     expect(p.growthFactor).toBeLessThan(1.0);
+    expect(p.growthFactor).toBeGreaterThan(0.6);    // modest ease, milder than a breach
   });
 
   it('low recent adherence eases the build', () => {

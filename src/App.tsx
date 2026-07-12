@@ -15,7 +15,7 @@ import { hasSupabase } from './lib/supabase';
 import { getAward, todayStr, PLAN_START_DATE, HR } from './config/plan';
 import { resolveEffectivePlan, planTotalMiles, isOnBreak } from './lib/planOverlay';
 import { assessPeakFeasibility } from './lib/feasibility';
-import { defaultSettings, effectiveSettings, returnFromBreak } from './lib/settings';
+import { clampWeeksShown, defaultSettings, effectiveSettings, returnFromBreak } from './lib/settings';
 import { FLAGS } from './config/flags';
 import { HOME_BLOCKS, DEFAULT_HIDDEN_IDS, blockMeta, type BlockId } from './config/homeBlocks';
 import { sanitizeOrder, sanitizeHidden } from './lib/layout';
@@ -51,8 +51,6 @@ import WeeklyCheckin from './components/WeeklyCheckin';
 import ShoeTracker from './components/ShoeTracker';
 import CoachNotes from './components/CoachNotes';
 import HeatEffort from './components/HeatEffort';
-
-const PLAN_END = '2026-08-14';
 
 /** Replace an item with a matching id, or append it. Used by the shoe store. */
 function upsertById<T extends { id: string }>(list: T[], item: T): T[] {
@@ -106,7 +104,17 @@ export default function App() {
   // Mutually exclusive with bodyAdjusted by construction (any easing disables it).
   const earnedTrustActive = !!adaptiveProfile?.earnedTrust.active;
 
-  const { plan } = resolveEffectivePlan(settings, runState, today, { breakStart, modulation: adaptiveMod });
+  // The rolling plan has no end: the display window is anchored at startDate,
+  // so once real time moves past it the resolved count is extended to keep
+  // covering today (weeksShown still sets the future depth the user asked to
+  // see — this only ever ADDS already-elapsed weeks, never changes the slope).
+  const weeksToToday = settings
+    ? Math.floor((Date.parse(today + 'T12:00:00Z') - Date.parse(settings.startDate + 'T12:00:00Z')) / (7 * 86_400_000)) + 1
+    : 0;
+  const planCount = settings ? Math.max(clampWeeksShown(settings.weeksShown), weeksToToday) : undefined;
+  const { plan } = resolveEffectivePlan(settings, runState, today, {
+    breakStart, modulation: adaptiveMod, acceptedWeeks: globals.acceptedWeeks, count: planCount,
+  });
   const award = getAward(settings);
   const blockTotalTarget = planTotalMiles(plan);
 
@@ -478,12 +486,12 @@ export default function App() {
     !hasSupabase || syncStatus === 'offline' ? 'text-amber-600'
     : syncStatus === 'error' ? 'text-rose-500' : 'text-slate-600';
 
-  // Day-of-block label for the header subtitle.
+  // Day-of-plan label for the header subtitle. The plan is rolling — there is
+  // no "plan complete" date; the counter just keeps going.
   let dayIdx = 0;
   for (const d of plan.allDates) if (d <= today) dayIdx++;
   const isPre = today < plan.bonusDay.date;
-  const isPost = today > PLAN_END;
-  const dayOfBlock = isPost ? 'plan complete' : isPre ? 'starts soon' : `day ${dayIdx}`;
+  const dayOfBlock = isPre ? 'starts soon' : `day ${dayIdx}`;
   // Training phase — the rolling plan is continuous. Break wins over XC/season.
   const inXcSeason = !!settings && !!settings.xcStartDate && today >= settings.xcStartDate;
   const phaseLabel =
@@ -504,7 +512,7 @@ export default function App() {
         return (
           <TodayCard
             today={today} day={todayDay} week={todayWeek} entry={runState[today]}
-            onUpdate={updateEntry} planStart={plan.bonusDay.date} planEnd={PLAN_END}
+            onUpdate={updateEntry} planStart={plan.bonusDay.date}
             nextLong={nextLong} trailingLongest={trailingLongest}
             hrBand={hrBand} hrHardCap={hrHardCap} todaySpeed={todaySpeed}
           />
@@ -667,7 +675,7 @@ export default function App() {
             </div>
             <div className="flex items-baseline justify-between gap-3">
               <p className="text-xs text-slate-500">
-                rolling XC plan · {PLAN_START_DATE} · <span className="text-slate-400">{dayOfBlock}</span> · <span className={phaseTone}>{phaseLabel}</span>
+                rolling XC plan · {settings?.startDate ?? PLAN_START_DATE} · <span className="text-slate-400">{dayOfBlock}</span> · <span className={phaseTone}>{phaseLabel}</span>
               </p>
               <span className={`text-[10.5px] whitespace-nowrap ${syncTone}`}>{syncLabel}</span>
             </div>

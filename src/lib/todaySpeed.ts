@@ -235,7 +235,9 @@ export function planWeekSpeedAddOns(
   }
 
   // Placement mirrors the generator: first run day + day before the long run.
-  const runDays = week.allDays.filter(d => d.type === 'run' && !d.isLongRun);
+  // An accepted threshold day already IS the speed session — never stack an
+  // add-on line on it.
+  const runDays = week.allDays.filter(d => d.type === 'run' && !d.isLongRun && d.kind !== 'threshold');
   if (runDays.length === 0) return out;
   const longIdx = week.allDays.findIndex(d => d.isLongRun);
   const beforeLong = longIdx > 0

@@ -30,7 +30,7 @@ const NOW = '2026-06-01T12:00:00Z';
 const EPS = 1e-6;
 
 // ── A normalized view of one week for the invariant checker ──
-interface WeekView { total: number; long: number; days: number; note?: string; isDown: boolean; source: 'static' | 'settings'; }
+interface WeekView { total: number; long: number; days: number; note?: string; isDown: boolean; source: 'static' | 'settings' | 'accepted'; }
 
 function fromConfigs(cfgs: WeekConfig[]): WeekView[] {
   return cfgs.map(c => ({
@@ -250,7 +250,7 @@ describe('engine stress — the pure scaffold builder never yields a nonsensical
 
 // ── Full path: effectiveSettings clamps + locked-week preservation ──
 
-function planToViews(planWeeks: ReturnType<typeof resolveEffectivePlan>['plan']['weeks'], src: Map<string, 'static' | 'settings'>): (WeekView & { maxDay: number; miles: number[] })[] {
+function planToViews(planWeeks: ReturnType<typeof resolveEffectivePlan>['plan']['weeks'], src: Map<string, 'static' | 'settings' | 'accepted'>): (WeekView & { maxDay: number; miles: number[] })[] {
   return planWeeks.map(w => {
     const miles = w.runDays.map(d => d.prescribed ?? 0);
     return {

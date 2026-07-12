@@ -24,6 +24,7 @@ import type { GlobalState, ProposedDay, RaceResult, RunState, SpeedStateNum } fr
 import { TUNABLES } from '../config/tunables';
 import {
   addDaysStr, mondayOf, flareActive, recentBreach, trailing30Longest, weeklyActuals, nextLongFrom,
+  isReducedWeek,
 } from './metrics';
 import {
   easyRunRpeTrend, painDriftSignal, longRunReadiness, weeklyRecoverySignal,
@@ -103,7 +104,11 @@ function sessionSpike(runState: RunState, today: string): string | null {
 
 /** Weekly jump: last completed week grew past every sanctioned growth cap
  *  (even the earned-trust hard ceiling) plus half-step rounding slack, over
- *  the consecutive week before it. Never flags the plan's own growth. */
+ *  the consecutive week before it. Never flags the plan's own growth — in
+ *  particular, when the previous week was a scheduled DOWN week the resume is
+ *  measured against the PRE-down week as well: a down week is a temporary
+ *  absorption dip, not the new baseline, so returning to the pre-down
+ *  trajectory is sanctioned while a genuine leap past it still flags. */
 function weeklyJump(runState: RunState, today: string): boolean {
   const weeks = weeklyActuals(runState, today).filter(w => w.weekStart < mondayOf(today));
   if (weeks.length < 2) return false;
@@ -114,8 +119,16 @@ function weeklyJump(runState: RunState, today: string): boolean {
   // (e.g. the pre-plan bonus day) is noise, not a baseline.
   if (addDaysStr(prev.weekStart, 7) !== last.weekStart) return false;
   if (prev.runCount < 3) return false;
+  // Down-week resume exemption: if `prev` reads as a scheduled down week
+  // (shared detector, SCHEDULED_DOWN_CUT + rounding slack) the growth baseline
+  // is max(prev, pre-down week) — the tissue carried the pre-down load two
+  // weeks ago, so resuming toward it is the plan's own behavior, not a spike.
+  const prevPrev = weeks.length >= 3 ? weeks[weeks.length - 3] : undefined;
+  const baseline = prevPrev && prevPrev.runCount >= 3 && isReducedWeek(prev, prevPrev)
+    ? Math.max(prev.miles, prevPrev.miles)
+    : prev.miles;
   const sanctioned = Math.max(TUNABLES.WEEKLY_GROWTH_MAX, TUNABLES.ADAPTIVE.EARNED_TRUST.HARD_CEILING);
-  return prev.miles > 0 && last.miles > prev.miles * sanctioned + TUNABLES.HALF_STEP + 1e-9;
+  return baseline > 0 && last.miles > baseline * sanctioned + TUNABLES.HALF_STEP + 1e-9;
 }
 
 /** Morning-pain hold: any entry inside the window whose next-AM pain is worse

@@ -121,6 +121,22 @@ export const TUNABLES = {
     /** growthFactor multiplier when easy-run RPE is trending up. */
     RPE_EASE: 0.85,
 
+    // Overnight-settle signal (Silbernagel): the fraction of recent PAIN DAYS
+    // whose next-morning pain came back WORSE than during the run. A slow-to-
+    // settle pattern is meaningful — but only across enough comparable days.
+    /** Comparable pain days (painDuring>0 in the 90-day window) required before
+     *  the overnight-settle rate is trusted. BELOW this the rate is UNKNOWN (0),
+     *  never "100% unsettled": one isolated below-cap niggle that didn't settle
+     *  must not ease the whole mileage trajectory or veto earned-trust. Repeated
+     *  unsettled pain (≥ this many days) still eases the build as before. Mirrors
+     *  RPE_MIN_SAMPLES / PAIN_DRIFT_MIN_SAMPLES — every trend needs several
+     *  comparable observations before it moves the plan (anti-overreaction). */
+    UNSETTLED_MIN_SAMPLES: 3,
+    /** Fraction of comparable pain days that must be unsettled to ease the build. */
+    UNSETTLED_RATE_MIN: 0.3,
+    /** growthFactor multiplier when the unsettled rate clears the bar (modest). */
+    UNSETTLED_EASE: 0.8,
+
     // Sub-threshold next-morning pain DRIFT (0→1→2 below the hard pain cap).
     // Milder than a real breach; missing painNextAM is UNKNOWN, never zero.
     /** Next-AM pain readings (≤ cap) required before trusting a drift. */
