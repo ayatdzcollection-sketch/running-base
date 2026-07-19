@@ -10,6 +10,10 @@ interface Props {
   onUpdate: (date: string, updates: Partial<RunEntry>) => void;
   /** Today's card shows the chips inline; week-history rows stay collapsible. */
   alwaysOpen?: boolean;
+  /** Inside a coach-led season the app schedules no hard work, so it can only
+   *  learn a team workout happened if the athlete says so. Shows the tri-state
+   *  coach-workout chip. Absent/false = hidden (nothing to disambiguate). */
+  inSeason?: boolean;
 }
 
 // Chips are presets over the real 0–10 painDuring field (see lib/subjective).
@@ -25,15 +29,25 @@ const CHIP_STYLE: Record<Chip, { on: string; label: string }> = {
   hurt:   { on: 'border-rose-600 bg-rose-950/50 text-rose-300',    label: 'Hurt' },
 };
 
+/** Tri-state cycle for the coach-workout tap: unknown → yes → no → unknown.
+ *  UNKNOWN is a real, distinct answer (missing = UNKNOWN everywhere in this
+ *  app), so it must stay reachable rather than collapsing into "no". */
+function nextCoachState(cur: boolean | null | undefined): boolean | null {
+  if (cur == null) return true;
+  if (cur === true) return false;
+  return null;
+}
+
 const SubjectiveRow = memo(function SubjectiveRow({
-  date, entry, painCap, speedState, onUpdate, alwaysOpen,
+  date, entry, painCap, speedState, onUpdate, alwaysOpen, inSeason,
 }: Props) {
   const [open, setOpen] = useState(!!alwaysOpen);
   const [detail, setDetail] = useState(false);
 
   const selected = chipFor(entry?.painDuring, painCap);
   const stridesAllowed = speedState >= 1; // no low-dose work exists at tier 0 (speed locked)
-  const hasData = selected != null || entry?.rpe != null || !!entry?.didStrides;
+  const hasData = selected != null || entry?.rpe != null || !!entry?.didStrides
+    || entry?.coachWorkout != null;
 
   function pick(chip: Chip) {
     onUpdate(date, { painDuring: painForChip(chip, painCap, entry?.painDuring) });
@@ -50,6 +64,7 @@ const SubjectiveRow = memo(function SubjectiveRow({
         <span className="ml-1.5 text-slate-500">
           {selected && CHIP_STYLE[selected].label}
           {entry?.didStrides && ' · strides'}
+          {entry?.coachWorkout === true && ' · coach workout'}
         </span>
       )}
     </button>
@@ -85,6 +100,22 @@ const SubjectiveRow = memo(function SubjectiveRow({
                     : 'border-border text-slate-500 hover:border-slate-500'}`}
               >
                 strides {entry?.didStrides ? '✓' : ''}
+              </button>
+            )}
+            {inSeason && (
+              <button
+                onClick={() => onUpdate(date, { coachWorkout: nextCoachState(entry?.coachWorkout) })}
+                title="Was this a coach/team hard session? Tap to cycle: unknown → yes → no."
+                className={`text-[11px] rounded-full border px-2.5 py-1 transition ml-1
+                  ${entry?.coachWorkout === true
+                    ? 'border-amber-700 bg-amber-950/50 text-amber-300'
+                    : entry?.coachWorkout === false
+                      ? 'border-slate-700 bg-slate-900/60 text-slate-400'
+                      : 'border-border text-slate-500 hover:border-slate-500'}`}
+              >
+                {entry?.coachWorkout === true
+                  ? 'coach workout ✓'
+                  : entry?.coachWorkout === false ? 'no workout' : 'coach workout?'}
               </button>
             )}
           </div>

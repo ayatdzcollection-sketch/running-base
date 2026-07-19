@@ -11,13 +11,15 @@ interface Props {
   morningCheckDate: string | null;
   morningPainDuring: number;
   onMorningAnswer: (settled: boolean) => void;
+  /** Inside a coach-led season — surfaces the coach-workout tap. */
+  inSeason?: boolean;
 }
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function PainLogger({
   today, entry, painCap, speedState, onUpdate,
-  morningCheckDate, morningPainDuring, onMorningAnswer,
+  morningCheckDate, morningPainDuring, onMorningAnswer, inSeason,
 }: Props) {
   const morningLabel = morningCheckDate ? DOW[new Date(morningCheckDate + 'T12:00:00Z').getUTCDay()] : '';
 
@@ -38,6 +40,7 @@ export default function PainLogger({
         speedState={speedState}
         onUpdate={onUpdate}
         alwaysOpen
+        inSeason={inSeason}
       />
 
       <div className="flex justify-between gap-2 text-[10.5px] leading-tight">

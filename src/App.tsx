@@ -22,7 +22,7 @@ import { sanitizeOrder, sanitizeHidden } from './lib/layout';
 import type { PlanDay } from './lib/types';
 import {
   trailing30Longest, nextLongFrom, painFreeStreak,
-  flareActive, recentBreach, addDaysStr, pendingMorningCheck, laterDate,
+  flareActive, recentBreach, addDaysStr, pendingMorningCheck, laterDate, isSeasonDate,
 } from './lib/metrics';
 import { morningAnswer } from './lib/subjective';
 import { enforceGateConsistency } from './lib/speed';
@@ -493,7 +493,7 @@ export default function App() {
   const isPre = today < plan.bonusDay.date;
   const dayOfBlock = isPre ? 'starts soon' : `day ${dayIdx}`;
   // Training phase — the rolling plan is continuous. Break wins over XC/season.
-  const inXcSeason = !!settings && !!settings.xcStartDate && today >= settings.xcStartDate;
+  const inXcSeason = isSeasonDate(settings, today);
   const phaseLabel =
     onBreak ? 'on break'
     : inXcSeason ? 'XC season · maintain'
@@ -536,6 +536,7 @@ export default function App() {
           <PainLogger
             today={today} entry={runState[today]} painCap={globals.painCap} speedState={globals.speedState}
             onUpdate={updateEntry}
+            inSeason={inXcSeason}
             morningCheckDate={morningCheckDate}
             morningPainDuring={morningCheckDate ? (runState[morningCheckDate]?.painDuring ?? 0) : 0}
             onMorningAnswer={settled => {

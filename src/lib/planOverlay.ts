@@ -15,12 +15,13 @@
 
 import type { BuiltPlan, WeekConfig } from '../config/plan';
 import { buildPlan, getPlan, WEEK_CONFIGS, PLAN_START_DATE } from '../config/plan';
-import type { ProposedDay, RawSettings, RunState } from './types';
+import type { ProposedDay, RawSettings, RunState, Season } from './types';
 import type { AdaptiveModulation } from './adaptive';
 import { TUNABLES } from '../config/tunables';
-import { mondayOf, addDaysStr } from './metrics';
+import { mondayOf, addDaysStr, currentSeason } from './metrics';
 import {
-  effectiveSettings, stepWeek, clampWeeksShown, type ClampNote, type StepCarry,
+  effectiveSettings, stepWeek, clampWeeksShown, seasonResumeTraj,
+  type ClampNote, type StepCarry,
 } from './settings';
 
 /**
@@ -126,10 +127,27 @@ export function resolveEffectivePlan(
   const configs: WeekConfig[] = [];
   const startDates: string[] = [];
   let carry: StepCarry = { long: eff.trailingLongest, traj: eff.startMpw };
+  // Season-END re-anchor state. The trajectory is frozen for the whole season,
+  // so it is stale by the close; at the boundary we resume from recent ACTUAL
+  // volume instead (see seasonResumeTraj). Fires at most once, and only when the
+  // season has genuinely ended in the PAST — a future end date has no actuals to
+  // anchor to yet, so those weeks keep projecting off the frozen trajectory.
+  let prevSeason: Season | null = null;
+  let resumeApplied = false;
 
   for (let i = 0; i < weeksN; i++) {
     const weekStart = addDaysStr(eff.startDate, i * 7);
     const locked = isWeekLocked(weekStart, runState, today);
+
+    const thisSeason = currentSeason(eff, weekStart);
+    if (prevSeason && !thisSeason && !resumeApplied
+        && prevSeason.endDate && prevSeason.endDate <= today) {
+      const anchor = seasonResumeTraj(runState, eff, today);
+      // null = no logged weeks = UNKNOWN → keep the frozen trajectory untouched.
+      if (anchor != null) carry = { ...carry, traj: anchor };
+      resumeApplied = true;
+    }
+    prevSeason = thisSeason;
     // The static WEEK_CONFIGS scaffold is the frozen "originally prescribed"
     // value ONLY for the canonical plan whose start aligns with PLAN_START_DATE.
     // Once settings reseed the start date (Return-from-break re-anchors it to a

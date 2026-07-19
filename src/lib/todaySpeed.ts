@@ -129,7 +129,14 @@ export function computeTodaySpeed(args: TodaySpeedArgs): TodaySpeedRow | null {
   if (tier >= TUNABLES.SPEED.ADVANCED_MIN_TIER && !guard.seasonMode && !dt.isDayBeforeLong) {
     const weekStart = mondayOf(today);
     const plannedUnits = hardUnitsForDays(acceptedWeeks?.[weekStart] ?? [], globals.races, weekStart);
-    if (plannedUnits + TUNABLES.SPEED.FARTLEK_UNITS <= guard.hardBudget + 1e-9) {
+    // Two views of this week's hard load: what the PLAN scheduled, and what the
+    // athlete actually LOGGED (guard.hardUnitsUsed — races + any RPE ≥ 8 session,
+    // which is how coach-led workouts become visible at all). Both already count
+    // races identically, so MAX combines them without double-counting a race, and
+    // takes the more conservative of the two. A coach session the app never
+    // scheduled now correctly spends the budget and withdraws the fartlek offer.
+    const usedUnits = Math.max(plannedUnits, guard.hardUnitsUsed);
+    if (usedUnits + TUNABLES.SPEED.FARTLEK_UNITS <= guard.hardBudget + 1e-9) {
       return {
         name: 'Light fartlek',
         detail: DETAIL.fartlek,

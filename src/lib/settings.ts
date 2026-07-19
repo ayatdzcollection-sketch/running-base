@@ -9,7 +9,7 @@
 // may make the plan MORE conservative, never less.
 // ============================================================
 
-import type { RawSettings, RunState, SpeedStateNum } from './types';
+import type { RawSettings, RunState, Season, SpeedStateNum } from './types';
 import type { AdaptiveModulation } from './adaptive';
 import type { WeekConfig } from '../config/plan';
 import { PLAN_START_DATE, WEEK_CONFIGS, HR, AWARD } from '../config/plan';
@@ -17,6 +17,7 @@ import { DEFAULT_HIDDEN_IDS } from '../config/homeBlocks';
 import { TUNABLES } from '../config/tunables';
 import {
   mondayOf, nextMonday, addDaysStr, weeklyActuals, trailing30Longest, nextLongFrom, floorToHalf,
+  isSeasonDate, lastEndedSeason, nextSeasonStart, normalizedSeasons,
 } from './metrics';
 
 const SETTINGS_VERSION = 1 as const;
@@ -37,6 +38,15 @@ export function defaultSettings(nowIso: string): RawSettings {
     // Official XC/coach season default: the Monday just after the base block
     // ends (mid-August). Weeks on/after this date maintain instead of building.
     xcStartDate: addDaysStr(PLAN_START_DATE, WEEK_CONFIGS.length * 7),
+    // Blank by default = UNKNOWN = open-ended season (original behavior). The
+    // athlete sets it when they know their last meet; from the following Monday
+    // the plan resumes building off recent ACTUAL volume.
+    xcEndDate: null,
+    // `seasons` is deliberately LEFT UNSET here. It is the source of truth only
+    // once it actually exists; until then normalizedSeasons() derives the single
+    // season from the legacy xcStartDate/xcEndDate pair above. Seeding a concrete
+    // list at default-time would make that pair silently inert — two sources of
+    // truth, where editing xcStartDate would appear to do nothing.
     startMpw: Math.round(staticTotal),
     peakMpw: 30,
     // +1.5 mi/wk: a summer-XC-base-appropriate default (~7.5% at 20mpw, well
@@ -64,6 +74,29 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 function num(v: unknown, fallback: number): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Seasons migration. A stored `seasons` list wins; otherwise the legacy
+ * xcStartDate/xcEndDate pair is folded into a single entry so every pre-existing
+ * blob keeps its exact prior behavior. Idempotent: re-migrating an already-
+ * migrated blob is a no-op. Entries without a start date are dropped (a season
+ * with no start is not a season).
+ */
+function migrateSeasons(raw: Record<string, unknown>): Season[] | undefined {
+  if (!Array.isArray(raw.seasons)) return undefined;
+  const out = raw.seasons
+    .filter(isRecord)
+    .filter(s => typeof s.startDate === 'string' && s.startDate)
+    .map((s, i) => ({
+      id: typeof s.id === 'string' && s.id ? s.id : `s${i}`,
+      label: typeof s.label === 'string' && s.label ? s.label : 'Season',
+      startDate: s.startDate as string,
+      endDate: typeof s.endDate === 'string' && s.endDate ? s.endDate : null,
+    }));
+  // Empty/garbage list → undefined, so the legacy pair stays the live source
+  // rather than being shadowed by an empty array that means "no seasons".
+  return out.length > 0 ? out : undefined;
 }
 
 /**
@@ -102,6 +135,10 @@ export function migrateSettings(raw: unknown, nowIso: string): RawSettings | nul
     downEvery: num(raw.downEvery, d.downEvery),
     startDate: typeof raw.startDate === 'string' ? raw.startDate : d.startDate,
     xcStartDate: typeof raw.xcStartDate === 'string' ? raw.xcStartDate : d.xcStartDate,
+    // Additive + optional: pre-existing blobs have no xcEndDate → null → the
+    // open-ended season they already had. A blank string normalizes to null.
+    xcEndDate: typeof raw.xcEndDate === 'string' && raw.xcEndDate ? raw.xcEndDate : null,
+    seasons: migrateSeasons(raw),
     startMpw: num(raw.startMpw, d.startMpw),
     peakMpw: num(raw.peakMpw, d.peakMpw),
     buildStep: num(raw.buildStep, d.buildStep),
@@ -259,6 +296,17 @@ export function returnFromBreak(
     xcStartDate: base.xcStartDate && base.xcStartDate > startDate
       ? base.xcStartDate
       : addDaysStr(startDate, clampWeeksShown(base.weeksShown) * 7),
+    // The end date belongs to the season its start describes. Preserve it only
+    // when that start survived; a recomputed (stale) start means the old
+    // season is gone, so its end must not linger and close the new one early.
+    xcEndDate: base.xcStartDate && base.xcStartDate > startDate ? (base.xcEndDate ?? null) : null,
+    // Seasons that are entirely in the past are done — drop them so they can
+    // never re-open. Anything still upcoming survives untouched: a break taken
+    // after XC must not erase the track season the athlete is rebuilding toward.
+    // Undefined stays undefined so the legacy pair remains the live source.
+    seasons: base.seasons
+      ? base.seasons.filter(s => !s.endDate || s.endDate >= startDate)
+      : undefined,
     startMpw,
     peakMpw: Math.max(base.peakMpw, startMpw),
     trailingLongest: seed,
@@ -355,12 +403,116 @@ function isScheduledDownIdx(j: number, downEvery: number): boolean {
   return j > 0 && (j + 1) % downEvery === 0;
 }
 
-/** Is week `j` in the XC/coach maintenance phase? True when its Monday lands on
- *  or after xcStartDate — from there the plan MAINTAINS (holds volume) instead
- *  of building toward the peak. Absent/blank xcStartDate → never (pure base). */
+/**
+ * Post-season transition advice: a season just ended, so recommend a reset
+ * before rebuilding toward the next one.
+ *
+ * ADVISORY ONLY — it recommends, it never pauses the plan. The athlete confirms
+ * via the existing break flow, which is what actually re-seeds volume and steps
+ * the speed ladder down. Returns null when no season has ended recently, when
+ * the athlete already started a break, or once the prompt window has passed.
+ */
+export interface SeasonTransition {
+  endedLabel: string;
+  endedOn: string;
+  /** Recommended days fully off, then days of short easy running. */
+  daysOff: number;
+  daysEasy: number;
+  /** The season being rebuilt toward, if one is scheduled. */
+  nextLabel: string | null;
+  nextStart: string | null;
+  /** Whole weeks between the end of the easy week and the next season start —
+   *  the runway the build actually has. null when nothing is scheduled next. */
+  buildWeeks: number | null;
+  message: string;
+}
+
+export function seasonTransition(
+  settings: RawSettings | null | undefined,
+  today: string,
+  breakStart: string | null | undefined,
+): SeasonTransition | null {
+  if (!settings) return null;
+  if (breakStart) return null;                       // already resting — nothing to nag about
+  const ended = lastEndedSeason(settings, today);
+  if (!ended?.endDate) return null;
+  const daysSince = Math.round(
+    (Date.parse(ended.endDate + 'T12:00:00Z') - Date.parse(today + 'T12:00:00Z')) / -86_400_000,
+  );
+  if (daysSince < 0 || daysSince > TUNABLES.SEASON_BREAK_PROMPT_WINDOW_DAYS) return null;
+
+  const daysOff = TUNABLES.SEASON_BREAK_DAYS_OFF;
+  const daysEasy = TUNABLES.SEASON_BREAK_DAYS_EASY;
+  const nextStart = nextSeasonStart(settings, today);
+  const nextSeason = nextStart
+    ? normalizedSeasons(settings).find(s => s.startDate === nextStart) ?? null
+    : null;
+  const resumeFrom = addDaysStr(ended.endDate, daysOff + daysEasy);
+  const buildWeeks = nextStart
+    ? Math.max(0, Math.floor(
+        (Date.parse(nextStart + 'T12:00:00Z') - Date.parse(resumeFrom + 'T12:00:00Z')) / (7 * 86_400_000),
+      ))
+    : null;
+
+  const tail = nextSeason && nextStart
+    ? ` Then rebuild toward ${nextSeason.label} on ${nextStart}` +
+      (buildWeeks != null ? ` — about ${buildWeeks} build weeks.` : '.')
+    : ' Then rebuild when you are ready.';
+
+  return {
+    endedLabel: ended.label,
+    endedOn: ended.endDate,
+    daysOff, daysEasy,
+    nextLabel: nextSeason?.label ?? null,
+    nextStart,
+    buildWeeks,
+    message:
+      `${ended.label} finished ${ended.endDate}. Take about ${daysOff} days fully off, then ` +
+      `~${daysEasy} days of short easy runs before building again.${tail}`,
+  };
+}
+
+/** Is week `j` in the XC/coach maintenance phase? True when its Monday falls
+ *  inside the season WINDOW — from there the plan MAINTAINS (holds volume)
+ *  instead of building toward the peak. Absent/blank xcStartDate → never (pure
+ *  base). Blank xcEndDate → open-ended, exactly the original behavior. A week
+ *  that STARTS on or before the end date is still a maintenance week even if it
+ *  straddles the close: the coach owns that week's work. */
 function isMaintenanceIdx(j: number, eff: EffectiveSettings): boolean {
-  if (!eff.xcStartDate) return false;
-  return addDaysStr(eff.startDate, j * 7) >= eff.xcStartDate;
+  return isSeasonDate(eff, addDaysStr(eff.startDate, j * 7));
+}
+
+/** Is the week starting `weekStart` inside the coach/XC season window?
+ *  Exported so the plan overlay can detect the season-END boundary and
+ *  re-anchor the build trajectory there. */
+export function isSeasonWeek(weekStart: string, eff: EffectiveSettings): boolean {
+  return isSeasonDate(eff, weekStart);
+}
+
+/**
+ * The trajectory the build should RESUME from once the coach season ends.
+ *
+ * The pre-season trajectory was frozen for the entire season, so it is stale by
+ * the close: the team may have run far more (resuming at the frozen value would
+ * detrain) or far less (resuming at it would overreach). Both failures are fixed
+ * by re-anchoring to what the athlete has DEMONSTRABLY been running — actual
+ * logged volume is the body's own proof, so it is safe in both directions.
+ *
+ * Downward-only safety is preserved: this sets a STARTING POINT, not a growth
+ * rate. Every week after is still governed by the frozen +10%/wk cap in stepWeek
+ * and by peakMpw (applied here as a ceiling too). Returns null when there are no
+ * completed logged weeks — missing = UNKNOWN, so the caller keeps the frozen
+ * trajectory rather than guessing.
+ */
+export function seasonResumeTraj(
+  runState: RunState, eff: EffectiveSettings, today: string,
+): number | null {
+  const weeks = weeklyActuals(runState, today)
+    .filter(w => w.weekStart < mondayOf(today) && w.miles > 0);
+  if (weeks.length === 0) return null;
+  const recent = weeks.slice(-TUNABLES.SEASON_RESUME_LOOKBACK_WEEKS);
+  const avg = recent.reduce((s, w) => s + w.miles, 0) / recent.length;
+  return Math.min(avg, eff.peakMpw);
 }
 
 /** Carried between weeks: the long-run seed and the BUILD trajectory (the last

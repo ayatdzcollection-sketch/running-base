@@ -24,7 +24,7 @@ import type { GlobalState, ProposedDay, RaceResult, RunState, SpeedStateNum } fr
 import { TUNABLES } from '../config/tunables';
 import {
   addDaysStr, mondayOf, flareActive, recentBreach, trailing30Longest, weeklyActuals, nextLongFrom,
-  isReducedWeek,
+  isReducedWeek, isSeasonDate, currentSeason,
 } from './metrics';
 import {
   easyRunRpeTrend, painDriftSignal, longRunReadiness, weeklyRecoverySignal,
@@ -67,10 +67,12 @@ function cap(t: number): SpeedStateNum {
   return Math.max(0, Math.min(8, Math.round(t))) as SpeedStateNum;
 }
 
-/** Season overlay: on/after the official XC/coach season start. */
+/** Season overlay: inside the official XC/coach season WINDOW (start..end).
+ *  A blank end date is UNKNOWN = open-ended, byte-identical to the original
+ *  one-way `date >= xcStartDate` behavior. Shared with the settings-driven plan
+ *  via metrics.seasonWindow so the two layers can never disagree. */
 export function inSeason(settings: GlobalState['settings'], date: string): boolean {
-  const xc = settings?.xcStartDate;
-  return !!xc && date >= xc;
+  return isSeasonDate(settings, date);
 }
 
 /** Races dated inside the calendar week (Mon–Sun) containing `date`.
@@ -146,6 +148,43 @@ function morningPainHold(runState: RunState, today: string): string | null {
     }
   }
   return worst;
+}
+
+/**
+ * Athlete-logged HARD sessions inside the week containing `date`.
+ *
+ * In season the app schedules ZERO hard work — the coach owns workouts — so the
+ * only way the guard can learn that a hard session happened is the athlete's own
+ * RPE. RPE ≥ RPE_EASY_MAX+1 (8–10) is already this codebase's "intentional hard
+ * session / race" band (see adaptive.ts's easy-run filter), so it is reused here
+ * rather than introducing a second, disagreeing threshold.
+ *
+ * DOWNWARD-ONLY: these units only ever CONSUME budget, which can suppress
+ * app-offered intensity. They can never grant budget, raise a cap, or unlock
+ * anything. Missing RPE is UNKNOWN — not counted as hard, and never assumed
+ * easy. Race days are excluded because a race already counts as one unit.
+ */
+function loggedHardUnits(
+  runState: RunState, races: RaceResult[] | undefined, date: string,
+): number {
+  const ws = mondayOf(date);
+  const we = addDaysStr(ws, 6);
+  const raceDates = new Set(
+    (races ?? []).filter(r => r.date >= ws && r.date <= we).map(r => r.date),
+  );
+  let units = 0;
+  for (const e of Object.values(runState)) {
+    if (e.date < ws || e.date > we) continue;
+    if (raceDates.has(e.date)) continue;                          // already 1 unit
+    // An explicit coach-workout tap is ground truth and outranks the inference.
+    // Otherwise fall back to RPE ≥ 8. Note `coachWorkout === false` does NOT
+    // veto a genuinely hard run: it answers "was this the coach's session?", not
+    // "was this easy" — a self-inflicted hard effort still spends the budget.
+    const hard = e.coachWorkout === true
+      || (e.rpe != null && e.rpe > TUNABLES.ADAPTIVE.RPE_EASY_MAX);
+    if (hard) units += 1;
+  }
+  return units;
 }
 
 /**
@@ -260,8 +299,11 @@ export function evaluateSpeedGuard(
       detail: 'A race this week IS the hard day. Taper: sharpening strides only, no new stimulus.',
     });
   }
-  if (season && settings?.xcStartDate) {
-    const holdUntil = addDaysStr(settings.xcStartDate, S.SEASON_TRANSITION_HOLD_DAYS);
+  const activeSeason = currentSeason(settings, today);
+  if (season && activeSeason) {
+    // Hold measured from THIS season's start — so entering track in spring gets
+    // the same two-week transition freeze that entering XC does.
+    const holdUntil = addDaysStr(activeSeason.startDate, S.SEASON_TRANSITION_HOLD_DAYS);
     if (today < holdUntil) {
       blockers.push({
         key: 'seasonTransition', label: 'Season just started', action: 'HOLD_TIER', capTier: cap(globals.speedState),
@@ -292,7 +334,9 @@ export function evaluateSpeedGuard(
   const hardBudget = opts.isDownWeek || flare || onBreak
     ? 0
     : season ? S.HARD_BUDGET_SEASON : S.HARD_BUDGET_BASE;
-  const hardUnitsUsed = weekRaces.length;
+  // Races + any hard session the athlete actually logged (the coach's work, which
+  // the app never scheduled and otherwise could not see). Downward-only.
+  const hardUnitsUsed = weekRaces.length + loggedHardUnits(runState, globals.races, today);
 
   return { blockers, effectiveTier, holdTier, advancedDataOk, seasonMode: season, hardBudget, hardUnitsUsed };
 }

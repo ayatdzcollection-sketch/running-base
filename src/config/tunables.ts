@@ -42,6 +42,34 @@ export const TUNABLES = {
    *  Contrast the DEEPER pain-driven DOWN_WEEK_CUT above, which prioritises
    *  recovery after an actual pain spike. */
   SCHEDULED_DOWN_CUT: 0.15,
+  /** Coach/XC season resume: how many recent COMPLETED weeks of ACTUAL logged
+   *  volume are averaged to re-anchor the build trajectory when the season ENDS.
+   *  The pre-season trajectory is frozen for the whole season, so by the end it is
+   *  stale — months of coach-led training may have run much higher OR much lower
+   *  than it. Resuming from the frozen value would either detrain the athlete or
+   *  overreach them, so the plan re-anchors to what they have demonstrably been
+   *  running. Still capped at peakMpw, and the +10%/wk growth cap governs every
+   *  week after. No logged actuals = UNKNOWN → the frozen trajectory is kept
+   *  unchanged (never guessed). */
+  SEASON_RESUME_LOOKBACK_WEEKS: 4,
+
+  /** Post-season break. After a coach season ends, the recommended reset before
+   *  rebuilding toward the next one. Coaching practice spans 2–3 days (minimise
+   *  detraining) to a full two weeks — one week off plus one week of active rest
+   *  (Coach Jay Johnson; tandftraining). We take the middle for an injury-prone
+   *  adolescent: ~7 days fully off, then ~7 days of short easy running before the
+   *  build resumes. The recovery is mental as much as physical — the repeated
+   *  advice is not to restart until the athlete actually wants to run again.
+   *  ADVISORY ONLY: this recommends, it never pauses the plan by itself (the
+   *  athlete confirms via the existing break flow). Note a 7–20 day break also
+   *  costs one speed tier via returnFromBreakSpeedPatch — that is intended, not
+   *  a side effect: two weeks off genuinely un-proves the top rung. */
+  SEASON_BREAK_DAYS_OFF: 7,
+  SEASON_BREAK_DAYS_EASY: 7,
+  /** How long after a season ends the break suggestion stays on screen. Past
+   *  this the athlete has evidently moved on and the nag is just noise. */
+  SEASON_BREAK_PROMPT_WINDOW_DAYS: 21,
+
   /** Peak-seeking reference horizon (weeks). Each build week closes ~1/N of the
    *  remaining gap to peakMpw, so raising/lowering the peak visibly reshapes the
    *  future — but this N is a FIXED constant, NOT the display window, so
