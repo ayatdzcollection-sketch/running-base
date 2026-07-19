@@ -31,6 +31,7 @@ import { returnFromBreakSpeedPatch } from './lib/speedGuard';
 import { computeAdaptiveProfile, toModulation } from './lib/adaptive';
 import AccessCodeModal from './components/AccessCodeModal';
 import AdaptiveInsight from './components/AdaptiveInsight';
+import CloudSetupBanner from './components/CloudSetupBanner';
 import SettingsPanel from './components/SettingsPanel';
 import LayoutEditor from './components/LayoutEditor';
 import RaceLog from './components/RaceLog';
@@ -753,6 +754,13 @@ export default function App() {
               </p>
             </div>
           ) : null}
+
+          {/* Cloud-sync setup. Runs sync but athlete_state is missing, so the
+              whole-state blob has nowhere to go and this device is effectively
+              local-only for settings/pain/speed. Loud on purpose: the previous
+              console-warning-only failure looked exactly like data loss when the
+              athlete opened a second browser. */}
+          {syncDegraded && <CloudSetupBanner />}
 
           {/* Body-response adjustment — plain-language why the future weeks are
               easing/holding. Only shows when the modulation actually changes the
