@@ -8,7 +8,7 @@ import {
   loadRacesLocal, saveRacesLocal,
   applySeed, mergeStates, mergeGlobalStates,
   pullFromSupabase, upsertEntry, upsertMany,
-  pullGlobalFromSupabase, upsertGlobalToSupabase,
+  pullGlobalFromSupabase, upsertGlobalToSupabase, syncCapability,
   debounce,
 } from './lib/storage';
 import { hasSupabase } from './lib/supabase';
@@ -79,6 +79,10 @@ export default function App() {
     return g;
   });
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
+  /** True when runs sync but the athlete_state table is missing, so settings /
+   *  speed state / pain history are silently local-only. Surfaced in the header
+   *  so this can never again look like a healthy "synced". */
+  const [syncDegraded, setSyncDegraded] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // v3: settings drive the plan. null = pure static plan (original behavior).
@@ -193,17 +197,25 @@ export default function App() {
     // clobber locally-newer settings/races/acceptedWeeks. Push the union back.
     pullGlobalFromSupabase(accessCode)
       .then(remote => {
-        if (!remote) return;
         setGlobals(prev => {
-          const merged = mergeGlobalStates(prev, remote);
-          saveGlobalLocal(merged);
-          // Non-destructive: pushing the merged union back is idempotent and
-          // ensures the server ends up with both devices' data.
-          upsertGlobalToSupabase(merged, accessCode).catch(console.error);
+          const merged = remote ? mergeGlobalStates(prev, remote) : prev;
+          if (remote) saveGlobalLocal(merged);
+          // Push back even when the pull found NO row. The previous `if (!remote)
+          // return` meant a device whose athlete_state row did not exist yet
+          // never seeded it here — so settings, speed state and pain history
+          // stayed local-only, and opening the app in a second browser showed
+          // DEFAULTS. Upserting is idempotent and a no-op when the table is
+          // genuinely missing, so seeding here is safe and fixes that hole.
+          upsertGlobalToSupabase(merged, accessCode)
+            .catch(console.error)
+            .finally(() => setSyncDegraded(!syncCapability().globalState));
           return merged;
         });
       })
-      .catch(err => console.warn('Global state pull failed:', err));
+      .catch(err => {
+        console.warn('Global state pull failed:', err);
+        setSyncDegraded(!syncCapability().globalState);
+      });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessCode]);
 
@@ -481,9 +493,12 @@ export default function App() {
     : syncStatus === 'syncing' ? 'syncing…'
     : syncStatus === 'offline' ? 'offline, will sync'
     : syncStatus === 'error' ? 'sync error'
+    // Runs are syncing but athlete_state is not — settings/speed/pain are on
+    // this device only. Must never read as a plain "synced".
+    : syncDegraded ? 'runs only · setup'
     : 'synced';
   const syncTone =
-    !hasSupabase || syncStatus === 'offline' ? 'text-amber-600'
+    !hasSupabase || syncStatus === 'offline' || syncDegraded ? 'text-amber-600'
     : syncStatus === 'error' ? 'text-rose-500' : 'text-slate-600';
 
   // Day-of-plan label for the header subtitle. The plan is rolling — there is
@@ -649,7 +664,14 @@ export default function App() {
       )}
 
       <div className="min-h-screen bg-ink text-slate-200 pb-[env(safe-area-inset-bottom)]">
-        <div className="max-w-[480px] mx-auto px-3 sm:px-4 pb-16 pt-[22px] flex flex-col gap-3.5">
+        {/* Top inset matters: index.html sets viewport-fit=cover AND
+            apple-mobile-web-app-status-bar-style=black-translucent, so in an
+            installed PWA the page paints UNDER the iOS status bar. Without the
+            inset the header — and the Settings button in it — lands beneath the
+            clock/notch and cannot be tapped. env() resolves to 0px on desktop
+            and non-notched devices, so the original 22px spacing is unchanged
+            there; notched phones get the extra room they need. */}
+        <div className="max-w-[480px] mx-auto px-3 sm:px-4 pb-16 pt-[calc(env(safe-area-inset-top)+22px)] flex flex-col gap-3.5">
 
           {/* Header (pinned) */}
           <header className="flex flex-col gap-[5px] px-1 pb-1">

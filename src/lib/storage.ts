@@ -304,6 +304,19 @@ function entryToRow(e: RunEntry, code: string, includeV2: boolean): Record<strin
 /** True once we know the v2 columns exist server-side; starts optimistic. */
 let v2ColumnsAvailable = true;
 
+/** False once we learn the athlete_state table does not exist. Mirrors
+ *  v2ColumnsAvailable. The app is designed to degrade to local-only when the
+ *  SQL migration has not been run — but it must be able to SAY so. Reporting
+ *  "synced" while settings, speed state and pain history never leave the device
+ *  is how the same athlete opens a second browser and finds default settings. */
+let globalStateTableOk = true;
+
+/** Is full sync available, or is this device silently running runs-only?
+ *  UI-facing so the header can distinguish "synced" from "partially synced". */
+export function syncCapability(): { runDetail: boolean; globalState: boolean } {
+  return { runDetail: v2ColumnsAvailable, globalState: globalStateTableOk };
+}
+
 function isMissingColumnError(err: unknown): boolean {
   const e = err as { code?: string; message?: string } | null;
   if (!e) return false;
@@ -379,6 +392,7 @@ export async function pullGlobalFromSupabase(code: string): Promise<GlobalState 
     .maybeSingle();
   if (error) {
     if (isMissingTableError(error)) {
+      globalStateTableOk = false;
       console.warn('athlete_state table missing — global speed-layer state is local-only until the migration SQL runs.');
       return null;
     }
@@ -419,7 +433,10 @@ export async function upsertGlobalToSupabase(state: GlobalState, code: string): 
       { onConflict: 'access_code' },
     );
   if (error) {
-    if (isMissingTableError(error)) return; // degrade silently to local-only
+    if (isMissingTableError(error)) {
+      globalStateTableOk = false;   // degrade to local-only, but REPORT it
+      return;
+    }
     throw error;
   }
 }
