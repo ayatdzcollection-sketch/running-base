@@ -18,7 +18,14 @@ export default defineConfig(({ command, mode }) => ({
     // activates on the next visit — no user prompt, no stale-forever cache.
     VitePWA({
       registerType: 'autoUpdate',
-      injectRegister: 'auto',
+      // We register the worker OURSELVES (src/main.tsx) instead of letting the
+      // plugin inject its default script. That injected script only ever called
+      // navigator.serviceWorker.register() — no update check, no reload — so a
+      // new deploy needed a SECOND reload to appear, and on an installed iOS
+      // PWA often never appeared at all. `injectRegister: null` hands control to
+      // the virtual:pwa-register module, which applies the waiting worker and
+      // reloads once it takes over.
+      injectRegister: null,
       manifest: false,
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,json}'],

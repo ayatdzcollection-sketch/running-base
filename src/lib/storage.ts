@@ -212,6 +212,18 @@ export function mergeGlobalStates(local: GlobalState, remote: GlobalState): Glob
   const rs = remote.settings ?? null;
   base.settings = ls && rs ? (rs.updated_at > ls.updated_at ? rs : ls) : (ls ?? rs);
 
+  // painTrackingSince: EARLIEST non-null wins, not newest-blob-wins.
+  // It records when this ATHLETE began tracking pain — one fact about a person,
+  // not a per-device value, so recency is the wrong tiebreaker. A freshly
+  // installed device stamps today and (being newest) would otherwise overwrite a
+  // real earlier baseline, retroactively disqualifying every logged run as
+  // "pre-tracking" and resetting the pain-free streak to 0. Taking the earliest
+  // reproduces the athlete's actual history on every device.
+  const pts = [local.painTrackingSince, remote.painTrackingSince].filter(
+    (d): d is string => typeof d === 'string' && !!d,
+  );
+  base.painTrackingSince = pts.length ? pts.reduce((a, b) => (a < b ? a : b)) : null;
+
   // races: merge by id, newest updated_at per id.
   base.races = mergeRaces(local.races ?? [], remote.races ?? []);
 
