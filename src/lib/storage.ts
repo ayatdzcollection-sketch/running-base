@@ -471,6 +471,30 @@ export interface ParsedBackup {
   globals: GlobalState | null;
 }
 
+/**
+ * Prepare imported global state for an EXPLICIT restore.
+ *
+ * A restore must win, and it must propagate. Restore used to be gated on
+ * `imported.updated_at > current.updated_at`, which made restoring an OLDER
+ * backup silently do nothing — precisely the case that matters, because the
+ * state you want back is usually older than whatever replaced it. The stale
+ * timestamp then also lost the sync merge (mergeGlobalStates picks settings by
+ * settings.updated_at), so the cloud kept the very state you were discarding.
+ *
+ * Restamping both the blob and its settings to `now` makes the restored state
+ * authoritative locally and on every other device. Logged runs are unaffected:
+ * they merge per-date, non-destructively.
+ */
+export function restoredGlobals(imported: GlobalState, nowIso: string): GlobalState {
+  return {
+    ...imported,
+    updated_at: nowIso,
+    settings: imported.settings
+      ? { ...imported.settings, updated_at: nowIso }
+      : imported.settings,
+  };
+}
+
 /** Accepts both the v2 envelope and the original flat RunState export. */
 export function parseBackup(text: string): ParsedBackup {
   const parsed = JSON.parse(text);
