@@ -68,21 +68,24 @@ export default function App() {
   const [runState, setRunState] = useState<RunState>(() => applySeed(loadLocal()));
   // v2 global speed-layer state — separate key, additive migration on load.
   const [globals, setGlobals] = useState<GlobalState>(() => {
-    const g = loadGlobalLocal();
-    // Stamp the pain-tracking baseline once, so runs logged before the pain
-    // feature don't count as proven pain-free toward speed progression.
-    if (g.painTrackingSince == null) {
-      const stamped = { ...g, painTrackingSince: todayStr() };
-      saveGlobalLocal(stamped);
-      return stamped;
-    }
-    return g;
+    // The pain-tracking baseline is stamped LAZILY (see the effect below), not
+    // here. Stamping in this initializer ran synchronously at mount, before any
+    // Supabase pull could answer — so a fresh browser stamped TODAY, wrote it
+    // locally, and that write also gave the local blob the newest updated_at,
+    // which then beat the athlete's real (earlier) baseline in mergeGlobalStates.
+    // Net effect: signing in on a second device silently reset the pain-free
+    // streak to 0 because no logged run was newer than the fresh stamp.
+    return loadGlobalLocal();
   });
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   /** True when runs sync but the athlete_state table is missing, so settings /
    *  speed state / pain history are silently local-only. Surfaced in the header
    *  so this can never again look like a healthy "synced". */
   const [syncDegraded, setSyncDegraded] = useState(false);
+  /** Has the initial athlete_state pull finished (either way)? Gates the lazy
+   *  pain-tracking stamp so a fresh device never invents a baseline that would
+   *  then out-vote the athlete's real one. */
+  const [globalPullSettled, setGlobalPullSettled] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // v3: settings drive the plan. null = pure static plan (original behavior).
@@ -215,9 +218,28 @@ export default function App() {
       .catch(err => {
         console.warn('Global state pull failed:', err);
         setSyncDegraded(!syncCapability().globalState);
-      });
+      })
+      .finally(() => setGlobalPullSettled(true));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessCode]);
+
+  // ── Pain-tracking baseline (stamped LAZILY, after sync answers) ──
+  // Runs logged before pain tracking existed can't be assumed pain-free, so the
+  // baseline exists to exclude them. But it must never be invented while a real
+  // one might still arrive from Supabase: stamping eagerly at mount is what made
+  // a second browser reset the streak to 0/4. We therefore wait until the pull
+  // has settled (or until we know none is coming) before stamping.
+  useEffect(() => {
+    if (globals.painTrackingSince != null) return;
+    const noRemoteComing = !accessCode || !hasSupabase;
+    if (!noRemoteComing && !globalPullSettled) return;
+    setGlobals(prev => {
+      if (prev.painTrackingSince != null) return prev;   // won the race — keep it
+      const stamped = { ...prev, painTrackingSince: todayStr() };
+      saveGlobalLocal(stamped);
+      return stamped;
+    });
+  }, [globals.painTrackingSince, accessCode, globalPullSettled]);
 
   // ── Debounced network writes (stable refs) ───────────────
   const debouncedUpsert = useRef(
