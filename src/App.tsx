@@ -8,7 +8,7 @@ import {
   loadRacesLocal, saveRacesLocal,
   applySeed, mergeStates, mergeGlobalStates,
   pullFromSupabase, upsertEntry, upsertMany,
-  pullGlobalFromSupabase, upsertGlobalToSupabase, syncCapability,
+  pullGlobalFromSupabase, upsertGlobalToSupabase, syncCapability, restoredGlobals,
   debounce,
 } from './lib/storage';
 import { hasSupabase } from './lib/supabase';
@@ -495,15 +495,31 @@ export default function App() {
       if (accessCode && hasSupabase) {
         upsertMany(Object.values(merged), accessCode).catch(console.error);
       }
-      if (importedGlobals && importedGlobals.updated_at > globals.updated_at) {
-        setGlobals(importedGlobals);
-        saveGlobalLocal(importedGlobals);
+      if (importedGlobals) {
+        // A restore is an EXPLICIT act: it must win, and it must propagate.
+        //
+        // This used to be gated on `importedGlobals.updated_at > globals.updated_at`,
+        // which made restoring an older backup silently do nothing — the exact
+        // case that matters, since the backup you want back is usually older than
+        // the default state that replaced it. Worse, the stale timestamp then lost
+        // the sync merge too (mergeGlobalStates picks settings by
+        // settings.updated_at), so the cloud kept the state you were trying to
+        // discard.
+        //
+        // Restamping to now makes the restored state authoritative both locally
+        // and on every other device. Logged runs are never at risk either way:
+        // they merge non-destructively above, per date.
+        const restored = restoredGlobals(importedGlobals, new Date().toISOString());
+        setGlobals(restored);
+        saveGlobalLocal(restored);
         if (accessCode && hasSupabase) {
-          upsertGlobalToSupabase(importedGlobals, accessCode).catch(console.error);
+          upsertGlobalToSupabase(restored, accessCode).catch(console.error);
         }
       }
     },
-    [runState, globals, accessCode],
+    // `globals` is deliberately absent: a restore no longer compares against the
+    // current state, it supersedes it (see restoredGlobals).
+    [runState, accessCode],
   );
 
   function handleCodeConfirm(code: string) {
