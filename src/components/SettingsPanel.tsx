@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import type { RawSettings, RunState } from '../lib/types';
-import { effectiveSettings, returnFromBreak, type ClampNote } from '../lib/settings';
+import type { RawSettings, RunState, Season } from '../lib/types';
+import { effectiveSettings, returnFromBreak, seasonTransition, type ClampNote } from '../lib/settings';
 import { assessPeakFeasibility } from '../lib/feasibility';
+import { normalizedSeasons, addDaysStr } from '../lib/metrics';
 
 // Every knob that shapes the plan, grouped like the design's Settings sheet.
 // Steppers allow the full range the user might type; effectiveSettings() clamps
@@ -48,8 +49,8 @@ const GROUPS: GroupDef[] = [
         info: "How often a lighter 'down' week drops in so your body absorbs the work. Lower = recover more often." },
       { key: 'startDate', label: 'Start date', type: 'date', min: 0, max: 0, step: 0,
         info: 'The Monday week 1 begins. Every date, week, and the award window shifts with it.' },
-      { key: 'xcStartDate', label: 'XC season starts', type: 'date', min: 0, max: 0, step: 0,
-        info: 'When official XC/coach practice begins. From this Monday on, the plan MAINTAINS your mileage (holds it steady, coach drives the work) instead of building toward the peak. Set it just after your base block.' },
+      // Season dates live in their own editor below (a list, not two fields) —
+      // one athlete has XC in autumn and track in spring.
     ],
   },
   {
@@ -124,6 +125,10 @@ export default function SettingsPanel({
   // — the plan never breaks a safety cap to hit it; this just explains the gap.)
   const peakFeas = assessPeakFeasibility(eff);
 
+  // Post-season advice: a season just ended, so suggest the reset before the
+  // rebuild. Advisory only — the athlete still confirms via the break flow.
+  const transition = seasonTransition(raw, today, breakStart);
+
   const onBreak = !!breakStart && breakStart <= today;
   // Preview what returning from break would seed, so the user sees the new
   // starting mileage (scaled by break length) before confirming.
@@ -136,6 +141,118 @@ export default function SettingsPanel({
     const next = Math.min(f.max, Math.max(f.min, Math.round((cur + dir * f.step) * 100) / 100));
     onChange({ [f.key]: next } as Partial<RawSettings>);
   };
+
+  // ── Seasons editor ────────────────────────────────────────
+  // The displayed list is always the NORMALIZED one, so a legacy blob that only
+  // has xcStartDate/xcEndDate shows its single season here and becomes a real
+  // list the first time it is edited. Writes keep the legacy pair in sync with
+  // entry 0 so anything still reading it stays coherent.
+  const seasons = normalizedSeasons(raw);
+  const writeSeasons = (next: Season[]) => {
+    const sorted = [...next].sort((a, b) => (a.startDate < b.startDate ? -1 : 1));
+    onChange({
+      seasons: sorted,
+      xcStartDate: sorted[0]?.startDate ?? '',
+      xcEndDate: sorted[0]?.endDate ?? null,
+    });
+  };
+  const patchSeason = (id: string, patch: Partial<Season>) =>
+    writeSeasons(seasons.map(s => (s.id === id ? { ...s, ...patch } : s)));
+  const addSeason = () => {
+    // Default the new season a year out from the last one so it never collides
+    // with an existing window (which would silently clamp both).
+    const last = seasons[seasons.length - 1];
+    const start = last ? addDaysStr(last.startDate, 182) : today;
+    // Positional defaults (XC in autumn, track in spring) rather than matching
+    // on the existing label — the athlete may have renamed it to anything.
+    const DEFAULT_LABELS = ['XC', 'Track'];
+    writeSeasons([...seasons, {
+      id: `s${Date.now().toString(36)}`,
+      label: DEFAULT_LABELS[seasons.length] ?? `Season ${seasons.length + 1}`,
+      startDate: start,
+      endDate: null,
+    }]);
+  };
+  const removeSeason = (id: string) => writeSeasons(seasons.filter(s => s.id !== id));
+
+  const seasonsSection = (
+    <div className="rounded-xl border border-border bg-[#0b1220] overflow-hidden">
+      <button
+        onClick={() => setOpen(o => ({ ...o, seasons: !o.seasons }))}
+        aria-expanded={!!open.seasons}
+        className="w-full flex items-center gap-2.5 px-3.5 py-3 text-left"
+      >
+        <span className="font-display text-[13px] font-semibold text-slate-200 shrink-0">Seasons</span>
+        <span className="flex-1 min-w-0 text-[11.5px] text-slate-500 text-right truncate">
+          {seasons.length === 0
+            ? 'none set'
+            : seasons.map(s => s.label).join(' · ')}
+        </span>
+        <span className="shrink-0 w-3 text-center text-[10px] text-slate-600">{open.seasons ? '▾' : '▸'}</span>
+      </button>
+      {open.seasons && (
+        <div className="px-3.5 pb-3 flex flex-col gap-2.5">
+          <p className="m-0 text-[11.5px] leading-snug text-slate-500">
+            Coach-led seasons. <strong className="text-slate-400">Inside</strong> a season the plan holds your
+            mileage steady and schedules zero hard sessions — your coach owns the workouts.
+            <strong className="text-slate-400"> Between</strong> seasons it builds again, aiming to have you in
+            shape by the next start date. Leave an end date blank if you don't know it yet.
+          </p>
+          {seasons.map(s => (
+            <div key={s.id} className="rounded-lg border border-[#101a2c] p-2.5 flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <input
+                  value={s.label}
+                  onChange={e => patchSeason(s.id, { label: e.target.value })}
+                  aria-label="Season name"
+                  className="flex-1 min-w-0 bg-ink border border-border rounded-[9px] px-2.5 py-1.5
+                             text-[12.5px] text-slate-200 font-display"
+                />
+                <button
+                  onClick={() => removeSeason(s.id)}
+                  aria-label={`Remove ${s.label}`}
+                  className="shrink-0 px-2.5 py-1.5 rounded-[9px] border border-border text-[11px]
+                             text-slate-500 hover:text-rose-300 hover:border-rose-800 transition"
+                >Remove</button>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="flex-1 flex items-center justify-between gap-2 text-[11.5px] text-slate-500">
+                  starts
+                  <input
+                    type="date" value={s.startDate}
+                    onChange={e => patchSeason(s.id, { startDate: e.target.value })}
+                    className="bg-ink border border-border rounded-[9px] px-2 py-1.5
+                               text-[12px] text-slate-200 font-display [color-scheme:dark]"
+                  />
+                </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="flex-1 flex items-center justify-between gap-2 text-[11.5px] text-slate-500">
+                  ends
+                  <input
+                    type="date" value={s.endDate ?? ''}
+                    onChange={e => patchSeason(s.id, { endDate: e.target.value || null })}
+                    className="bg-ink border border-border rounded-[9px] px-2 py-1.5
+                               text-[12px] text-slate-200 font-display [color-scheme:dark]"
+                  />
+                </label>
+              </div>
+            </div>
+          ))}
+          <button
+            onClick={addSeason}
+            className="self-start px-3 py-1.5 rounded-[9px] border border-border text-[11.5px]
+                       text-slate-300 hover:border-slate-600 transition"
+          >+ Add a season</button>
+          {transition && (
+            <div className="rounded-lg border border-teal-900/60 bg-teal-950/25 p-2.5">
+              <p className="m-0 text-[11.5px] leading-snug text-teal-200/90">{transition.message}</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div
@@ -164,6 +281,8 @@ export default function SettingsPanel({
         </div>
 
         {layoutSection}
+
+        {seasonsSection}
 
         {GROUPS.map(g => {
           const isOpen = !!open[g.id];

@@ -9,6 +9,14 @@ export interface RunEntry {
   painNextAM?: number | null;   // 0–10 next morning
   didStrides?: boolean | null;  // low-dose stride add-on, logged separately
   strideNote?: string | null;
+  /** Was this a coach-administered hard session (team workout / hard practice)?
+   *  In season the app schedules ZERO hard work, so without this the only signal
+   *  is the RPE ≥ 8 inference. One tap makes it ground truth instead of a guess.
+   *    true    → a hard unit was spent, whatever the RPE says
+   *    false   → explicitly NOT a coach workout (something RPE alone can't say)
+   *    absent  → UNKNOWN → fall back to the RPE inference
+   *  Downward-only: it can only ever SPEND budget, never grant it. */
+  coachWorkout?: boolean | null;
 }
 
 export type RunState = Record<string, RunEntry>;
@@ -142,6 +150,19 @@ export interface PtNote {
   updated_at: string;
 }
 
+/** One coach-led competitive season. Inside its window the coach owns the
+ *  workouts: the app maintains volume, schedules zero hard sessions, and acts as
+ *  a monitor. Between windows the plan builds again, aiming at the next start. */
+export interface Season {
+  id: string;
+  /** Display label — 'XC', 'Track', 'Indoor'. Never parsed by the engine. */
+  label: string;
+  startDate: string;          // YYYY-MM-DD, first day of coach-led practice
+  /** Last day of the season. null/absent = open-ended, which implicitly closes
+   *  the day before the NEXT season starts (or never, if there is no next one). */
+  endDate?: string | null;
+}
+
 // ── v3: plan settings (raw, as typed by the user) ────────────
 // Every consumer reads the CLAMPED effective view (see lib/settings.ts);
 // raw is persisted verbatim so the user never loses their input.
@@ -159,10 +180,26 @@ export interface RawSettings {
                          // (migration keeps old blobs valid).
   downEvery: number;     // down week after N build weeks (3–4)
   startDate: string;     // Monday YYYY-MM-DD
-  xcStartDate: string;   // Monday official XC/coach season begins. Weeks on/after
-                         // this date MAINTAIN (hold volume near the last build
-                         // level) instead of building toward the peak. Defaults
-                         // just after the base block ends (mid-August).
+  /** Coach-led competitive seasons (XC in autumn, track in spring, …), in any
+   *  order — consumers normalize and sort. The plan MAINTAINS inside a season
+   *  window and BUILDS between them, using the NEXT season's start as the
+   *  deadline it has to be in shape for (see feasibility.ts).
+   *
+   *  This supersedes the single xcStartDate/xcEndDate pair, which is kept only
+   *  as a legacy input: when `seasons` is absent those two fields are migrated
+   *  into a one-entry list, so every pre-existing blob keeps its exact behavior. */
+  seasons?: Season[];
+  xcStartDate: string;   // LEGACY (migrated into `seasons`). Monday coach season begins. Weeks inside
+                         // the season window MAINTAIN (hold volume near the last
+                         // build level) instead of building toward the peak.
+                         // Defaults just after the base block ends (mid-August).
+  /** Last day of the coach/XC season (the season window's close). Weeks starting
+   *  after this date resume BUILDING, and the trajectory re-anchors to recent
+   *  actual volume (TUNABLES.SEASON_RESUME_LOOKBACK_WEEKS).
+   *  null/absent/blank = UNKNOWN = open-ended season, byte-identical to the
+   *  original behavior (maintain forever). An end date BEFORE the start is
+   *  ignored as a typo rather than cancelling a real season — see seasonWindow(). */
+  xcEndDate?: string | null;
   startMpw: number;      // first week's miles
   peakMpw: number;       // ceiling the build aims at
   buildStep: number;     // absolute mpw added per build week

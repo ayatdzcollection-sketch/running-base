@@ -20,7 +20,10 @@
 
 import type { GlobalState, RawSettings, RunState, SpeedStateNum } from './types';
 import { TUNABLES } from '../config/tunables';
-import { painFreeStreak, flareActive, mondayOf, addDaysStr, laterDate, weeklyActuals, painBreachDates } from './metrics';
+import {
+  painFreeStreak, flareActive, mondayOf, addDaysStr, laterDate, weeklyActuals, painBreachDates,
+  currentSeason, nextSeasonStart,
+} from './metrics';
 import { requiredStreakFor } from './settings';
 import { easyRunRpeTrend, weeklyRecoverySignal } from './adaptive';
 
@@ -259,16 +262,21 @@ export function evaluateReadiness(
     });
   }
 
-  // ── Tier 8 (VO₂ / race-specific) is season-gated: in/near the XC season. ──
+  // ── Tier 8 (VO₂ / race-specific) is season-gated: in/near ANY coach season. ──
+  // Already in a season → green. Otherwise the gate opens NEAR_SEASON_DAYS
+  // before the next one starts, so track sharpening is gated exactly like XC.
   if (target >= 8) {
-    const xc = settings?.xcStartDate || null;
-    const nearFrom = xc ? addDaysStr(xc, -TUNABLES.SPEED.NEAR_SEASON_DAYS) : null;
-    const ok = !!nearFrom && today >= nearFrom;
+    const active = currentSeason(settings, today);
+    const upcoming = nextSeasonStart(settings, today);
+    const nearFrom = upcoming ? addDaysStr(upcoming, -TUNABLES.SPEED.NEAR_SEASON_DAYS) : null;
+    const ok = !!active || (!!nearFrom && today >= nearFrom);
     items.push({
       key: 'season',
-      label: 'In or near the XC season (coach-led sharpening window)',
+      label: 'In or near a coach-led season (sharpening window)',
       ok,
-      detail: xc ? `season starts ${xc}` : 'no season date set',
+      detail: active
+        ? `in the ${active.label} season`
+        : upcoming ? `next season starts ${upcoming}` : 'no season date set',
     });
   }
 

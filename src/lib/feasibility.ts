@@ -24,7 +24,7 @@ import type { EffectiveSettings } from './settings';
 import type { AdaptiveModulation } from './adaptive';
 import { buildWeekConfigsFromSettings } from './settings';
 import { TUNABLES } from '../config/tunables';
-import { addDaysStr, nextLongFrom, floorToHalf } from './metrics';
+import { addDaysStr, nextLongFrom, floorToHalf, nextSeasonStart } from './metrics';
 
 export type PeakLimiter = 'none' | 'time' | 'distribution' | 'buildstep';
 
@@ -140,7 +140,12 @@ export function assessPeakFeasibility(eff: EffectiveSettings, mod?: AdaptiveModu
   const target = eff.peakMpw;
   const days = Math.round(Math.min(6, Math.max(3, eff.daysPerWeek)));
   const downEvery = normDownEvery(eff.downEvery);
-  const boundary = eff.xcStartDate || null;
+  // The deadline is the NEXT coach season starting after the plan's first week —
+  // XC while building through summer, then TRACK once XC is over and the athlete
+  // is rebuilding toward spring. With one season this is byte-identical to the
+  // old `eff.xcStartDate`; with none, there is no boundary and the plan simply
+  // keeps building.
+  const boundary = nextSeasonStart(eff, eff.startDate);
   const earnedTrustActive = mod?.earnedGrowthMax != null;
   // The earned cap used for the "could earned-trust help?" probe. Re-clamped to
   // HARD_CEILING so the diagnostic can never advertise a cap the engine wouldn't

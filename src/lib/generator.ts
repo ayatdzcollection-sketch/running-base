@@ -45,7 +45,21 @@ function daysBetween(a: string, b: string): number {
 }
 
 export interface GeneratorInput {
+  /** ACTUAL logged runs. This is the ONLY source of TRAINING EVIDENCE: every
+   *  safety read (flare, pain-free streak, speed guard) uses this and nothing
+   *  else, so a merely PLANNED week can never satisfy a safety gate. */
   runState: RunState;
+  /** Optional PLAN CONTEXT: actuals PLUS already-accepted/simulated future weeks,
+   *  used ONLY to project volume and ladder the long run across a multi-week
+   *  batch. Never consulted for safety.
+   *
+   *  Why the split exists: painFreeStreak (metrics.ts) counts any entry with
+   *  `done || miles_actual != null` and treats unlogged pain as pain-free, with
+   *  no upper date bound — so feeding planned weeks into it silently manufactured
+   *  a pain-free streak out of runs that had not happened yet, which gates
+   *  strides. Volume context and training evidence are therefore separate inputs.
+   *  Absent = falls back to runState (single-week behavior, unchanged). */
+  planContext?: RunState;
   globals: GlobalState;
   today: string;
   /** Optional plan settings — shapes days/week, down-week cadence, and the peak
@@ -64,10 +78,13 @@ export interface GeneratorInput {
   adaptive?: AdaptiveModulation | null;
 }
 
-export function generateNextWeek({ runState, globals, today, settings, adaptive }: GeneratorInput): WeekProposal {
+export function generateNextWeek({ runState, planContext, globals, today, settings, adaptive }: GeneratorInput): WeekProposal {
   const warnings: string[] = [];
   const notes: string[] = [];
   const weekStart = nextMonday(today);
+  // VOLUME/LADDER context (may include accepted + simulated weeks) vs TRAINING
+  // EVIDENCE (`runState`, actuals only). Never blur these two.
+  const planLog = planContext ?? runState;
 
   // Settings-derived shape (all safety-subordinate; default = current behavior).
   const runDaysN = settings ? Math.round(Math.min(6, Math.max(3, settings.daysPerWeek))) : 5;
@@ -77,7 +94,11 @@ export function generateNextWeek({ runState, globals, today, settings, adaptive 
   const downEvery = adaptive ? Math.min(settingsDownEvery, adaptive.downEvery) : settingsDownEvery;
   const peakCap = settings ? settings.peakMpw : Infinity;
 
-  const t30 = trailing30Longest(runState, today);
+  // Long-run ladder: plan context, so a multi-week batch ladders across the
+  // weeks it just proposed (and across already-accepted weeks) instead of
+  // restarting from the last logged run every time.
+  const t30 = trailing30Longest(planLog, today);
+  // Safety reads: ACTUALS ONLY. A planned week must never clear a pain gate.
   const flare = flareActive(runState, today, globals.painCap);
   const streak = painFreeStreak(runState, globals.painCap, globals.painTrackingSince);
   const delayed = !!globals.delayUntil && globals.delayUntil > today;
@@ -90,7 +111,7 @@ export function generateNextWeek({ runState, globals, today, settings, adaptive 
   // week counts for the next) instead of dipping then jumping.
   const currentWeekStart = mondayOf(today);
   const currentWeekComplete = today >= addDaysStr(currentWeekStart, 6);
-  const weeks = weeklyActuals(runState, today).filter(
+  const weeks = weeklyActuals(planLog, today).filter(
     w => w.weekStart < currentWeekStart || (w.weekStart === currentWeekStart && currentWeekComplete),
   );
   const recent = weeks.slice(-3);
@@ -327,6 +348,19 @@ export interface MultiWeekResult {
   conflicts: AcceptedWeekConflict[];
 }
 
+/** Write a proposed/accepted week into the PLAN CONTEXT log (never the real run
+ *  log, and never the log any safety read consults). Miles only — no rpe/pain
+ *  fields are invented, because a planned week is not evidence of anything. */
+function seedPlanWeek(planLog: RunState, days: ProposedDay[], stampFrom: string): void {
+  for (const d of days) {
+    if (d.miles == null) continue;
+    planLog[d.date] = {
+      date: d.date, done: true, miles_actual: d.miles,
+      updated_at: stampFrom + 'T12:00:00Z',
+    };
+  }
+}
+
 export function generateWeeks(
   input: GeneratorInput & { count: number },
 ): MultiWeekResult {
@@ -339,15 +373,22 @@ export function generateWeeks(
 
   for (let n = 0; n < count; n++) {
     const ws = nextMonday(cursor);
-    if (accepted[ws]) { cursor = addDaysStr(ws, 6); continue; } // skip confirmed weeks
-    const p = generateNextWeek({ runState: scratch, globals, today: cursor, settings, adaptive });
-    proposals.push(p);
-    // Simulate this week as completed so the next week ladders from it.
-    for (const d of p.days) {
-      if (d.miles != null) {
-        scratch[d.date] = { date: d.date, done: true, miles_actual: d.miles, updated_at: cursor + 'T12:00:00Z' };
-      }
+    if (accepted[ws]) {
+      // A confirmed week is NOT re-proposed — but it IS context. Previously this
+      // branch skipped without seeding `scratch`, so the week vanished from
+      // weeklyActuals (which omits weeks with no entries rather than zeroing
+      // them). The next week then took the "you missed last week" branch and
+      // resumed FLAT instead of building. Seeding it here restores the ladder and
+      // matches what planOverlay already does for the displayed plan.
+      seedPlanWeek(scratch, accepted[ws], cursor);
+      cursor = addDaysStr(ws, 6);
+      continue;
     }
+    // runState = actuals (safety evidence); scratch = plan context (volume only).
+    const p = generateNextWeek({ runState, planContext: scratch, globals, today: cursor, settings, adaptive });
+    proposals.push(p);
+    // Simulate this week into the PLAN CONTEXT so the next week ladders from it.
+    seedPlanWeek(scratch, p.days, cursor);
     cursor = addDaysStr(ws, 6); // that week's Sunday
   }
 
