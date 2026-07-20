@@ -191,6 +191,70 @@ describe('postponement through resolveEffectivePlan + downWeekControls', () => {
   });
 });
 
+describe('the blank-Monday exception (postpone on the down week\'s own Monday)', () => {
+  const future = (patch: Partial<RawSettings> = {}) =>
+    raw({ startDate: '2026-07-13', weeksShown: 6, ...patch });
+  const DOWN_MON = '2026-08-03'; // idx 3 from 2026-07-13
+
+  it('still offers postpone on that Monday while nothing is logged', () => {
+    expect(downWeekControls(future(), {}, DOWN_MON).get(DOWN_MON)).toBe('postpone');
+    // …and undo, if it was already postponed.
+    expect(
+      downWeekControls(future({ downPostponed: [DOWN_MON] }), {}, DOWN_MON).get(DOWN_MON),
+    ).toBe('undo');
+  });
+
+  it('the window closes the moment a run is logged, or the day passes', () => {
+    const logged: RunState = {
+      [DOWN_MON]: { date: DOWN_MON, done: true, miles_actual: 4, updated_at: NOW },
+    };
+    expect(downWeekControls(future(), logged, DOWN_MON).get(DOWN_MON)).toBeUndefined();
+    expect(downWeekControls(future(), {}, '2026-08-04').get(DOWN_MON)).toBeUndefined();
+  });
+
+  // Canonical plan (startDate = PLAN_START_DATE): locked weeks normally splice
+  // the STATIC scaffold, whose down week sits in the fixed W4 slot — so the
+  // marker must override the splice or the postponement would vanish the moment
+  // the origin week locks.
+  const W123_DONE: RunState = Object.fromEntries(
+    [
+      ['2026-06-29', 4.0], ['2026-06-30', 4.0], ['2026-07-01', 4.0], ['2026-07-02', 3.5], ['2026-07-03', 4.5],
+      ['2026-07-06', 4.5], ['2026-07-07', 4.5], ['2026-07-08', 4.0], ['2026-07-09', 4.0], ['2026-07-10', 5.0],
+      ['2026-07-13', 5.0], ['2026-07-14', 5.0], ['2026-07-15', 5.0], ['2026-07-16', 4.5], ['2026-07-17', 5.5],
+    ].map(([d, m]) => [d, { date: d as string, done: true, miles_actual: m as number, updated_at: NOW }]),
+  );
+  const MONDAY = '2026-07-20'; // W4's own Monday — the canonical cadence down week
+
+  it('a marker set on the blank Monday reshapes the CURRENT (locked) week', () => {
+    const before = resolveEffectivePlan(raw({ weeksShown: 7 }), W123_DONE, MONDAY).plan.weeks;
+    expect(before[3].isDownWeek).toBe(true); // static W4 down splice
+
+    const after = resolveEffectivePlan(
+      raw({ weeksShown: 7, downPostponed: [MONDAY] }), W123_DONE, MONDAY,
+    ).plan.weeks;
+    expect(after[3].isDownWeek).toBe(false);
+    expect(after[3].totalPlanned).toBeGreaterThan(25); // builds past locked W3
+    expect(after[4].isDownWeek).toBe(true);            // landing takes the cut
+    expect(after[4].totalPlanned).toBeLessThan(after[3].totalPlanned);
+  });
+
+  it('the postponed shape survives once runs are logged (marker permanence)', () => {
+    const rs: RunState = {
+      ...W123_DONE,
+      [MONDAY]: { date: MONDAY, done: true, miles_actual: 5.5, updated_at: NOW },
+    };
+    const weeks = resolveEffectivePlan(
+      raw({ weeksShown: 7, downPostponed: [MONDAY] }), rs, '2026-07-21',
+    ).plan.weeks;
+    expect(weeks[3].isDownWeek).toBe(false); // still the build the athlete committed to
+    expect(weeks[4].isDownWeek).toBe(true);
+    // …but the control is gone: the decision is locked in.
+    expect(
+      downWeekControls(raw({ weeksShown: 7, downPostponed: [MONDAY] }), rs, '2026-07-21').get(MONDAY),
+    ).toBeUndefined();
+  });
+});
+
 describe('generator honors postponements (from-actuals proposals)', () => {
   function run(date: string, miles: number, extra: Partial<RunState[string]> = {}): RunState[string] {
     return { date, done: true, miles_actual: miles, updated_at: date + 'T12:00:00Z', ...extra };

@@ -37,6 +37,22 @@ export function isWeekLocked(weekStart: string, runState: RunState, today: strin
   return false;
 }
 
+/**
+ * A week is REPLANNABLE on its own Monday: today IS that Monday and nothing in
+ * the week has been logged yet. The one sanctioned exception to the week lock,
+ * and only the down-week postpone flow uses it — the athlete wakes up on the
+ * down week's Monday, remembers the trip, and moves it before running a step.
+ * The moment anything is logged (or the day passes) the window closes.
+ */
+export function isMondayReplannable(weekStart: string, runState: RunState, today: string): boolean {
+  if (today !== weekStart) return false;
+  const weekEnd = addDaysStr(weekStart, 6);
+  for (const e of Object.values(runState)) {
+    if (e.date >= weekStart && e.date <= weekEnd && (e.done || e.miles_actual != null)) return false;
+  }
+  return true;
+}
+
 export interface ResolvedPlan {
   plan: BuiltPlan;
   /** weekStart → whether that week came from the static plan, settings, or a
@@ -179,6 +195,19 @@ export function resolveEffectivePlan(
       resumeApplied = true;
     }
     prevSeason = thisSeason;
+    // A postponement marker OVERRIDES the static splice for the weeks it
+    // touches (the postponed origin and its landing). The static scaffold has
+    // its down weeks in fixed slots, so once the athlete moves one, splicing
+    // WEEK_CONFIGS[i] would show the OLD down week the moment the origin week
+    // locks — the postponement would silently vanish mid-week. Touched weeks
+    // are instead engine-generated even while locked (identity mod, same as
+    // every locked week in the reseeded case): markers are only settable while
+    // the week is future or still a blank Monday, so the engine deterministically
+    // reproduces exactly what the athlete committed to, all week long.
+    const idDownEvery = Math.max(2, Math.round(eff.downEvery));
+    const slotHere = downSlot(i, idDownEvery, eff);
+    const markerTouched = slotHere === 'postponed' || slotHere === 'landing';
+
     // The static WEEK_CONFIGS scaffold is the frozen "originally prescribed"
     // value ONLY for the canonical plan whose start aligns with PLAN_START_DATE.
     // Once settings reseed the start date (Return-from-break re-anchors it to a
@@ -188,7 +217,7 @@ export function resolveEffectivePlan(
     // trajectory upward. In the reseeded case a locked week instead keeps the
     // value the settings engine generates for it (the reseeded baseline), never
     // the display-index static fallback.
-    const staticCfg = eff.startDate === PLAN_START_DATE ? WEEK_CONFIGS[i] : undefined;
+    const staticCfg = !markerTouched && eff.startDate === PLAN_START_DATE ? WEEK_CONFIGS[i] : undefined;
 
     // Break Mode cuts UNLOCKED future weeks first — a paused plan projects
     // nothing past breakStart, accepted or not (break flows also clear
@@ -274,8 +303,10 @@ export function resolveEffectivePlan(
 
 // ── Postpone-a-down-week controls ─────────────────────────────
 // Which displayed weeks may offer a down-week action right now. Offered ONLY on
-// FUTURE, UNLOCKED, engine-generated weeks (never on a week that has started,
-// has a logged run, or was explicitly accepted):
+// FUTURE, UNLOCKED, engine-generated weeks — with ONE exception: the week's own
+// Monday, before anything is logged (isMondayReplannable), stays actionable, so
+// waking up on the down week's first day and moving it is still possible. Never
+// offered once a run is logged or the week was explicitly accepted:
 //   'postpone' — an on-cadence scheduled down week that may move one week later
 //                (its landing week must be equally free to receive the cut)
 //   'undo'     — an origin week whose down was postponed; undo moves it back
@@ -309,7 +340,7 @@ export function downWeekControls(
     if (opts?.breakStart && ws >= opts.breakStart) break;
     const slot = downSlot(i, downEvery, eff);
     if (slot !== 'down' && slot !== 'postponed') continue;
-    if (isWeekLocked(ws, runState, today)) continue;
+    if (isWeekLocked(ws, runState, today) && !isMondayReplannable(ws, runState, today)) continue;
     if (accepted?.[ws]?.length) continue;
     if (slot === 'down') {
       const landing = addDaysStr(ws, 7);
