@@ -91,7 +91,7 @@ export default function WeekAccordion({ week, runState, today, defaultOpen, onUp
             <div className="mx-2 mt-1.5 mb-1 flex items-center gap-2 rounded-lg border border-sky-900/50 bg-sky-950/20 px-3 py-2">
               <p className="flex-1 text-[11px] leading-snug text-slate-400">
                 {downAction === 'postpone'
-                  ? 'Scheduled down week. Need to build this week instead (trip coming up, etc.)? Push it one week — next week takes the cut off the higher build, and the plan resumes from there.'
+                  ? 'Scheduled down week. Need to build this week instead (trip coming up, etc.)? Push it one week — next week takes the cut off the higher build, and later down weeks count from the moved one.'
                   : 'This down week is postponed: this week builds, next week absorbs. Change of plan?'}
               </p>
               <button

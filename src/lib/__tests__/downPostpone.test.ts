@@ -60,7 +60,10 @@ describe('downSlot — the postponement-aware cadence', () => {
     expect(downSlot(3, 4, eff)).toBe('postponed');
     expect(downSlot(4, 4, eff)).toBe('landing');
     expect(downSlot(5, 4, eff)).toBe('none');
-    expect(downSlot(7, 4, eff)).toBe('down'); // next occurrence untouched
+    // Recovery-anchored cadence: the next down counts downEvery weeks from the
+    // ACTUAL (moved) down week — idx 4 + 4 = idx 8, not the old grid's idx 7.
+    expect(downSlot(7, 4, eff)).toBe('none');
+    expect(downSlot(8, 4, eff)).toBe('down');
   });
 
   it('a marker on a non-cadence Monday is inert', () => {
@@ -92,7 +95,7 @@ describe('postponing a scheduled down week (engine)', () => {
     const t = totals(cfgs);
     const tb = totals(base);
 
-    expect(downs(cfgs)).toEqual([false, false, false, false, true, false, false, true]);
+    expect(downs(cfgs)).toEqual([false, false, false, false, true, false, false, false]);
     expect(cfgs[4].note).toBe('down week');
 
     // Origin builds past the prior build week.
@@ -106,8 +109,12 @@ describe('postponing a scheduled down week (engine)', () => {
     // The week after the landing resumes ABOVE the origin build (trajectory
     // survived the dip — no re-baselining).
     expect(t[5]).toBeGreaterThan(t[3]);
-    // The untouched later occurrence still lands where it always did.
-    expect(cfgs[7].isDownWeek).toBe(true);
+    // Recovery-anchored: the NEXT down counts 4 weeks from the moved down week
+    // (idx 4 → idx 8), giving one 5-week cycle then normal 4-week cycles.
+    const longer = buildWeekConfigsFromSettings(raw({ downPostponed: [ORIGIN] }), 13);
+    expect(downs(longer)).toEqual(
+      [false, false, false, false, true, false, false, false, true, false, false, false, true],
+    );
   });
 
   it('one-step only: marking the landing too changes nothing further', () => {
@@ -117,9 +124,30 @@ describe('postponing a scheduled down week (engine)', () => {
     expect(downs(twice)).toEqual(downs(once));
   });
 
-  it('each occurrence postpones independently', () => {
-    const cfgs = buildWeekConfigsFromSettings(raw({ downPostponed: [ORIGIN, '2026-08-17'] }), 10);
-    expect(downs(cfgs)).toEqual([false, false, false, false, true, false, false, false, true, false]);
+  it('each occurrence postpones independently (on the shifted cadence)', () => {
+    // After postponing idx 3 → 4, the next cycle's down is idx 8 (2026-08-24).
+    // Postponing THAT one too moves it to idx 9; the cycle after counts from 9.
+    const cfgs = buildWeekConfigsFromSettings(raw({ downPostponed: [ORIGIN, '2026-08-24'] }), 12);
+    expect(downs(cfgs)).toEqual(
+      [false, false, false, false, true, false, false, false, false, true, false, false],
+    );
+    // A marker on the OLD grid's idx 7 Monday (2026-08-17) is no longer a
+    // scheduled down under the shifted cadence → inert.
+    const stale = buildWeekConfigsFromSettings(raw({ downPostponed: [ORIGIN, '2026-08-17'] }), 12);
+    const justOne = buildWeekConfigsFromSettings(raw({ downPostponed: [ORIGIN] }), 12);
+    expect(downs(stale)).toEqual(downs(justOne));
+  });
+
+  it('body-signal easing withholds the postpone offer (undo stays available)', () => {
+    const TODAY = '2026-07-08';
+    const future = raw({ startDate: '2026-07-13', weeksShown: 6 });
+    const easing = { growthFactor: 0.85, downEvery: 4 };
+    // Clean signals → postpone offered; easing signals → withheld.
+    expect(downWeekControls(future, {}, TODAY, { modulation: { growthFactor: 1, downEvery: 4 } }).get('2026-08-03')).toBe('postpone');
+    expect(downWeekControls(future, {}, TODAY, { modulation: easing }).get('2026-08-03')).toBeUndefined();
+    // Undo only ADDS recovery, so it survives an easing signal.
+    const marked = raw({ startDate: '2026-07-13', weeksShown: 6, downPostponed: ['2026-08-03'] });
+    expect(downWeekControls(marked, {}, TODAY, { modulation: easing }).get('2026-08-03')).toBe('undo');
   });
 
   it('adaptive tightening of the cadence makes markers inert (safety wins)', () => {

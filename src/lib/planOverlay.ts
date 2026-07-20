@@ -334,6 +334,12 @@ export function downWeekControls(
   // Same cadence resolution as stepWeek: adaptation may only tighten (min).
   const downEvery = Math.max(2, Math.round(mod ? Math.min(eff.downEvery, mod.downEvery) : eff.downEvery));
   const accepted = opts?.acceptedWeeks ?? null;
+  // Research guardrail: postponing is for LOGISTICS (a trip), never for pushing
+  // through warnings. While any body-response signal is actively easing the
+  // plan (growth eased, or the long-run ladder held), the postpone offer is
+  // withheld — the athlete who most needs the absorption week cannot defer it.
+  // UNDO stays available: restoring an earlier down week only adds recovery.
+  const bodyEasing = !!mod && (mod.growthFactor < 1 - 1e-9 || mod.holdLong === true);
 
   for (let i = 0; i < weeksN; i++) {
     const ws = addDaysStr(eff.startDate, i * 7);
@@ -343,6 +349,7 @@ export function downWeekControls(
     if (isWeekLocked(ws, runState, today) && !isMondayReplannable(ws, runState, today)) continue;
     if (accepted?.[ws]?.length) continue;
     if (slot === 'down') {
+      if (bodyEasing) continue;
       const landing = addDaysStr(ws, 7);
       if (isWeekLocked(landing, runState, today)) continue;
       if (accepted?.[landing]?.length) continue;

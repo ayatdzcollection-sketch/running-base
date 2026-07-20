@@ -200,14 +200,16 @@ export interface RawSettings {
    *  original behavior (maintain forever). An end date BEFORE the start is
    *  ignored as a typo rather than cancelling a real season — see seasonWindow(). */
   xcEndDate?: string | null;
-  /** Mondays (YYYY-MM-DD) of SCHEDULED cadence down weeks the athlete pushed one
-   *  week later (e.g. build before a trip, absorb during it). Each entry moves
-   *  that one occurrence: the origin week builds normally and the FOLLOWING week
+  /** Mondays (YYYY-MM-DD) of SCHEDULED down weeks the athlete pushed one week
+   *  later (e.g. build before a trip, absorb during it). Each entry moves that
+   *  one occurrence: the origin week builds normally and the FOLLOWING week
    *  takes the down cut — off the new, higher trajectory, so the dip stays a
-   *  true ~85% of the last real build. Structurally one-step only: a landing
-   *  week's Monday is never itself a cadence Monday, so markers can't chain.
-   *  Entries that don't match a cadence Monday are inert (e.g. after the
-   *  adaptive layer tightens downEvery — the tightened, safer cadence wins).
+   *  true ~85% of the last real build. The cadence is RECOVERY-ANCHORED: the
+   *  next down week counts `downEvery` weeks from the ACTUAL (moved) down week
+   *  (one 4-build cycle, then normal cycles — see downSlot). Structurally
+   *  one-step only: a landing week can never itself be postponed. Entries that
+   *  don't match a scheduled down Monday are inert (e.g. after the adaptive
+   *  layer tightens downEvery — the tightened, safer cadence wins).
    *  Absent/empty = identity. */
   downPostponed?: string[];
   startMpw: number;      // first week's miles

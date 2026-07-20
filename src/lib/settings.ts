@@ -398,41 +398,44 @@ function clampGrowth(f: number): number {
   return Number.isFinite(f) ? Math.max(0, Math.min(1, f)) : 1;
 }
 
-/**
- * Is week `j` on the SCHEDULED down (absorption) cadence? Every `downEvery`th
- * week (excluding the very first). The rolling model has no "final week" — the
- * plan keeps going — so the cadence is uniform. The generator layers pain-driven
- * down weeks dynamically on top of the cadence.
- */
-function isCadenceDownIdx(j: number, downEvery: number): boolean {
-  return j > 0 && (j + 1) % downEvery === 0;
-}
-
 /** What week `j` is under the down-week cadence once postponements apply.
- *   'down'      — on-cadence scheduled down week (not postponed)
- *   'postponed' — on-cadence Monday the athlete pushed one week later: this
+ *   'down'      — a scheduled down week (not postponed)
+ *   'postponed' — a scheduled Monday the athlete pushed one week later: this
  *                 week BUILDS normally; the next week takes the cut
  *   'landing'   — the week AFTER a postponed Monday: the moved down week
  *   'none'      — an ordinary week
- * One-step by construction: a landing index is never itself on cadence (its
- * cadence check is `j % downEvery === 0`, mutually exclusive with
- * `(j+1) % downEvery === 0` for downEvery ≥ 2), so a postponed down week can
- * never be postponed again — markers on non-cadence Mondays are inert.
- * Deliberately ~4 consecutive builds max at the default cadence: shifting one
- * occurrence turns a 3:1 build:absorb cycle into a 4:1 once — still inside the
- * classic 3–4-week mesocycle envelope, never beyond it. */
+ *
+ * The cadence is RECOVERY-ANCHORED, not calendar-anchored: each next down week
+ * is scheduled `downEvery` weeks after the ACTUAL (possibly moved) down week,
+ * so postponing one occurrence gives a single 4-build cycle and then normal
+ * cycles counted from the moved week. That is how the coaching literature
+ * defines a mesocycle — N build weeks ENDING in the recovery week, next block
+ * counts from there (McMillan's up/down cycles; Friel's 2–5-week recovery
+ * spacing; Bell's deloads "positioned between two blocks") — a calendar
+ * snap-back after a moved recovery week has no published basis.
+ *
+ * One-step by construction: a landing week is decided by its origin's marker,
+ * never consulted for its own — so a moved down week can never be moved again
+ * (max 4 consecutive builds per cycle) and markers on Mondays that are not a
+ * scheduled down are inert (e.g. after the adaptive layer tightens downEvery —
+ * the tightened, safer cadence wins). */
 export type DownSlot = 'none' | 'down' | 'postponed' | 'landing';
 
 export function downSlot(j: number, downEvery: number, eff: EffectiveSettings): DownSlot {
   const postponed = eff.downPostponed;
-  const onCadence = isCadenceDownIdx(j, downEvery);
-  if (!postponed || postponed.length === 0) return onCadence ? 'down' : 'none';
-  if (onCadence) {
-    return postponed.includes(addDaysStr(eff.startDate, j * 7)) ? 'postponed' : 'down';
-  }
-  if (isCadenceDownIdx(j - 1, downEvery)
-      && postponed.includes(addDaysStr(eff.startDate, (j - 1) * 7))) {
-    return 'landing';
+  const moved = (idx: number) =>
+    !!postponed && postponed.length > 0 && postponed.includes(addDaysStr(eff.startDate, idx * 7));
+  // Walk cycle by cycle from the block start. `due` is where the cadence puts
+  // the next down week; a marker there moves the ACTUAL down one week later,
+  // and the following cycle counts downEvery weeks from that actual week.
+  // Identity (no markers) reproduces the original every-Nth grid exactly.
+  let due = downEvery - 1;
+  while (due <= j) {
+    const m = moved(due);
+    const actual = m ? due + 1 : due;
+    if (j === due && m) return 'postponed';
+    if (j === actual) return m ? 'landing' : 'down';
+    due = actual + downEvery;
   }
   return 'none';
 }

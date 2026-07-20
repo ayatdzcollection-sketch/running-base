@@ -246,11 +246,17 @@ describe('engine stress — the pure scaffold builder never yields a nonsensical
       const trailingLongest = pick(2, 18, 0.5);
       const startDate = '2026-06-29';
       const xcOff = Math.round((rnd() * 130 - 14));
-      // Random marker set: cadence Mondays (each with 50% chance), plus the
-      // occasional junk entry that must be inert.
+      // Random marker set walked along the RECOVERY-ANCHORED cadence (each
+      // occurrence postponed with 50% chance shifts every later occurrence,
+      // mirroring downSlot), plus the occasional junk entry that must be inert.
       const downPostponed: string[] = [];
-      for (let j = 1; j < weeksShown + 2; j++) {
-        if ((j + 1) % downEvery === 0 && rnd() < 0.5) downPostponed.push(addDaysStr(startDate, j * 7));
+      {
+        let due = downEvery - 1;
+        while (due < weeksShown + 2) {
+          const moved = rnd() < 0.5;
+          if (moved) downPostponed.push(addDaysStr(startDate, due * 7));
+          due = (moved ? due + 1 : due) + downEvery;
+        }
       }
       if (rnd() < 0.2) downPostponed.push(addDaysStr(startDate, 7 * Math.round(rnd() * 12) + 1)); // not a Monday-of-cadence
       if (rnd() < 0.2) downPostponed.push('garbage-not-a-date');
