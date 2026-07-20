@@ -227,6 +227,45 @@ describe('engine stress — the pure scaffold builder never yields a nonsensical
     expect(bad.slice(0, 15)).toEqual([]);
   });
 
+  it('seeded fuzz with random down-week POSTPONEMENTS (2000 combos) stays sane', () => {
+    // Postpone markers can only shift one cadence occurrence one week later.
+    // Whatever subset of occurrences is postponed — including garbage Mondays,
+    // landing Mondays, and every occurrence at once — every sanity invariant
+    // must still hold (dips never collapse, builds never spike past +10%,
+    // notes stay bounded, peak stays a ceiling).
+    const rnd = mulberry32(0xD0DE);
+    const pick = (lo: number, hi: number, q = 0.5) => Math.round((lo + rnd() * (hi - lo)) / q) * q;
+    const bad: string[] = [];
+    for (let k = 0; k < 2000; k++) {
+      const startMpw = pick(6, 90, 1);
+      const peakMpw = Math.max(pick(8, 120, 1), startMpw);
+      const buildStep = pick(0, 8, 0.5);
+      const downEvery = pick(2, 7, 1);
+      const weeksShown = pick(2, 12, 1);
+      const daysPerWeek = pick(3, 6, 1);
+      const trailingLongest = pick(2, 18, 0.5);
+      const startDate = '2026-06-29';
+      const xcOff = Math.round((rnd() * 130 - 14));
+      // Random marker set: cadence Mondays (each with 50% chance), plus the
+      // occasional junk entry that must be inert.
+      const downPostponed: string[] = [];
+      for (let j = 1; j < weeksShown + 2; j++) {
+        if ((j + 1) % downEvery === 0 && rnd() < 0.5) downPostponed.push(addDaysStr(startDate, j * 7));
+      }
+      if (rnd() < 0.2) downPostponed.push(addDaysStr(startDate, 7 * Math.round(rnd() * 12) + 1)); // not a Monday-of-cadence
+      if (rnd() < 0.2) downPostponed.push('garbage-not-a-date');
+      const eff = rawFrom({
+        startDate, startMpw, peakMpw, buildStep, downEvery, weeksShown, daysPerWeek, trailingLongest,
+        xcStartDate: addDaysStr(startDate, xcOff), downPostponed,
+      });
+      const cfgs = buildWeekConfigsFromSettings(eff);
+      const days = Math.round(Math.min(6, Math.max(3, daysPerWeek)));
+      const v = violations(fromConfigs(cfgs), peakMpw, days);
+      if (v.length) bad.push(`#${k} [start${startMpw} peak${peakMpw} step${buildStep} down${downEvery} wk${weeksShown} d${daysPerWeek} post:${downPostponed.join(',')}] ${v.slice(0, 2).join('; ')}`);
+    }
+    expect(bad.slice(0, 15)).toEqual([]);
+  });
+
   it('adversarial edge cases produce a sane (possibly flat) plan, never garbage', () => {
     const edges: Partial<RawSettings>[] = [
       { startMpw: 8, peakMpw: 8, weeksShown: 1, daysPerWeek: 3, buildStep: 4, trailingLongest: 2 },

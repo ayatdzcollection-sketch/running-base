@@ -70,6 +70,32 @@ export const TUNABLES = {
    *  this the athlete has evidently moved on and the nag is just noise. */
   SEASON_BREAK_PROMPT_WINDOW_DAYS: 21,
 
+  // ── Missed training days (evidence: absorb, never make up) ─
+  // Coaching consensus is unanimous that missed easy days in base building are
+  // SKIPPED, not repaid — redistributing or "making up on the weekend" is the
+  // classic injury vector (Koop/CTS; RunnersConnect; CARA; Runnin' for Sweets).
+  // 1–3 missed easy runs: resume as written, make up nothing. A substantially
+  // missed week re-enters REDUCED (~70–90% of schedule per RunnersConnect /
+  // Breaking Muscle; −10%/week missed per Runnin' for Sweets) and rebuilds from
+  // there — the rolling trajectory then recovers the goal on its own schedule.
+  MISSED: {
+    /** A completed week that ran below this fraction of its prescription was
+     *  substantially missed → the next generated week re-anchors (re-entry).
+     *  At/above it the shortfall is noise ("80% completion is enough") and the
+     *  plan continues unchanged. */
+    REENTRY_TRIGGER: 0.6,
+    /** Re-entry floor as a fraction of the pre-shortfall build trajectory. The
+     *  re-anchored week is max(actual × WEEKLY_GROWTH_MAX, this × trajectory) —
+     *  the middle of the published 70–90% re-entry band, and never ABOVE the
+     *  trajectory the plan already had (downward-only). */
+    REENTRY_FLOOR: 0.8,
+    /** Missing at most this many run days in a week is "resume as planned":
+     *  skip them, never redistribute (RunnersConnect: "For one to three missed
+     *  runs, do not make them up" — we advise at 3+ because at 3 of 5 days the
+     *  week also crosses REENTRY_TRIGGER territory). */
+    RESUME_MAX_MISSED: 2,
+  },
+
   /** Peak-seeking reference horizon (weeks). Each build week closes ~1/N of the
    *  remaining gap to peakMpw, so raising/lowering the peak visibly reshapes the
    *  future — but this N is a FIXED constant, NOT the display window, so

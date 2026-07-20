@@ -14,9 +14,14 @@ interface Props {
   /** Phase 2D: optional speed add-on lines, keyed by date. Display-only —
    *  they never change a day's miles and skipping one is never a failure. */
   speedAddOns?: Map<string, PlanSpeedAddOn>;
+  /** Postpone-a-down-week control for this week (planOverlay.downWeekControls):
+   *  'postpone' on a future scheduled down week, 'undo' on an origin week whose
+   *  down was already moved one week later. Absent = no control shown. */
+  downAction?: 'postpone' | 'undo' | null;
+  onDownAction?: () => void;
 }
 
-export default function WeekAccordion({ week, runState, today, defaultOpen, onUpdate, painCap, speedState, speedAddOns }: Props) {
+export default function WeekAccordion({ week, runState, today, defaultOpen, onUpdate, painCap, speedState, speedAddOns, downAction, onDownAction }: Props) {
   const [open, setOpen] = useState(defaultOpen);
 
   // Compute week totals
@@ -51,6 +56,9 @@ export default function WeekAccordion({ week, runState, today, defaultOpen, onUp
           {week.isDownWeek && (
             <span className="tag tag-sky text-[10px] px-1.5 py-0.5">↓ down</span>
           )}
+          {downAction === 'undo' && (
+            <span className="tag tag-sky text-[10px] px-1.5 py-0.5">down moved →</span>
+          )}
           {week.note === 'peak' && (
             <span className="tag tag-amber text-[10px] px-1.5 py-0.5">peak</span>
           )}
@@ -78,6 +86,23 @@ export default function WeekAccordion({ week, runState, today, defaultOpen, onUp
       {/* Body */}
       {open && (
         <div className="border-t border-border px-1 py-1 space-y-0.5">
+          {/* Postpone / restore a scheduled down week (future, unlocked only) */}
+          {downAction && onDownAction && (
+            <div className="mx-2 mt-1.5 mb-1 flex items-center gap-2 rounded-lg border border-sky-900/50 bg-sky-950/20 px-3 py-2">
+              <p className="flex-1 text-[11px] leading-snug text-slate-400">
+                {downAction === 'postpone'
+                  ? 'Scheduled down week. Need to build this week instead (trip coming up, etc.)? Push it one week — next week takes the cut off the higher build, and the plan resumes from there.'
+                  : 'This down week is postponed: this week builds, next week absorbs. Change of plan?'}
+              </p>
+              <button
+                onClick={onDownAction}
+                className="shrink-0 rounded-md border border-sky-700 px-2.5 py-1.5 text-[11px] text-sky-300 hover:border-sky-500 transition"
+              >
+                {downAction === 'postpone' ? 'Postpone ↷' : 'Move back'}
+              </button>
+            </div>
+          )}
+
           {/* Column header */}
           <div className="flex items-center gap-3 px-3 py-1 text-[10px] text-slate-600 uppercase tracking-wider">
             <div className="w-8">Day</div>

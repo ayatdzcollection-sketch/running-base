@@ -13,7 +13,8 @@ import {
 } from './lib/storage';
 import { hasSupabase } from './lib/supabase';
 import { getAward, todayStr, PLAN_START_DATE, HR } from './config/plan';
-import { resolveEffectivePlan, planTotalMiles, isOnBreak } from './lib/planOverlay';
+import { resolveEffectivePlan, planTotalMiles, isOnBreak, downWeekControls } from './lib/planOverlay';
+import { assessMissedDays } from './lib/missedDays';
 import { assessPeakFeasibility } from './lib/feasibility';
 import { clampWeeksShown, defaultSettings, effectiveSettings, returnFromBreak } from './lib/settings';
 import { FLAGS } from './config/flags';
@@ -52,6 +53,7 @@ import WeeklyCheckin from './components/WeeklyCheckin';
 import ShoeTracker from './components/ShoeTracker';
 import CoachNotes from './components/CoachNotes';
 import HeatEffort from './components/HeatEffort';
+import MissedDaysCard from './components/MissedDaysCard';
 
 /** Replace an item with a matching id, or append it. Used by the shoe store. */
 function upsertById<T extends { id: string }>(list: T[], item: T): T[] {
@@ -121,6 +123,11 @@ export default function App() {
     : 0;
   const planCount = settings ? Math.max(clampWeeksShown(settings.weeksShown), weeksToToday) : undefined;
   const { plan } = resolveEffectivePlan(settings, runState, today, {
+    breakStart, modulation: adaptiveMod, acceptedWeeks: globals.acceptedWeeks, count: planCount,
+  });
+  // Which future weeks may offer "postpone the down week" / undo right now.
+  // Purely a settings edit when tapped; the engine applies markers itself.
+  const downControls = downWeekControls(settings, runState, today, {
     breakStart, modulation: adaptiveMod, acceptedWeeks: globals.acceptedWeeks, count: planCount,
   });
   const award = getAward(settings);
@@ -313,6 +320,22 @@ export default function App() {
   const saveLayout = useCallback(
     (order: BlockId[], off: BlockId[]) => updateSettings({ layoutOrder: order, layoutOff: off }),
     [updateSettings],
+  );
+
+  // Postpone / restore a scheduled down week. Just a settings edit: the engine
+  // reads downPostponed deterministically, so both the rolling plan and the
+  // week generator shift the same occurrence. Offered only where
+  // downWeekControls says it is currently valid (future + unlocked + unaccepted).
+  const handleDownAction = useCallback(
+    (weekStart: string, action: 'postpone' | 'undo') => {
+      const cur = globals.settings?.downPostponed ?? [];
+      updateSettings({
+        downPostponed: action === 'postpone'
+          ? (cur.includes(weekStart) ? cur : [...cur, weekStart])
+          : cur.filter(d => d !== weekStart),
+      });
+    },
+    [globals.settings, updateSettings],
   );
 
   // "Rebuild upcoming plan": discard any confirmed draft future weeks and
@@ -571,8 +594,17 @@ export default function App() {
             hrBand={hrBand} hrHardCap={hrHardCap} todaySpeed={todaySpeed}
           />
         );
-      case 'week':
-        return <WeekProgress runState={runState} plan={plan} today={today} week={todayWeek} blockTotalTarget={blockTotalTarget} />;
+      case 'week': {
+        // Missed-day advisory rides with the week block: it appears only while
+        // the current week has missed run days, and never adds miles anywhere.
+        const missed = assessMissedDays(todayWeek, runState, today, { flare });
+        return (
+          <div className="space-y-2">
+            <WeekProgress runState={runState} plan={plan} today={today} week={todayWeek} blockTotalTarget={blockTotalTarget} />
+            {missed && <MissedDaysCard a={missed} />}
+          </div>
+        );
+      }
       case 'hipspeed':
         return (
           <HipSpeedStatus
@@ -607,14 +639,19 @@ export default function App() {
         return (
           <div className="space-y-2">
             <BonusDayCard day={plan.bonusDay} entry={runState[plan.bonusDay.date]} today={today} onUpdate={updateEntry} />
-            {plan.weeks.map(week => (
-              <WeekAccordion
-                key={week.weekNum} week={week} runState={runState} today={today}
-                defaultOpen={week.allDays.some(d => d.date === today)}
-                onUpdate={updateEntry} painCap={globals.painCap} speedState={globals.speedState}
-                speedAddOns={planWeekSpeedAddOns(week, runState, globals, today)}
-              />
-            ))}
+            {plan.weeks.map(week => {
+              const downAction = downControls.get(week.startDate) ?? null;
+              return (
+                <WeekAccordion
+                  key={week.weekNum} week={week} runState={runState} today={today}
+                  defaultOpen={week.allDays.some(d => d.date === today)}
+                  onUpdate={updateEntry} painCap={globals.painCap} speedState={globals.speedState}
+                  speedAddOns={planWeekSpeedAddOns(week, runState, globals, today)}
+                  downAction={downAction}
+                  onDownAction={downAction ? () => handleDownAction(week.startDate, downAction) : undefined}
+                />
+              );
+            })}
           </div>
         );
       case 'nextweek':

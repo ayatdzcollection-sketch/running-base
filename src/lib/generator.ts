@@ -181,16 +181,31 @@ export function generateNextWeek({ runState, planContext, globals, today, settin
     buildsSinceDown++;
   }
   const painSpike = flare;
+  // Postponed down weeks (settings.downPostponed, keyed by the ORIGIN Monday).
+  // The proposal honors the same one-week shift the rolling plan applies: an
+  // origin week keeps building (the cadence trigger is suppressed), and the
+  // week after an origin Monday takes the cut instead. A pain spike ALWAYS
+  // wins — postponement can defer a scheduled absorption, never a deload the
+  // body just asked for.
+  const postponedList = settings?.downPostponed ?? [];
+  const postponedAway = postponedList.includes(weekStart);
+  const postponedHere = postponedList.includes(addDaysStr(weekStart, -7));
   // Never two cadence-driven down weeks in a row (a flare can still force
   // one). Structurally the counter already resets after a detected down week;
   // the explicit guard keeps the invariant even if detection semantics drift.
-  const isDownWeek = painSpike || (buildsSinceDown >= downEvery && !lastWeekIsDown);
+  const cadenceDown = (buildsSinceDown >= downEvery || postponedHere) && !lastWeekIsDown && !postponedAway;
+  const isDownWeek = painSpike || cadenceDown;
+  if (postponedAway && !painSpike && buildsSinceDown >= downEvery) {
+    notes.push('Scheduled down week postponed by you: building through this week; next week takes the absorption cut instead.');
+  }
   if (isDownWeek) {
     baseVolume = baseVolume * (1 - TUNABLES.DOWN_WEEK_CUT);
     notes.push(
       painSpike
         ? 'Deload week: recent pain spike. Volume cut ~25–30%; recovery is the work.'
-        : `Down week auto-inserted after ${buildsSinceDown} consecutive build weeks. Volume cut ~25–30%, long run held.`,
+        : postponedHere
+          ? 'Down week (moved here by you): the postponed absorption week lands now. Volume cut ~25–30%, long run held.'
+          : `Down week auto-inserted after ${buildsSinceDown} consecutive build weeks. Volume cut ~25–30%, long run held.`,
     );
   }
 

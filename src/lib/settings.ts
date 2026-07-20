@@ -139,6 +139,11 @@ export function migrateSettings(raw: unknown, nowIso: string): RawSettings | nul
     // open-ended season they already had. A blank string normalizes to null.
     xcEndDate: typeof raw.xcEndDate === 'string' && raw.xcEndDate ? raw.xcEndDate : null,
     seasons: migrateSeasons(raw),
+    // Additive + optional: absent = no postponements (identity). Garbage entries
+    // are dropped; a non-cadence Monday is inert downstream anyway (downSlot).
+    downPostponed: Array.isArray(raw.downPostponed)
+      ? raw.downPostponed.filter((x): x is string => typeof x === 'string' && !!x)
+      : undefined,
     startMpw: num(raw.startMpw, d.startMpw),
     peakMpw: num(raw.peakMpw, d.peakMpw),
     buildStep: num(raw.buildStep, d.buildStep),
@@ -394,13 +399,42 @@ function clampGrowth(f: number): number {
 }
 
 /**
- * Is week `j` a SCHEDULED down (absorption) week? Every `downEvery`th week
- * (excluding the very first). The rolling model has no "final week" — the plan
- * keeps going — so the cadence is uniform. The generator layers pain-driven
+ * Is week `j` on the SCHEDULED down (absorption) cadence? Every `downEvery`th
+ * week (excluding the very first). The rolling model has no "final week" — the
+ * plan keeps going — so the cadence is uniform. The generator layers pain-driven
  * down weeks dynamically on top of the cadence.
  */
-function isScheduledDownIdx(j: number, downEvery: number): boolean {
+function isCadenceDownIdx(j: number, downEvery: number): boolean {
   return j > 0 && (j + 1) % downEvery === 0;
+}
+
+/** What week `j` is under the down-week cadence once postponements apply.
+ *   'down'      — on-cadence scheduled down week (not postponed)
+ *   'postponed' — on-cadence Monday the athlete pushed one week later: this
+ *                 week BUILDS normally; the next week takes the cut
+ *   'landing'   — the week AFTER a postponed Monday: the moved down week
+ *   'none'      — an ordinary week
+ * One-step by construction: a landing index is never itself on cadence (its
+ * cadence check is `j % downEvery === 0`, mutually exclusive with
+ * `(j+1) % downEvery === 0` for downEvery ≥ 2), so a postponed down week can
+ * never be postponed again — markers on non-cadence Mondays are inert.
+ * Deliberately ~4 consecutive builds max at the default cadence: shifting one
+ * occurrence turns a 3:1 build:absorb cycle into a 4:1 once — still inside the
+ * classic 3–4-week mesocycle envelope, never beyond it. */
+export type DownSlot = 'none' | 'down' | 'postponed' | 'landing';
+
+export function downSlot(j: number, downEvery: number, eff: EffectiveSettings): DownSlot {
+  const postponed = eff.downPostponed;
+  const onCadence = isCadenceDownIdx(j, downEvery);
+  if (!postponed || postponed.length === 0) return onCadence ? 'down' : 'none';
+  if (onCadence) {
+    return postponed.includes(addDaysStr(eff.startDate, j * 7)) ? 'postponed' : 'down';
+  }
+  if (isCadenceDownIdx(j - 1, downEvery)
+      && postponed.includes(addDaysStr(eff.startDate, (j - 1) * 7))) {
+    return 'landing';
+  }
+  return 'none';
 }
 
 /**
@@ -566,7 +600,14 @@ export function stepWeek(
   const downEvery = normDownEvery(mod ? Math.min(eff.downEvery, mod.downEvery) : eff.downEvery);
   // growthFactor scales the positive build increment only. Identity = 1.
   const growthFactor = mod ? clampGrowth(mod.growthFactor) : 1;
-  const isDown = isScheduledDownIdx(i, downEvery);
+  // Postponement-aware cadence: a 'postponed' origin week builds normally and
+  // its 'landing' week takes the cut instead — off the trajectory that now
+  // INCLUDES the origin week's build, so the dip stays ~85% of the last real
+  // build (a moved down week is never deeper OR shallower than a scheduled one).
+  // When the adaptive layer tightens downEvery, the cadence Mondays move and any
+  // stored marker simply goes inert — the tightened, safer cadence wins.
+  const slot = downSlot(i, downEvery, eff);
+  const isDown = slot === 'down' || slot === 'landing';
   const isMaint = isMaintenanceIdx(i, eff);
 
   let total: number;

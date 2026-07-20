@@ -20,7 +20,7 @@ import type { AdaptiveModulation } from './adaptive';
 import { TUNABLES } from '../config/tunables';
 import { mondayOf, addDaysStr, currentSeason } from './metrics';
 import {
-  effectiveSettings, stepWeek, clampWeeksShown, seasonResumeTraj,
+  effectiveSettings, stepWeek, clampWeeksShown, seasonResumeTraj, downSlot,
   type ClampNote, type StepCarry,
 } from './settings';
 
@@ -50,6 +50,25 @@ function configTotal(cfg: WeekConfig): number {
 }
 function configLong(cfg: WeekConfig): number {
   return cfg.miles[cfg.miles.length - 1];
+}
+
+/** Whole days between two YYYY-MM-DD strings (b − a). */
+function daysBetween(a: string, b: string): number {
+  return Math.round((Date.parse(b + 'T12:00:00Z') - Date.parse(a + 'T12:00:00Z')) / 86_400_000);
+}
+
+/** ACTUAL miles run against a displayed week: logged miles, with a done-but-
+ *  unmeasured day credited at its prescription (same read WeekProgress uses).
+ *  Feeds the missed-week re-entry judge, so a tap-done day never reads as 0. */
+function weekActualMiles(cfg: WeekConfig, weekStart: string, runState: RunState): number {
+  const weekEnd = addDaysStr(weekStart, 6);
+  let sum = 0;
+  for (const e of Object.values(runState)) {
+    if (e.date < weekStart || e.date > weekEnd) continue;
+    if (e.miles_actual != null) { sum += e.miles_actual; continue; }
+    if (e.done) sum += cfg.miles[daysBetween(weekStart, e.date)] ?? 0;
+  }
+  return sum;
 }
 
 /** A confirmed accepted week (GenerateWeek output) as a displayable WeekConfig.
@@ -134,6 +153,18 @@ export function resolveEffectivePlan(
   // anchor to yet, so those weeks keep projecting off the frozen trajectory.
   let prevSeason: Season | null = null;
   let resumeApplied = false;
+  // Missed-week re-entry state. The most recent fully COMPLETED week's actual
+  // miles vs its displayed prescription; consulted once, at the first future
+  // (unlocked) week — see the anchor below. A completed week at/above the
+  // trigger, or none at all, leaves the plan byte-identical.
+  let lastDone: { actual: number; prescribed: number } | null = null;
+  let reentryApplied = false;
+  // Returns the completed-week record (or null for a still-running week); the
+  // caller assigns it so TS control-flow analysis sees the mutation.
+  const doneRecord = (weekStart: string, cfg: WeekConfig) =>
+    addDaysStr(weekStart, 6) < today
+      ? { actual: weekActualMiles(cfg, weekStart, runState), prescribed: configTotal(cfg) }
+      : null;
 
   for (let i = 0; i < weeksN; i++) {
     const weekStart = addDaysStr(eff.startDate, i * 7);
@@ -165,6 +196,30 @@ export function resolveEffectivePlan(
     // (past/current or logged) always render so history is never dropped.
     if (!locked && opts?.breakStart && weekStart >= opts.breakStart) break;
 
+    // Missed-week RE-ENTRY anchor (downward-only), applied at most once, at the
+    // FIRST future (unlocked) week. When the most recent completed week ran
+    // below MISSED.REENTRY_TRIGGER of its prescription, the build does not leap
+    // back to the paper trajectory — it re-enters at
+    //   max(actual × WEEKLY_GROWTH_MAX, trajectory × REENTRY_FLOOR)
+    // (the published ~70–90% re-entry band; +10% over actuals when even that is
+    // lower), min'd with the existing trajectory so this can only ever LOWER a
+    // week. Missed easy days are never made up — this is the other half of that
+    // rule: after a substantially missed week, the resume is stepped, not a
+    // spike. An explicitly ACCEPTED first week is the athlete's confirmed
+    // prescription and is respected untouched (the attempt is still consumed —
+    // the shortfall informs exactly one boundary, never a later surprise).
+    if (!locked && !reentryApplied) {
+      reentryApplied = true;
+      if (!accepted?.[weekStart]?.length && lastDone && lastDone.prescribed > 0
+          && lastDone.actual / lastDone.prescribed < TUNABLES.MISSED.REENTRY_TRIGGER) {
+        const anchor = Math.max(
+          lastDone.actual * TUNABLES.WEEKLY_GROWTH_MAX,
+          carry.traj * TUNABLES.MISSED.REENTRY_FLOOR,
+        );
+        carry = { ...carry, traj: Math.min(carry.traj, anchor) };
+      }
+    }
+
     // A confirmed accepted week is the authoritative displayed prescription
     // for its week — it was what the athlete explicitly confirmed (and, for a
     // locked week, what they actually trained under). The volume/long-run
@@ -179,6 +234,7 @@ export function resolveEffectivePlan(
       startDates.push(weekStart);
       carry = { long: acceptedLong(accCfg), traj: isDown ? carry.traj : total };
       weekSource.set(weekStart, 'accepted');
+      lastDone = doneRecord(weekStart, accCfg) ?? lastDone;
       continue;
     }
 
@@ -196,6 +252,7 @@ export function resolveEffectivePlan(
         traj: staticCfg.isDownWeek ? carry.traj : configTotal(staticCfg),
       };
       weekSource.set(weekStart, 'static');
+      lastDone = doneRecord(weekStart, staticCfg) ?? lastDone;
       continue;
     }
 
@@ -206,12 +263,64 @@ export function resolveEffectivePlan(
     startDates.push(weekStart);
     carry = { long, traj };
     weekSource.set(weekStart, 'settings');
+    lastDone = doneRecord(weekStart, config) ?? lastDone;
   }
 
   // buildPlan assumes contiguous weeks from eff.startDate. That still holds:
   // we only skipped the TAIL (weeks past breakStart), never a middle week.
   const plan = buildPlan(configs, eff.startDate);
   return { plan, weekSource, clamps };
+}
+
+// ── Postpone-a-down-week controls ─────────────────────────────
+// Which displayed weeks may offer a down-week action right now. Offered ONLY on
+// FUTURE, UNLOCKED, engine-generated weeks (never on a week that has started,
+// has a logged run, or was explicitly accepted):
+//   'postpone' — an on-cadence scheduled down week that may move one week later
+//                (its landing week must be equally free to receive the cut)
+//   'undo'     — an origin week whose down was postponed; undo moves it back
+// The action itself is just a settings edit (downPostponed); the engine applies
+// markers deterministically, so history stays consistent once weeks lock.
+
+export type DownAction = 'postpone' | 'undo';
+
+export function downWeekControls(
+  raw: RawSettings | null,
+  runState: RunState,
+  today: string,
+  opts?: {
+    count?: number;
+    breakStart?: string | null;
+    modulation?: AdaptiveModulation | null;
+    acceptedWeeks?: Record<string, ProposedDay[]> | null;
+  },
+): Map<string, DownAction> {
+  const out = new Map<string, DownAction>();
+  if (!raw) return out;
+  const { eff } = effectiveSettings(raw, runState, today);
+  const weeksN = clampWeeksShown(opts?.count ?? eff.weeksShown);
+  const mod = opts?.modulation ?? null;
+  // Same cadence resolution as stepWeek: adaptation may only tighten (min).
+  const downEvery = Math.max(2, Math.round(mod ? Math.min(eff.downEvery, mod.downEvery) : eff.downEvery));
+  const accepted = opts?.acceptedWeeks ?? null;
+
+  for (let i = 0; i < weeksN; i++) {
+    const ws = addDaysStr(eff.startDate, i * 7);
+    if (opts?.breakStart && ws >= opts.breakStart) break;
+    const slot = downSlot(i, downEvery, eff);
+    if (slot !== 'down' && slot !== 'postponed') continue;
+    if (isWeekLocked(ws, runState, today)) continue;
+    if (accepted?.[ws]?.length) continue;
+    if (slot === 'down') {
+      const landing = addDaysStr(ws, 7);
+      if (isWeekLocked(landing, runState, today)) continue;
+      if (accepted?.[landing]?.length) continue;
+      out.set(ws, 'postpone');
+    } else {
+      out.set(ws, 'undo');
+    }
+  }
+  return out;
 }
 
 /** True when the athlete is currently on a training break (breakStart set). */
