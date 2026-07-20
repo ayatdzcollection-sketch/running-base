@@ -146,6 +146,13 @@ export const TUNABLES = {
     /** Tier 8 (VO₂/race) may only unlock in-season or within this many days
      *  before the season start ("in/near season"). */
     NEAR_SEASON_DAYS: 21,
+    /** Weekly neuromuscular-touch AIM ("this week, aim for N sets of
+     *  buildups/strides"). A display target only — it feeds no gate, cap, or
+     *  unlock, and skipping every touch is never a failure. 2 sits at the
+     *  buildups max (2/wk per the speed catalogue) and the conservative end of
+     *  the strides range (3/wk), so the speed layer stays a garnish on the
+     *  base, never a second training plan. */
+    TOUCHES_PER_WEEK: 2,
     /** Weekly hard-effort budget (Bucket-C units). Races count 1 unit each;
      *  light fartlek counts FARTLEK_UNITS; neuromuscular touches count 0. */
     HARD_BUDGET_BASE: 1,

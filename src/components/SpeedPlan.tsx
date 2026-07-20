@@ -5,6 +5,7 @@ import {
   evaluateReadiness, canSetState, type TypeStatus, type SpeedType,
 } from '../lib/speed';
 import type { SpeedGuard } from '../lib/speedGuard';
+import type { TouchLogEntry, WeeklyTouches } from '../lib/todaySpeed';
 
 interface Props {
   runState: RunState;
@@ -12,6 +13,10 @@ interface Props {
   today: string;
   /** Phase 2D guard: active blockers + the tier usable today. */
   guard: SpeedGuard;
+  /** Weekly neuromuscular-touch aim + progress; null = no touch available. */
+  speedWeek?: WeeklyTouches | null;
+  /** Recent logged touches (the speed log) — display-only. */
+  touchLog?: TouchLogEntry[];
   onUpdateGlobals: (patch: Partial<GlobalState>) => void;
 }
 
@@ -33,7 +38,7 @@ function unlockLine(t: SpeedType, status: TypeStatus, suppressed: boolean): stri
   return `Unlocks at tier ${t.unlockState}${gate}`;
 }
 
-export default function SpeedPlan({ runState, globals, today, guard, onUpdateGlobals }: Props) {
+export default function SpeedPlan({ runState, globals, today, guard, speedWeek, touchLog, onUpdateGlobals }: Props) {
   const [rung, setRung] = useState<string | null>(null);
   const [manage, setManage] = useState(false);
   const [showChecklist, setShowChecklist] = useState(false);
@@ -65,6 +70,46 @@ export default function SpeedPlan({ runState, globals, today, guard, onUpdateGlo
         <span className="font-display text-[10.5px] font-semibold tracking-[0.12em] text-slate-500">SPEED PLAN · WHAT UNLOCKS NEXT</span>
         <span className={`tag ${flare ? 'tag-rose' : 'tag-amber'} text-[10px]`}>tier {state}/8</span>
       </div>
+
+      {/* This week's touch aim + the speed log — the one place weekly speed
+          progress lives. The aim never gates the ladder: it counts what was
+          logged (Today card ✓ or day-detail chips) and nothing more. */}
+      {speedWeek && (
+        <div className="mx-2.5 mb-2 rounded-xl bg-teal-500/[0.05] border border-teal-500/20 px-3 py-2.5 flex flex-col gap-1.5">
+          <div className="flex items-center gap-2">
+            <span className="font-display text-[10px] font-semibold tracking-[0.1em] text-teal-300/90">
+              THIS WEEK · {speedWeek.name.toUpperCase()}
+            </span>
+            <span className="ml-auto flex items-center gap-1">
+              {Array.from({ length: speedWeek.target }, (_, i) => (
+                <span key={i} className={`w-2 h-2 rounded-full ${
+                  i < speedWeek.done ? 'bg-teal-400' : 'bg-slate-700'}`} />
+              ))}
+              {speedWeek.done > speedWeek.target && (
+                <span className="text-[10px] text-teal-400 tabular-nums">+{speedWeek.done - speedWeek.target}</span>
+              )}
+            </span>
+          </div>
+          <p className="m-0 text-[11.5px] leading-snug text-slate-400">
+            Aim for ~{speedWeek.target} on easy days you choose — <span className="tabular-nums text-teal-300">{speedWeek.done} logged</span>
+            {speedWeek.downWeek ? ' · down week: totally fine to skip' : ''}.
+            Log them from the Today card or a day's “how did it go?”.
+          </p>
+          <p className="m-0 text-[10px] leading-snug text-slate-600">
+            An aim, not a requirement — touches never gate the ladder, and skipping is never a failure.
+          </p>
+          {touchLog && touchLog.length > 0 && (
+            <div className="flex flex-col gap-0.5 border-t border-teal-500/10 pt-1.5">
+              <span className="text-[9.5px] font-display font-semibold tracking-[0.1em] text-slate-600">TOUCH LOG · LAST 3 WEEKS</span>
+              {touchLog.slice(0, 6).map(t => (
+                <span key={t.date} className="text-[10.5px] text-slate-500 tabular-nums">
+                  ✓ {fmtTouchDate(t.date)}{t.miles != null ? ` · with a ${t.miles} mi run` : ''}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Active blockers — why speed is held below the earned tier right now.
           Calm framing: "protecting you", never "behind". When the ONLY hold is
@@ -204,6 +249,13 @@ export default function SpeedPlan({ runState, globals, today, guard, onUpdateGlo
       </div>
     </section>
   );
+}
+
+function fmtTouchDate(dateStr: string): string {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${days[d.getUTCDay()]} ${months[d.getUTCMonth()]} ${d.getUTCDate()}`;
 }
 
 function GateToggle({ label, hint, value, onChange }: {

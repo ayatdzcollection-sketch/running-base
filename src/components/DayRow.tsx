@@ -1,6 +1,5 @@
 import { useState, useEffect, memo } from 'react';
 import type { PlanDay, RunEntry } from '../lib/types';
-import type { PlanSpeedAddOn } from '../lib/todaySpeed';
 import SubjectiveRow from './SubjectiveRow';
 
 interface Props {
@@ -10,13 +9,10 @@ interface Props {
   isToday: boolean;
   painCap: number;
   speedState: number;
-  /** Phase 2D: optional quiet speed add-on line under an easy-run day.
-   *  Text only — no miles change, clearly opt-in, no failure state. */
-  speedAddOn?: PlanSpeedAddOn | null;
 }
 
 // memo prevents re-render of sibling rows when one field changes
-const DayRow = memo(function DayRow({ day, entry, onUpdate, isToday, painCap, speedState, speedAddOn }: Props) {
+const DayRow = memo(function DayRow({ day, entry, onUpdate, isToday, painCap, speedState }: Props) {
   const [localMiles, setLocalMiles] = useState(
     entry?.miles_actual != null ? String(entry.miles_actual) : ''
   );
@@ -132,18 +128,6 @@ const DayRow = memo(function DayRow({ day, entry, onUpdate, isToday, painCap, sp
         )}
       </div>
     </div>
-
-    {/* Phase 2D: optional speed add-on — a quiet, opt-in line. Never a
-        requirement, never marked missed, never changes the day's miles. */}
-    {!isRest && speedAddOn && (
-      <div className="mt-1.5 ml-[44px] rounded-md bg-teal-500/[0.05] border border-teal-500/15 px-2.5 py-1.5">
-        <p className="m-0 text-[11px] leading-snug text-slate-400">
-          <span className="font-display font-semibold text-teal-400/80 text-[10px] tracking-wide uppercase mr-1.5">optional</span>
-          {speedAddOn.detail}
-        </p>
-        <p className="m-0 text-[10px] leading-snug text-slate-600">{speedAddOn.skip}</p>
-      </div>
-    )}
 
     {/* Optional subjective log — collapsed by default, never forced */}
     {!isRest && (done || entry?.miles_actual != null || isToday) && (

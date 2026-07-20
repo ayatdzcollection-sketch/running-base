@@ -27,7 +27,7 @@ import {
 } from './lib/metrics';
 import { morningAnswer } from './lib/subjective';
 import { enforceGateConsistency } from './lib/speed';
-import { computeTodaySpeed, planWeekSpeedAddOns, todaySpeedGuard } from './lib/todaySpeed';
+import { computeTodaySpeed, weeklyTouches, recentTouches, todaySpeedGuard } from './lib/todaySpeed';
 import { returnFromBreakSpeedPatch } from './lib/speedGuard';
 import { computeAdaptiveProfile, toModulation } from './lib/adaptive';
 import AccessCodeModal from './components/AccessCodeModal';
@@ -157,6 +157,13 @@ export default function App() {
   const todaySpeed = FLAGS.TODAY_SPEED
     ? computeTodaySpeed({ runState, globals, today, plan, acceptedWeeks: globals.acceptedWeeks })
     : null;
+  // Weekly touch aim + the recent touch log — one computation feeds both the
+  // Today card ("this week 1 of 2") and the Speed panel strip, so the two
+  // surfaces can never disagree.
+  const speedWeek = FLAGS.TODAY_SPEED
+    ? weeklyTouches({ runState, globals, today, plan, acceptedWeeks: globals.acceptedWeeks })
+    : null;
+  const touchLog = recentTouches(runState, today);
   // Phase 2D guard: the tier usable TODAY (stored tier minus active blockers)
   // plus the blocker list — display + suppression only, never an unlock path.
   const speedGuard = todaySpeedGuard({ runState, globals, today, plan, acceptedWeeks: globals.acceptedWeeks });
@@ -591,7 +598,7 @@ export default function App() {
             today={today} day={todayDay} week={todayWeek} entry={runState[today]}
             onUpdate={updateEntry} planStart={plan.bonusDay.date}
             nextLong={nextLong} trailingLongest={trailingLongest}
-            hrBand={hrBand} hrHardCap={hrHardCap} todaySpeed={todaySpeed}
+            hrBand={hrBand} hrHardCap={hrHardCap} todaySpeed={todaySpeed} speedWeek={speedWeek}
           />
         );
       case 'week': {
@@ -634,7 +641,7 @@ export default function App() {
           />
         );
       case 'speed':
-        return <SpeedPlan runState={runState} globals={globals} today={today} guard={speedGuard} onUpdateGlobals={updateGlobals} />;
+        return <SpeedPlan runState={runState} globals={globals} today={today} guard={speedGuard} speedWeek={speedWeek} touchLog={touchLog} onUpdateGlobals={updateGlobals} />;
       case 'weeks':
         return (
           <div className="space-y-2">
@@ -646,7 +653,6 @@ export default function App() {
                   key={week.weekNum} week={week} runState={runState} today={today}
                   defaultOpen={week.allDays.some(d => d.date === today)}
                   onUpdate={updateEntry} painCap={globals.painCap} speedState={globals.speedState}
-                  speedAddOns={planWeekSpeedAddOns(week, runState, globals, today)}
                   downAction={downAction}
                   onDownAction={downAction ? () => handleDownAction(week.startDate, downAction) : undefined}
                 />

@@ -23,7 +23,7 @@
 // ============================================================
 
 import type { BuiltPlan } from '../config/plan';
-import type { GlobalState, PlanWeek, ProposedDay, RunState } from './types';
+import type { GlobalState, ProposedDay, RunState } from './types';
 import { addDaysStr, mondayOf, flareActive, painFreeStreak } from './metrics';
 import { SPEED_TYPES, gateSatisfied } from './speed';
 import { evaluateSpeedGuard, hardUnitsForDays, type SpeedGuard } from './speedGuard';
@@ -36,6 +36,11 @@ export interface TodaySpeedRow {
   skip?: string;
   dose: 'none' | 'low';
   optional: boolean;   // renders the OPTIONAL tag
+  /** True when this row is a loggable neuromuscular touch: the Today card
+   *  offers a one-tap "done" toggle that writes RunEntry.didStrides — the same
+   *  field the day-detail chips have always used, so both surfaces agree.
+   *  Light fartlek stays display-only (it is a half hard unit, not a touch). */
+  canLog?: boolean;
 }
 
 /** The one skip line every optional speed row carries. */
@@ -150,19 +155,8 @@ export function computeTodaySpeed(args: TodaySpeedArgs): TodaySpeedRow | null {
 
   // ── Basic neuromuscular add-on (buildups → short → flat strides). ──
   // Never gate these on optional data — the missing-data rule protects them.
-  const allowedLow = SPEED_TYPES.filter(t =>
-    t.lowDose && t.unlockState <= tier && gateSatisfied(t.requires, globals));
-  let pick = allowedLow[allowedLow.length - 1];
+  const pick = pickBasicTouch(runState, globals, tier);
   if (!pick) return null;
-
-  // Strides need a live pain-free streak (mirror the generator); if it has
-  // slipped, fall back to buildups.
-  const isStride = pick.key === 'shortStrides' || pick.key === 'flatStrides';
-  if (isStride && painFreeStreak(runState, globals.painCap) < TUNABLES.STRIDES_MIN_STREAK) {
-    const bu = allowedLow.find(t => t.key === 'buildups');
-    if (!bu) return null;
-    pick = bu;
-  }
 
   return {
     name: pick.name,
@@ -170,7 +164,27 @@ export function computeTodaySpeed(args: TodaySpeedArgs): TodaySpeedRow | null {
     skip: SKIP_CONDITIONS,
     dose: 'low',
     optional: true,
+    canLog: true,
   };
+}
+
+/** The most-advanced allowed LOW-DOSE (neuromuscular) touch at `tier`. Strides
+ *  need a live pain-free streak (mirrors the generator); when it has slipped,
+ *  fall back to buildups. null = nothing available. Shared by the Today row
+ *  and the weekly-touches target so the two surfaces always name the SAME
+ *  touch — no more "strides here, buildups there". */
+function pickBasicTouch(runState: RunState, globals: GlobalState, tier: number) {
+  const allowedLow = SPEED_TYPES.filter(t =>
+    t.lowDose && t.unlockState <= tier && gateSatisfied(t.requires, globals));
+  let pick = allowedLow[allowedLow.length - 1];
+  if (!pick) return null;
+  const isStride = pick.key === 'shortStrides' || pick.key === 'flatStrides';
+  if (isStride && painFreeStreak(runState, globals.painCap) < TUNABLES.STRIDES_MIN_STREAK) {
+    const bu = allowedLow.find(t => t.key === 'buildups');
+    if (!bu) return null;
+    pick = bu;
+  }
+  return pick;
 }
 
 /** Suppression reasons (for tests / an optional "why nothing" affordance). */
@@ -196,71 +210,73 @@ export function todaySpeedGuard(args: TodaySpeedArgs): SpeedGuard {
 }
 
 // ============================================================
-// PLAN-INTEGRATED SPEED ADD-ONS (Phase 2D, Evidence Spec §9)
+// WEEKLY SPEED TOUCHES (the "aim for N this week" model)
 //
-// Speed lives INSIDE the week plan, not only on the Today card / unlock
-// panel: when a basic neuromuscular touch is unlocked and safe, up to two
-// easy-run days per upcoming week carry a quiet optional add-on line with
-// skip conditions. Text only — it never changes the day's miles, is never
-// required, and a skipped add-on is never a failure.
+// The old model pinned optional add-on lines to two fixed days (first run day
+// + day before the long run) — days the athlete experienced as arbitrary. The
+// replacement is a WEEKLY TARGET: the app names the one touch the current tier
+// allows, says how many to aim for this week, and counts the ones actually
+// logged (RunEntry.didStrides — one tap on the Today card or the day-detail
+// chips). Which days is the athlete's call. The target is a display aim, never
+// a requirement: it feeds no gate, no cap, no unlock — skipping every touch is
+// never a failure, and doing extras never accelerates anything.
 // ============================================================
 
-export interface PlanSpeedAddOn {
+export interface WeeklyTouches {
+  /** Speed-type key of the touch this tier allows (buildups/shortStrides/…). */
+  key: string;
   name: string;
   detail: string;
-  skip: string;
+  /** Aim-for count for the week (TUNABLES.SPEED.TOUCHES_PER_WEEK). */
+  target: number;
+  /** Touches actually logged this calendar week (didStrides === true). */
+  done: number;
+  doneDates: string[];
+  /** Current week is a down/absorption week (touches still fine; extra-easy). */
+  downWeek: boolean;
 }
 
-/** Optional speed add-ons for one displayed plan week: date → add-on line.
- *  Basic neuromuscular touches only (buildups/strides — the missing-data rule
- *  keeps these available without any optional logs); at most two easy days
- *  per week (first run day + day before the long run, mirroring the
- *  generator's stride placement); only today/future, un-logged days. */
-export function planWeekSpeedAddOns(
-  week: PlanWeek,
-  runState: RunState,
-  globals: GlobalState,
-  today: string,
-): Map<string, PlanSpeedAddOn> {
-  const out = new Map<string, PlanSpeedAddOn>();
-  if (week.endDate < today) return out;                       // past week — history only
-  if (flareActive(runState, today, globals.painCap)) return out;
-  if (globals.delayUntil && globals.delayUntil > today) return out;
+export function weeklyTouches(args: TodaySpeedArgs): WeeklyTouches | null {
+  const { runState, globals, today, plan } = args;
+  if (flareActive(runState, today, globals.painCap)) return null;
+  if (globals.delayUntil && globals.delayUntil > today) return null;
 
-  const guard = evaluateSpeedGuard(runState, globals, today, { isDownWeek: week.isDownWeek });
-  const tier = Math.min(guard.effectiveTier, 3);              // plan add-ons stay neuromuscular + flat
-  if (tier < 1) return out;
+  const downWeek = plan.dateToWeek.get(today)?.isDownWeek ?? false;
+  const guard = evaluateSpeedGuard(runState, globals, today, { isDownWeek: downWeek });
+  if (guard.effectiveTier < 1) return null;
 
-  const allowedLow = SPEED_TYPES.filter(t => t.lowDose && t.unlockState <= tier && gateSatisfied(t.requires, globals));
-  let pick = allowedLow[allowedLow.length - 1];
-  if (!pick) return out;
-  const isStride = pick.key === 'shortStrides' || pick.key === 'flatStrides';
-  if (isStride && painFreeStreak(runState, globals.painCap) < TUNABLES.STRIDES_MIN_STREAK) {
-    const bu = allowedLow.find(t => t.key === 'buildups');
-    if (!bu) return out;
-    pick = bu;
-  }
+  const pick = pickBasicTouch(runState, globals, guard.effectiveTier);
+  if (!pick) return null;
 
-  // Placement mirrors the generator: first run day + day before the long run.
-  // An accepted threshold day already IS the speed session — never stack an
-  // add-on line on it.
-  const runDays = week.allDays.filter(d => d.type === 'run' && !d.isLongRun && d.kind !== 'threshold');
-  if (runDays.length === 0) return out;
-  const longIdx = week.allDays.findIndex(d => d.isLongRun);
-  const beforeLong = longIdx > 0
-    ? runDays.filter(d => d.date < week.allDays[longIdx].date).slice(-1)[0]
-    : undefined;
-  const targets = [...new Set([runDays[0], beforeLong].filter((d): d is NonNullable<typeof d> => d != null))];
+  const weekStart = mondayOf(today);
+  const weekEnd = addDaysStr(weekStart, 6);
+  const doneDates = Object.values(runState)
+    .filter(e => e.date >= weekStart && e.date <= weekEnd && e.didStrides === true)
+    .map(e => e.date)
+    .sort();
 
-  for (const d of targets) {
-    if (d.date < today) continue;                              // never mark the past
-    const e = runState[d.date];
-    if (e && (e.done || e.miles_actual != null)) continue;     // already ran — nothing to suggest
-    out.set(d.date, {
-      name: pick.name,
-      detail: DETAIL[pick.key] ?? pick.plain,
-      skip: SKIP_CONDITIONS,
-    });
-  }
-  return out;
+  return {
+    key: pick.key,
+    name: pick.name,
+    detail: DETAIL[pick.key] ?? pick.plain,
+    target: TUNABLES.SPEED.TOUCHES_PER_WEEK,
+    done: doneDates.length,
+    doneDates,
+    downWeek,
+  };
+}
+
+/** Recent logged touches (didStrides days), newest first — the speed log the
+ *  Speed panel shows so completed touches are visibly banked. Display-only. */
+export interface TouchLogEntry {
+  date: string;
+  miles: number | null;
+}
+
+export function recentTouches(runState: RunState, today: string, days = 21): TouchLogEntry[] {
+  const from = addDaysStr(today, -days);
+  return Object.values(runState)
+    .filter(e => e.date > from && e.date <= today && e.didStrides === true)
+    .sort((a, b) => (a.date < b.date ? 1 : -1))
+    .map(e => ({ date: e.date, miles: e.miles_actual }));
 }

@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest';
 import {
   evaluateSpeedGuard, hardUnitsForDays, returnFromBreakSpeedPatch, racesInWeek,
 } from '../speedGuard';
-import { computeTodaySpeed, planWeekSpeedAddOns, SKIP_CONDITIONS } from '../todaySpeed';
+import { computeTodaySpeed, weeklyTouches, recentTouches, SKIP_CONDITIONS } from '../todaySpeed';
 import { generateNextWeek } from '../generator';
 import { assessEarnedTrust, computeAdaptiveProfile } from '../adaptive';
 import { defaultGlobalState } from '../migrate';
@@ -264,42 +264,76 @@ describe('return-from-break speed downgrade', () => {
 });
 
 // ════════════════════════════════════════════════════════════
-// Plan-integrated add-ons (§9)
+// Weekly speed touches (§9, reworked): a weekly AIM + a per-day log,
+// replacing the old two-fixed-days add-on placement.
 // ════════════════════════════════════════════════════════════
-describe('plan-integrated speed add-ons', () => {
-  const week2 = plan.weeks[1]; // Jul 6–10; Friday Jul 10 is the long run
+describe('weekly speed touches', () => {
+  const args = (runState: RunState, g: GlobalState) =>
+    ({ runState, globals: g, today: TODAY, plan, acceptedWeeks: g.acceptedWeeks });
 
-  it('tier 0 (locked): no add-on lines anywhere', () => {
-    expect(planWeekSpeedAddOns(week2, weeklyLog(3), globals({ speedState: 0 }), TODAY).size).toBe(0);
+  it('tier 0 (locked): no weekly target at all', () => {
+    expect(weeklyTouches(args(weeklyLog(3), globals({ speedState: 0 })))).toBeNull();
   });
 
-  it('tier 1: a quiet optional buildups line on the day before the long run, with skip conditions', () => {
-    const addOns = planWeekSpeedAddOns(week2, weeklyLog(3), globals({ speedState: 1 }), TODAY);
-    const thu = addOns.get('2026-07-09');
-    expect(thu).toBeDefined();
-    expect(thu!.detail).toMatch(/buildups/i);
-    expect(thu!.detail).toMatch(/optional/i);
-    expect(thu!.skip).toBe(SKIP_CONDITIONS);
+  it('tier 1: names buildups, aims for the tunable target, counts nothing yet', () => {
+    const w = weeklyTouches(args(weeklyLog(3), globals({ speedState: 1 })))!;
+    expect(w.key).toBe('buildups');
+    expect(w.target).toBe(TUNABLES.SPEED.TOUCHES_PER_WEEK);
+    expect(w.done).toBe(0);
+    expect(w.detail).toMatch(/buildups/i);
   });
 
-  it('never on the long-run day, never on past days', () => {
-    const addOns = planWeekSpeedAddOns(week2, weeklyLog(3), globals({ speedState: 3 }), TODAY);
-    expect(addOns.has('2026-07-10')).toBe(false); // long run
-    expect(addOns.has('2026-07-06')).toBe(false); // yesterday
+  it('counts didStrides days from THIS calendar week only', () => {
+    const log = weeklyLog(3);
+    // Last week Tuesday: logged a touch — must NOT count this week.
+    const lastTue = addDaysStr('2026-07-06', -6);
+    log[lastTue] = run(lastTue, 4, { didStrides: true });
+    // This week Monday: counts.
+    log['2026-07-06'] = run('2026-07-06', 4, { didStrides: true });
+    const w = weeklyTouches(args(log, globals({ speedState: 1 })))!;
+    expect(w.done).toBe(1);
+    expect(w.doneDates).toEqual(['2026-07-06']);
   });
 
-  it('a past week gets nothing (history is never marked)', () => {
-    const week1 = plan.weeks[0]; // Jun 29 – Jul 3
-    expect(planWeekSpeedAddOns(week1, weeklyLog(3), globals({ speedState: 3 }), TODAY).size).toBe(0);
+  it('falls back to buildups when the stride streak has slipped', () => {
+    // Tier 3 earned, but a recent breach broke the live pain-free streak.
+    const log = weeklyLog(3);
+    log['2026-07-06'] = run('2026-07-06', 4, { painDuring: 5 });
+    const w = weeklyTouches(args(log, globals({ speedState: 3 })));
+    // A breach this week also raises guard blockers capping the tier at 1 —
+    // either way the named touch must be buildups, never strides.
+    if (w) expect(w.key).toBe('buildups');
   });
 
-  it('flare wipes the add-ons entirely', () => {
+  it('flare kills the weekly target entirely', () => {
     const flared = {
       ...weeklyLog(2),
       '2026-07-05': run('2026-07-05', 4, { painDuring: 5 }),
       '2026-07-06': run('2026-07-06', 4, { painNextAM: 6 }),
     };
-    expect(planWeekSpeedAddOns(week2, flared, globals({ speedState: 3 }), TODAY).size).toBe(0);
+    expect(weeklyTouches(args(flared, globals({ speedState: 3 })))).toBeNull();
+  });
+
+  it('the Today row is loggable (canLog) on an easy run day, never on the long run', () => {
+    const easy = computeTodaySpeed(args(weeklyLog(3), globals({ speedState: 1 })));
+    expect(easy?.canLog).toBe(true);
+    expect(easy?.skip).toBe(SKIP_CONDITIONS);
+    // Friday = long-run day → explicit no-strides row, not loggable.
+    const friday = computeTodaySpeed({
+      runState: weeklyLog(3), globals: globals({ speedState: 1 }),
+      today: '2026-07-10', plan, acceptedWeeks: {},
+    });
+    expect(friday?.dose).toBe('none');
+    expect(friday?.canLog).toBeFalsy();
+  });
+
+  it('recentTouches lists logged touches newest first (the speed log)', () => {
+    const log = weeklyLog(2);
+    log['2026-07-01'] = run('2026-07-01', 4, { didStrides: true });
+    log['2026-07-06'] = run('2026-07-06', 4.5, { didStrides: true });
+    const touches = recentTouches(log, TODAY);
+    expect(touches.map(t => t.date)).toEqual(['2026-07-06', '2026-07-01']);
+    expect(touches[0].miles).toBe(4.5);
   });
 });
 

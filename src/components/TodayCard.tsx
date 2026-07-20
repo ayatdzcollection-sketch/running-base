@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { PlanDay, PlanWeek, RunEntry } from '../lib/types';
-import type { TodaySpeedRow } from '../lib/todaySpeed';
+import type { TodaySpeedRow, WeeklyTouches } from '../lib/todaySpeed';
 import CapGauge from './CapGauge';
 
 interface Props {
@@ -18,11 +18,13 @@ interface Props {
   hrHardCap: number;
   /** Today's optional speed dose (Stage D); null = nothing shown. */
   todaySpeed?: TodaySpeedRow | null;
+  /** Weekly neuromuscular-touch aim + progress ("aim for 2 · 1 done"). */
+  speedWeek?: WeeklyTouches | null;
 }
 
 export default function TodayCard({
   today, day, entry, onUpdate, planStart,
-  nextLong, trailingLongest, hrBand, hrHardCap, todaySpeed,
+  nextLong, trailingLongest, hrBand, hrHardCap, todaySpeed, speedWeek,
 }: Props) {
   const [localMiles, setLocalMiles] = useState(
     entry?.miles_actual != null ? String(entry.miles_actual) : ''
@@ -147,7 +149,10 @@ export default function TodayCard({
         keep {hrBand} bpm · hard cap {hrHardCap} · if you can't speak in sentences, slow down
       </div>
 
-      {/* Today's optional speed dose (Stage D) */}
+      {/* Today's optional speed dose (Stage D) + one-tap "did them" logging.
+          The toggle writes RunEntry.didStrides — the same field the day-detail
+          chips use — so the weekly count and the speed log stay in agreement
+          no matter where the touch was logged. */}
       {todaySpeed && (
         <div className={`flex items-center gap-3 rounded-xl px-3 py-2.5 ${
           todaySpeed.dose === 'low'
@@ -160,16 +165,36 @@ export default function TodayCard({
               : 'bg-slate-500/10 text-slate-500 border border-border'}`}>
             {todaySpeed.dose === 'low' ? 'OPTIONAL' : 'N/A'}
           </span>
-          <div className="min-w-0 flex flex-col">
+          <div className="min-w-0 flex flex-col flex-1">
             <span className={`font-display text-[12.5px] font-semibold ${
               todaySpeed.dose === 'low' ? 'text-slate-200' : 'text-slate-400'}`}>
               {todaySpeed.name}
             </span>
             <span className="text-[11.5px] leading-snug text-slate-500">{todaySpeed.detail}</span>
+            {speedWeek && todaySpeed.canLog && (
+              <span className="text-[11px] leading-snug text-teal-400/80 tabular-nums">
+                This week: {speedWeek.done} of ~{speedWeek.target} · aim, not a requirement
+              </span>
+            )}
             {todaySpeed.skip && (
               <span className="text-[10.5px] leading-snug text-slate-600">{todaySpeed.skip}</span>
             )}
           </div>
+          {todaySpeed.canLog && (
+            <button
+              onClick={() => onUpdate(today, { didStrides: entry?.didStrides ? null : true })}
+              aria-label={entry?.didStrides ? 'Undo: did them today' : 'Mark: did them today'}
+              className={`shrink-0 flex flex-col items-center justify-center w-14 h-14 rounded-xl border transition active:scale-95 ${
+                entry?.didStrides
+                  ? 'border-teal-500 bg-teal-500/20 text-teal-300'
+                  : 'border-border text-slate-500 hover:border-slate-500'}`}
+            >
+              <span className="text-lg leading-none">{entry?.didStrides ? '✓' : '○'}</span>
+              <span className="text-[9px] font-display font-semibold tracking-wide mt-1">
+                {entry?.didStrides ? 'DONE' : 'DID THEM?'}
+              </span>
+            </button>
+          )}
         </div>
       )}
 
