@@ -24,7 +24,7 @@
 
 import type { BuiltPlan } from '../config/plan';
 import type { GlobalState, ProposedDay, RunState } from './types';
-import { addDaysStr, mondayOf, flareActive, painFreeStreak } from './metrics';
+import { addDaysStr, mondayOf, flareActive, painFreeStreak, painBreachDates } from './metrics';
 import { SPEED_TYPES, gateSatisfied } from './speed';
 import { evaluateSpeedGuard, hardUnitsForDays, type SpeedGuard } from './speedGuard';
 import { TUNABLES } from '../config/tunables';
@@ -227,13 +227,63 @@ export interface WeeklyTouches {
   key: string;
   name: string;
   detail: string;
-  /** Aim-for count for the week (TUNABLES.SPEED.TOUCHES_PER_WEEK). */
+  /** Aim-for count for the week — PROGRESSIVE (see touchTargetFor). */
   target: number;
   /** Touches actually logged this calendar week (didStrides === true). */
   done: number;
   doneDates: string[];
   /** Current week is a down/absorption week (touches still fine; extra-easy). */
   downWeek: boolean;
+  /** The earned ceiling for this athlete (min of TOUCHES.MAX and run days − 1). */
+  ceiling: number;
+  /** Qualifying weeks still needed before the aim rises; null at the ceiling. */
+  weeksToNext: number | null;
+}
+
+/**
+ * The PROGRESSIVE weekly touch aim. Titrates frequency the way every published
+ * progression does (Johnson's phased HS strides; post-injury protocols that
+ * restart at 2/wk; Daniels' 2–3 stride days): start at TOUCHES.FLOOR, add one
+ * per TOUCHES.STEP_CLEAN_WEEKS consecutive QUALIFYING completed weeks, capped
+ * at min(TOUCHES.MAX, run days − 1) — the long-run day always stays purely
+ * easy. A week qualifies when it had real running, ZERO pain-cap breaches, and
+ * at least FLOOR touches actually logged — you earn more by doing the current
+ * dose cleanly, not by wanting more. Any non-qualifying week breaks the streak
+ * (missed week, breach, or touches not done), dropping the aim back toward the
+ * floor: judged-unready or unproven exposure re-titrates, mirroring the
+ * earned-trust asymmetry (earned slowly, revoked instantly).
+ */
+export function touchTargetFor(
+  runState: RunState,
+  globals: GlobalState,
+  today: string,
+): { target: number; ceiling: number; weeksToNext: number | null; cleanWeeks: number } {
+  const T = TUNABLES.SPEED.TOUCHES;
+  const settings = globals.settings ?? null;
+  const daysPerWeek = settings ? Math.round(Math.min(6, Math.max(3, settings.daysPerWeek))) : 5;
+  const ceiling = Math.max(T.FLOOR, Math.min(T.MAX, daysPerWeek - 1));
+
+  const breaches = painBreachDates(runState, globals.painCap);
+  const curMonday = mondayOf(today);
+  const maxUseful = (ceiling - T.FLOOR) * T.STEP_CLEAN_WEEKS;
+  let streak = 0;
+  for (let k = 1; k <= 26 && streak < maxUseful; k++) {
+    const ws = addDaysStr(curMonday, -7 * k);
+    if (globals.painTrackingSince && ws < globals.painTrackingSince) break;
+    const we = addDaysStr(ws, 6);
+    const entries = Object.values(runState).filter(e => e.date >= ws && e.date <= we);
+    const ran = entries.some(e => e.done || e.miles_actual != null);
+    const touches = entries.filter(e => e.didStrides === true).length;
+    const breached = breaches.some(d => d >= ws && d <= we);
+    if (!ran || breached || touches < T.FLOOR) break;
+    streak++;
+  }
+
+  const target = Math.min(T.FLOOR + Math.floor(streak / T.STEP_CLEAN_WEEKS), ceiling);
+  const weeksToNext = target >= ceiling
+    ? null
+    : T.STEP_CLEAN_WEEKS - (streak % T.STEP_CLEAN_WEEKS);
+  return { target, ceiling, weeksToNext, cleanWeeks: streak };
 }
 
 export function weeklyTouches(args: TodaySpeedArgs): WeeklyTouches | null {
@@ -255,14 +305,17 @@ export function weeklyTouches(args: TodaySpeedArgs): WeeklyTouches | null {
     .map(e => e.date)
     .sort();
 
+  const { target, ceiling, weeksToNext } = touchTargetFor(runState, globals, today);
   return {
     key: pick.key,
     name: pick.name,
     detail: DETAIL[pick.key] ?? pick.plain,
-    target: TUNABLES.SPEED.TOUCHES_PER_WEEK,
+    target,
     done: doneDates.length,
     doneDates,
     downWeek,
+    ceiling,
+    weeksToNext,
   };
 }
 

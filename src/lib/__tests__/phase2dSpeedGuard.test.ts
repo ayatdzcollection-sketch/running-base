@@ -11,7 +11,8 @@ import { describe, it, expect } from 'vitest';
 import {
   evaluateSpeedGuard, hardUnitsForDays, returnFromBreakSpeedPatch, racesInWeek,
 } from '../speedGuard';
-import { computeTodaySpeed, weeklyTouches, recentTouches, SKIP_CONDITIONS } from '../todaySpeed';
+import { computeTodaySpeed, weeklyTouches, recentTouches, touchTargetFor, SKIP_CONDITIONS } from '../todaySpeed';
+import { defaultSettings } from '../settings';
 import { generateNextWeek } from '../generator';
 import { assessEarnedTrust, computeAdaptiveProfile } from '../adaptive';
 import { defaultGlobalState } from '../migrate';
@@ -275,12 +276,43 @@ describe('weekly speed touches', () => {
     expect(weeklyTouches(args(weeklyLog(3), globals({ speedState: 0 })))).toBeNull();
   });
 
-  it('tier 1: names buildups, aims for the tunable target, counts nothing yet', () => {
+  it('tier 1: names buildups, starts at the floor aim, counts nothing yet', () => {
     const w = weeklyTouches(args(weeklyLog(3), globals({ speedState: 1 })))!;
     expect(w.key).toBe('buildups');
-    expect(w.target).toBe(TUNABLES.SPEED.TOUCHES_PER_WEEK);
+    expect(w.target).toBe(TUNABLES.SPEED.TOUCHES.FLOOR); // no touch history → floor
     expect(w.done).toBe(0);
+    expect(w.ceiling).toBe(4); // 5 run days − the long-run day
     expect(w.detail).toMatch(/buildups/i);
+  });
+
+  it('the aim is EARNED: +1 per 2 consecutive clean weeks with the floor dose done', () => {
+    const g = globals({ speedState: 1 });
+    // No touches logged → floor, 2 clean weeks away from the first step.
+    expect(touchTargetFor(weeklyLog(4), g, TODAY)).toMatchObject({ target: 2, weeksToNext: 2 });
+    // 1 / 2 / 4 / 6 qualifying weeks (each with ≥ FLOOR touches) → 2 / 3 / 4 / 4.
+    for (const [weeks, target] of [[1, 2], [2, 3], [4, 4], [6, 4]] as const) {
+      const got = touchTargetFor(weeklyLog(weeks, { didStrides: true }), g, TODAY);
+      expect(got.target, `${weeks} clean touch-weeks`).toBe(target);
+    }
+    // At the ceiling there is no "next step".
+    expect(touchTargetFor(weeklyLog(4, { didStrides: true }), g, TODAY).weeksToNext).toBeNull();
+  });
+
+  it('a pain breach in the last completed week drops the aim back to the floor', () => {
+    const log = weeklyLog(4, { didStrides: true });
+    const lastWed = addDaysStr('2026-07-06', -5); // Wednesday of the most recent completed week
+    log[lastWed] = run(lastWed, 4, { didStrides: true, painDuring: 5 });
+    expect(touchTargetFor(log, globals({ speedState: 1 }), TODAY).target)
+      .toBe(TUNABLES.SPEED.TOUCHES.FLOOR);
+  });
+
+  it('the ceiling respects the athlete\'s run days (3-day week → floor is the ceiling)', () => {
+    const g = globals({ speedState: 1 });
+    g.settings = { ...defaultSettings(NOW), daysPerWeek: 3 };
+    const got = touchTargetFor(weeklyLog(6, { didStrides: true }), g, TODAY);
+    expect(got.ceiling).toBe(2);
+    expect(got.target).toBe(2);
+    expect(got.weeksToNext).toBeNull();
   });
 
   it('counts didStrides days from THIS calendar week only', () => {

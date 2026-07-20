@@ -97,6 +97,10 @@ export default function SpeedPlan({ runState, globals, today, guard, speedWeek, 
           </p>
           <p className="m-0 text-[10px] leading-snug text-slate-600">
             An aim, not a requirement — touches never gate the ladder, and skipping is never a failure.
+            {' '}
+            {speedWeek.weeksToNext != null
+              ? `The aim grows as clean touch-weeks bank: +1 in ${speedWeek.weeksToNext} more (up to ${speedWeek.ceiling}/wk — coaches build toward most easy days, never day one).`
+              : `You're at the ceiling (${speedWeek.ceiling}/wk) — the long-run day always stays purely easy.`}
           </p>
           {touchLog && touchLog.length > 0 && (
             <div className="flex flex-col gap-0.5 border-t border-teal-500/10 pt-1.5">

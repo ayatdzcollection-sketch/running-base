@@ -147,12 +147,25 @@ export const TUNABLES = {
      *  before the season start ("in/near season"). */
     NEAR_SEASON_DAYS: 21,
     /** Weekly neuromuscular-touch AIM ("this week, aim for N sets of
-     *  buildups/strides"). A display target only — it feeds no gate, cap, or
-     *  unlock, and skipping every touch is never a failure. 2 sits at the
-     *  buildups max (2/wk per the speed catalogue) and the conservative end of
-     *  the strides range (3/wk), so the speed layer stays a garnish on the
-     *  base, never a second training plan. */
-    TOUCHES_PER_WEEK: 2,
+     *  buildups/strides") — PROGRESSIVE, earned like everything else here.
+     *  Published sources cluster at 2–3 stride days/week (Daniels: strides
+     *  2–3 days even for elites; Pfitzinger 1–2; RunnersConnect caps at 3);
+     *  "after every run" is real coached HS practice (Jay Johnson: "rev the
+     *  engine with strides almost every day") but Johnson reaches it via an
+     *  8-phase multi-week progression, and post-injury protocols restart at
+     *  2/wk. Buildups are ACCELERATIONS — the movement that loads the
+     *  iliopsoas, this athlete's exact history — so frequency titrates:
+     *  start at FLOOR, +1 per STEP_CLEAN_WEEKS consecutive qualifying weeks
+     *  (real running, zero breaches, ≥ FLOOR touches actually logged), up to
+     *  min(MAX, run days − 1) — the long-run day always stays purely easy.
+     *  Any non-qualifying week drops the aim back toward the floor. Still a
+     *  display aim only: it feeds no gate, cap, or unlock, and skipping every
+     *  touch is never a failure. */
+    TOUCHES: {
+      FLOOR: 2,
+      STEP_CLEAN_WEEKS: 2,
+      MAX: 4,
+    },
     /** Weekly hard-effort budget (Bucket-C units). Races count 1 unit each;
      *  light fartlek counts FARTLEK_UNITS; neuromuscular touches count 0. */
     HARD_BUDGET_BASE: 1,
