@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { RunState, Shoe } from '../lib/types';
-import { shoeReport } from '../lib/shoes';
+import { shoeReport, type PrescribedLookup } from '../lib/shoes';
 import { newId } from '../lib/uid';
 
 // Shoe rotation with advisory mileage. Miles come from your logged runs; the
@@ -11,6 +11,10 @@ interface Props {
   shoes: Shoe[];
   runState: RunState;
   today: string;
+  /** Planned miles per date (plan.dateToDay), so ✓-done days with no typed
+   *  distance credit the shoe at their prescription — same rule as the week
+   *  and block totals. */
+  prescribedFor?: PrescribedLookup;
   onSave: (s: Shoe) => void;
   onDelete: (id: string) => void;
 }
@@ -21,14 +25,14 @@ const STATUS = {
   retire: { chip: 'bg-rose-500/10 text-rose-300 border-rose-500/30', bar: '#fb7185', label: 'retire soon' },
 } as const;
 
-export default function ShoeTracker({ shoes, runState, today, onSave, onDelete }: Props) {
+export default function ShoeTracker({ shoes, runState, today, prescribedFor, onSave, onDelete }: Props) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [startDate, setStartDate] = useState(today);
   const [baseMiles, setBaseMiles] = useState('0');
   const [retireAt, setRetireAt] = useState('400');
 
-  const report = shoeReport(shoes, runState);
+  const report = shoeReport(shoes, runState, prescribedFor);
 
   function add() {
     const nm = name.trim();
@@ -133,7 +137,9 @@ export default function ShoeTracker({ shoes, runState, today, onSave, onDelete }
       )}
 
       <p className="m-0 text-[10.5px] leading-relaxed text-slate-600">
-        Mileage is summed from your logged run distances since each shoe's start date. Advisory only — it never blocks logging or changes your plan.
+        Mileage is summed from your logged runs since each shoe's start date — a ✓-done day with no typed
+        distance counts at its planned miles, same as the week total. Advisory only — it never blocks
+        logging or changes your plan.
       </p>
     </section>
   );

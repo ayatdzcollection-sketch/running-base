@@ -47,10 +47,35 @@ describe('shoeMileage', () => {
     const shoes = [shoe({ id: 'a', startDate: '2026-06-10' })];
     const state: RunState = {
       '2026-06-01': run('2026-06-01', 4),    // before shoe a → unattributed
-      '2026-06-12': run('2026-06-12', null), // no miles → ignored
+      '2026-06-12': run('2026-06-12', null), // no miles, no lookup → ignored
       '2026-06-13': run('2026-06-13', 3),    // → a
     };
     expect(shoeMileage(shoes, state).get('a')).toBe(3);
+  });
+
+  it('credits a ✓-done day with no typed distance at its PLANNED miles (the week-total rule)', () => {
+    const shoes = [shoe({ id: 'a', startDate: '2026-06-10' })];
+    const state: RunState = {
+      '2026-06-12': run('2026-06-12', null),  // done, distance not typed
+      '2026-06-13': run('2026-06-13', 3.2),   // typed actual wins over the plan
+    };
+    const prescribed = (date: string) =>
+      date === '2026-06-12' ? 4 : date === '2026-06-13' ? 4 : null;
+    expect(shoeMileage(shoes, state, prescribed).get('a')).toBe(4 + 3.2);
+  });
+
+  it('a done day the plan has no prescription for still counts nothing', () => {
+    const shoes = [shoe({ id: 'a', startDate: '2026-06-10' })];
+    const state: RunState = { '2026-06-12': run('2026-06-12', null) };
+    expect(shoeMileage(shoes, state, () => null).get('a')).toBe(0);
+  });
+
+  it('an un-done day is never credited, even with a prescription', () => {
+    const shoes = [shoe({ id: 'a', startDate: '2026-06-10' })];
+    const state: RunState = {
+      '2026-06-12': { date: '2026-06-12', done: false, miles_actual: null, updated_at: 'x' },
+    };
+    expect(shoeMileage(shoes, state, () => 4).get('a')).toBe(0);
   });
 });
 

@@ -699,6 +699,7 @@ export default function App() {
         return FLAGS.shoeMileage ? (
           <ShoeTracker
             shoes={shoes} runState={runState} today={today}
+            prescribedFor={date => plan.dateToDay.get(date)?.prescribed ?? null}
             onSave={(s: Shoe) => updateGlobals({ shoes: upsertById(shoes, s) })}
             onDelete={id => updateGlobals({ shoes: shoes.filter(s => s.id !== id) })}
           />
