@@ -57,7 +57,7 @@ describe('assessMissedDays (advisory, display-only)', () => {
     expect(a.missed[0].date).toBe('2026-07-07');
     expect(a.missedMiles).toBeCloseTo(4.5, 5);
     expect(a.daysLeft).toBe(3); // Wed, Thu, Fri
-    expect(a.headline).toMatch(/don't make it up/i);
+    expect(a.headline).toMatch(/skipping it costs nothing/i);
   });
 
   it('two missed days still → resume (the evidence line is at RESUME_MAX_MISSED)', () => {
@@ -91,6 +91,139 @@ describe('assessMissedDays (advisory, display-only)', () => {
     const week = plan.dateToWeek.get('2026-07-08')!;
     const a = assessMissedDays(week, {}, '2026-07-08', { flare: true })!;
     expect(a.kind).toBe('flare');
+    expect(a.catchup ?? null).toBeNull();
+  });
+});
+
+// ── 1b. The bounded Saturday catch-up ────────────────────────
+// Static W2 (Jul 6–10): [4.5, 4.5, 4, 4, 5] — long Fri 5, largest easy 4.5,
+// total 22, rest Sat 7/11 + Sun 7/12.
+
+describe('saturday catch-up (bounded, opt-in)', () => {
+  const staticPlan = (runState: RunState, today: string) =>
+    resolveEffectivePlan(null, runState, today);
+  const weekOf = (rs: RunState, today: string) =>
+    staticPlan(rs, today).plan.dateToWeek.get('2026-07-08')!;
+
+  it('one missed easy day → its miles on Saturday, nothing absorbed', () => {
+    const rs: RunState = { '2026-07-06': run('2026-07-06', 4.5) }; // Mon logged; Tue 4.5 missed
+    const a = assessMissedDays(weekOf(rs, '2026-07-08'), rs, '2026-07-08', {
+      flare: false, breach: false, inSeason: false, nextLong: 5.5,
+    })!;
+    expect(a.catchup).toMatchObject({
+      date: '2026-07-11', dayLabel: 'Sat', miles: 4.5, absorbed: 0, longRunSwap: false,
+    });
+    expect(a.catchup!.weekAfter).toBeCloseTo(22, 5);
+  });
+
+  it('two missed easy days → capped at the largest planned easy day, rest absorbed', () => {
+    const a = assessMissedDays(weekOf({}, '2026-07-08'), {}, '2026-07-08', {
+      flare: false, breach: false, inSeason: false, nextLong: 5.5,
+    })!; // Mon 4.5 + Tue 4.5 missed = 9
+    expect(a.catchup!.miles).toBeCloseTo(4.5, 5);      // never a mega-run
+    expect(a.catchup!.absorbed).toBeCloseTo(4.5, 5);   // the cap is the feature
+    expect(a.catchup!.weekAfter).toBeCloseTo(17.5, 5);
+  });
+
+  it('the Frandsen session ceiling binds below the easy-day cap', () => {
+    const rs: RunState = { '2026-07-06': run('2026-07-06', 4.5) };
+    const a = assessMissedDays(weekOf(rs, '2026-07-09'), rs, '2026-07-09', {
+      flare: false, breach: false, inSeason: false, nextLong: 3.5,
+    })!;
+    expect(a.catchup!.miles).toBeCloseTo(3.5, 5);
+  });
+
+  it('a missed LONG run moves at its planned size — the endorsed swap', () => {
+    const rs: RunState = {
+      '2026-07-06': run('2026-07-06', 4.5), '2026-07-07': run('2026-07-07', 4.5),
+      '2026-07-08': run('2026-07-08', 4), '2026-07-09': run('2026-07-09', 4),
+    }; // Fri 7/10 long (5) missed; today is Saturday itself
+    const a = assessMissedDays(weekOf(rs, '2026-07-11'), rs, '2026-07-11', {
+      flare: false, breach: false, inSeason: false, nextLong: 5.5,
+    })!;
+    expect(a.catchup).toMatchObject({ date: '2026-07-11', miles: 5, longRunSwap: true });
+  });
+
+  it('long + easy missed → swap only, the easy miles stay absorbed', () => {
+    const rs: RunState = {
+      '2026-07-06': run('2026-07-06', 4.5), '2026-07-07': run('2026-07-07', 4.5),
+      '2026-07-08': run('2026-07-08', 4),
+    }; // Thu 4 + Fri long 5 missed
+    const a = assessMissedDays(weekOf(rs, '2026-07-11'), rs, '2026-07-11', {
+      flare: false, breach: false, inSeason: false, nextLong: 5.5,
+    })!;
+    expect(a.catchup!.miles).toBeCloseTo(5, 5);
+    expect(a.catchup!.absorbed).toBeCloseTo(4, 5);
+    expect(a.catchup!.longRunSwap).toBe(true);
+  });
+
+  it('3+ missed days → no catch-up (re-entry, never cramming)', () => {
+    const a = assessMissedDays(weekOf({}, '2026-07-09'), {}, '2026-07-09', {
+      flare: false, breach: false, inSeason: false, nextLong: 5.5,
+    })!;
+    expect(a.kind).toBe('reentry');
+    expect(a.catchup ?? null).toBeNull();
+  });
+
+  it('a recent breach blocks the catch-up (recovery outranks mileage)', () => {
+    const rs: RunState = { '2026-07-06': run('2026-07-06', 4.5) };
+    const a = assessMissedDays(weekOf(rs, '2026-07-09'), rs, '2026-07-09', {
+      flare: false, breach: true, inSeason: false, nextLong: 5.5,
+    })!;
+    expect(a.kind).toBe('resume');
+    expect(a.catchup ?? null).toBeNull();
+  });
+
+  it('coach season blocks the catch-up (the coach owns the load)', () => {
+    const rs: RunState = { '2026-07-06': run('2026-07-06', 4.5) };
+    const a = assessMissedDays(weekOf(rs, '2026-07-09'), rs, '2026-07-09', {
+      flare: false, breach: false, inSeason: true, nextLong: 5.5,
+    })!;
+    expect(a.catchup ?? null).toBeNull();
+  });
+
+  it('Sunday is never offered: once Saturday passes, the week closes', () => {
+    const rs: RunState = { '2026-07-06': run('2026-07-06', 4.5) };
+    const a = assessMissedDays(weekOf(rs, '2026-07-12'), rs, '2026-07-12', {
+      flare: false, breach: false, inSeason: false, nextLong: 5.5,
+    })!;
+    expect(a.catchup ?? null).toBeNull();
+  });
+
+  it('an already-logged Saturday consumes the slot', () => {
+    const rs: RunState = {
+      '2026-07-06': run('2026-07-06', 4.5),
+      '2026-07-11': run('2026-07-11', 3),
+    };
+    const a = assessMissedDays(weekOf(rs, '2026-07-09'), rs, '2026-07-09', {
+      flare: false, breach: false, inSeason: false, nextLong: 5.5,
+    })!;
+    expect(a.catchup ?? null).toBeNull();
+  });
+
+  it('a remainder below MIN_SUGGEST is not worth a run', () => {
+    const rs: RunState = { '2026-07-06': run('2026-07-06', 4.5) };
+    const a = assessMissedDays(weekOf(rs, '2026-07-09'), rs, '2026-07-09', {
+      flare: false, breach: false, inSeason: false, nextLong: 1.0,
+    })!;
+    expect(a.catchup ?? null).toBeNull();
+  });
+
+  it('a 6-run-day week has no free Saturday — Sunday stays sacred', () => {
+    // startDate ≠ PLAN_START_DATE so the locked current week is engine-built
+    // (6 run days), not the canonical 5-day static splice.
+    const raw: RawSettings = {
+      ...defaultSettings(NOW), startDate: '2026-06-22', daysPerWeek: 6,
+      startMpw: 24, peakMpw: 30, trailingLongest: 5,
+    };
+    const rs: RunState = { '2026-07-06': run('2026-07-06', 4) }; // Tue missed
+    const { plan } = resolveEffectivePlan(raw, rs, '2026-07-09');
+    const week = plan.dateToWeek.get('2026-07-09')!;
+    expect(week.runDays).toHaveLength(6);
+    const a = assessMissedDays(week, rs, '2026-07-09', {
+      flare: false, breach: false, inSeason: false, nextLong: 5.5,
+    })!;
+    expect(a.catchup ?? null).toBeNull();
   });
 });
 
@@ -205,5 +338,60 @@ describe('missed-week re-entry anchor (resolveEffectivePlan)', () => {
       const rs: RunState = { ...W1_DONE, '2026-07-06': run('2026-07-06', partial) };
       expect(firstFutureWeek(rs).totalPlanned).toBeLessThanOrEqual(base.totalPlanned + 1e-9);
     }
+  });
+
+  // ── The boundary: an ENGINE-built current week is anchored from its Monday ──
+  // Non-canonical start (2026-06-22) → every week is engine-generated, so the
+  // re-entry boundary is the current in-progress week itself, not the first
+  // unlocked one. Grid: W1 6/22, W2 6/29 (badly missed), W3 7/6 (current).
+
+  const RESEEDED: Partial<RawSettings> = { startDate: '2026-06-22' };
+  /** W1 (6/22, 20 mi) fully done; W2 (6/29) = one 4-mile run. */
+  const RESEEDED_RS: RunState = {
+    '2026-06-22': run('2026-06-22', 4.0),
+    '2026-06-23': run('2026-06-23', 4.0),
+    '2026-06-24': run('2026-06-24', 4.0),
+    '2026-06-25': run('2026-06-25', 3.5),
+    '2026-06-26': run('2026-06-26', 4.5),
+    '2026-06-29': run('2026-06-29', 4.0),
+  };
+
+  it('an engine-built current week takes the anchor on its own blank Monday', () => {
+    const { plan } = resolveEffectivePlan(settings(RESEEDED), RESEEDED_RS, '2026-07-06');
+    const w3 = plan.weeks.find(w => w.startDate === '2026-07-06')!;
+    const { plan: basePlan } = resolveEffectivePlan(
+      settings(RESEEDED),
+      { ...RESEEDED_RS, '2026-06-30': run('2026-06-30', 5), '2026-07-01': run('2026-07-01', 5), '2026-07-02': run('2026-07-02', 8) },
+      '2026-07-06',
+    );
+    const w3base = basePlan.weeks.find(w => w.startDate === '2026-07-06')!;
+    // Anchored: re-enter near REENTRY_FLOOR of the trajectory instead of the
+    // paper resume the fully-trained twin gets.
+    expect(w3.totalPlanned).toBeLessThan(w3base.totalPlanned - 2);
+    expect(w3.totalPlanned).toBeGreaterThanOrEqual(15);
+  });
+
+  it('the anchor holds steady mid-week: logging runs never shifts the current week', () => {
+    const monday = resolveEffectivePlan(settings(RESEEDED), RESEEDED_RS, '2026-07-06')
+      .plan.weeks.find(w => w.startDate === '2026-07-06')!;
+    const midweek: RunState = { ...RESEEDED_RS, '2026-07-06': run('2026-07-06', 3.5) };
+    const wednesday = resolveEffectivePlan(settings(RESEEDED), midweek, '2026-07-08')
+      .plan.weeks.find(w => w.startDate === '2026-07-08' ? false : w.startDate === '2026-07-06')!;
+    expect(wednesday.totalPlanned).toBeCloseTo(monday.totalPlanned, 5);
+    expect(wednesday.longRunCap).toBeCloseTo(monday.longRunCap, 5);
+  });
+
+  it('once the anchored week completes, the next boundary judges IT, not the old miss', () => {
+    // Run the anchored W3 fully at its (reduced) prescription → the following
+    // Monday, W4 builds off the anchored trajectory with no fresh anchor.
+    const { plan } = resolveEffectivePlan(settings(RESEEDED), RESEEDED_RS, '2026-07-06');
+    const w3 = plan.weeks.find(w => w.startDate === '2026-07-06')!;
+    const rs: RunState = { ...RESEEDED_RS };
+    for (const d of w3.runDays) rs[d.date] = run(d.date, d.prescribed ?? 0);
+    const { plan: nextWeekPlan } = resolveEffectivePlan(settings(RESEEDED), rs, '2026-07-13');
+    const w4 = nextWeekPlan.weeks.find(w => w.startDate === '2026-07-13')!;
+    // A build step up from the anchored level — recovery, not a second cut.
+    expect(w4.totalPlanned).toBeGreaterThan(w3.totalPlanned);
+    expect(w4.totalPlanned).toBeLessThan(w3.totalPlanned * 1.1 + 0.5 + 1e-9);
   });
 });

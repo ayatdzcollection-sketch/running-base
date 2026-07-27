@@ -27,7 +27,9 @@ export default function AwardTracker({ runState, plan, award }: Props) {
 
   addDay(plan.bonusDay.date, null);
   for (const week of plan.weeks) {
-    for (const day of week.runDays) addDay(day.date, day.prescribed);
+    // All 7 days: rest days contribute typed miles only (prescribed null), so
+    // a Saturday catch-up run counts toward the award like any other run.
+    for (const day of week.allDays) addDay(day.date, day.type === 'run' ? day.prescribed : null);
   }
 
   const pct = Math.min(inWindow / award.target, 1);

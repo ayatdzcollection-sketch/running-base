@@ -20,11 +20,14 @@ interface Props {
   todaySpeed?: TodaySpeedRow | null;
   /** Weekly neuromuscular-touch aim + progress ("aim for 2 · 1 done"). */
   speedWeek?: WeeklyTouches | null;
+  /** Today IS this week's catch-up rest day: the bounded make-up run the
+   *  missed-days card offered (advisory; logging commits it). */
+  catchup?: { miles: number; longRunSwap: boolean; weekAfter: number } | null;
 }
 
 export default function TodayCard({
   today, day, entry, onUpdate, planStart,
-  nextLong, trailingLongest, hrBand, hrHardCap, todaySpeed, speedWeek,
+  nextLong, trailingLongest, hrBand, hrHardCap, todaySpeed, speedWeek, catchup,
 }: Props) {
   const [localMiles, setLocalMiles] = useState(
     entry?.miles_actual != null ? String(entry.miles_actual) : ''
@@ -97,6 +100,46 @@ export default function TodayCard({
 
   // ── Rest day ─────────────────────────────────────────────
   if (day.type === 'rest') {
+    // Catch-up day: the missed-days card's bounded make-up run lands today.
+    // Still a rest day by plan — the run is optional, and logging it is what
+    // commits it (the miles then count in every total, like any run).
+    if (catchup || entry?.miles_actual != null) {
+      const m = catchup?.miles;
+      return (
+        <div className="card space-y-4">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="tag tag-sky">{catchup?.longRunSwap ? 'Long run (moved)' : 'Catch-up (optional)'}</span>
+            <span className="text-slate-500 text-sm ml-auto">{weekdayName(today)}</span>
+          </div>
+          {m != null && (
+            <div className="flex items-baseline gap-2.5">
+              <span className="font-display text-[60px] font-bold leading-none tracking-tight tabular-nums text-slate-100">
+                {m}
+              </span>
+              <span className="font-display text-[17px] font-semibold text-slate-500">mi</span>
+            </div>
+          )}
+          <p className="text-slate-500 text-[13px] leading-relaxed m-0">
+            {catchup
+              ? (catchup.longRunSwap
+                  ? `This week's missed long run, moved to the free rest day — the one reschedule coaches endorse. Easy effort, HR ${hrBand}.`
+                  : `Make-up easy miles for what this week missed — capped at an ordinary easy day, HR ${hrBand}. Brings the week to ~${catchup.weekAfter.toFixed(1)} mi.`)
+              : 'Logged run on a rest day.'}
+            {catchup ? ' Entirely optional: skipping it costs nothing, and skip it for sure if anything niggles.' : ''}
+          </p>
+          <MilesRow
+            localMiles={localMiles}
+            done={!!entry?.done}
+            onToggle={() => onUpdate(today, { done: !entry?.done })}
+            onMilesChange={setLocalMiles}
+            onFocus={() => setFocused(true)}
+            onBlur={handleBlur}
+            prescribed={null}
+          />
+          <p className="text-[10.5px] text-slate-600 m-0">Type the miles you ran — the ✓ alone can't guess a rest day's distance.</p>
+        </div>
+      );
+    }
     return (
       <div className="card text-center py-8 space-y-2">
         <span className="tag tag-teal mx-auto">Rest day</span>

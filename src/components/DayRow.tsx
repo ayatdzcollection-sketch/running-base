@@ -94,8 +94,10 @@ const DayRow = memo(function DayRow({ day, entry, onUpdate, isToday, painCap, sp
         )}
       </div>
 
-      {/* Actual miles input (run days only) */}
-      {!isRest && (
+      {/* Actual miles input. Run days always; a REST day only when it's today
+          or already carries logged miles — so an occasional catch-up/unplanned
+          run is loggable without cluttering every rest row with inputs. */}
+      {(!isRest || isToday || entry?.miles_actual != null) && (
         <div className="w-24 shrink-0">
           <input
             type="number"
@@ -129,8 +131,10 @@ const DayRow = memo(function DayRow({ day, entry, onUpdate, isToday, painCap, sp
       </div>
     </div>
 
-    {/* Optional subjective log — collapsed by default, never forced */}
-    {!isRest && (done || entry?.miles_actual != null || isToday) && (
+    {/* Optional subjective log — collapsed by default, never forced. A rest
+        day that carries a logged run (catch-up) gets it too: its RPE/pain
+        feed the same gates as any other run. */}
+    {(done || entry?.miles_actual != null || (isToday && !isRest)) && (
       <SubjectiveRow
         date={day.date}
         entry={entry}

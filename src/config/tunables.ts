@@ -94,6 +94,22 @@ export const TUNABLES = {
      *  runs, do not make them up" — we advise at 3+ because at 3 of 5 days the
      *  week also crosses REENTRY_TRIGGER territory). */
     RESUME_MAX_MISSED: 2,
+    /** Optional Saturday catch-up (athlete-requested, bounded). The default
+     *  advice stays "skip it" — but when the athlete wants the week's miles, a
+     *  SINGLE make-up easy run on the first free rest day is offered, hard-
+     *  capped so it can never become the load spike the research warns about:
+     *  ≤ the week's largest planned EASY day (Saturday is an ordinary easy
+     *  run, never a second long run), ≤ the Frandsen single-session ceiling,
+     *  only while ≤ RESUME_MAX_MISSED days are missed, never during a
+     *  flare/recent breach, never in coach season, never on a down week, and
+     *  Sunday always stays fully off. A missed LONG run may move to Saturday
+     *  at its planned size instead — the one reschedule coaches endorse
+     *  (Runnin' for Sweets / CARA long-run swap). */
+    CATCHUP: {
+      /** Below this many liftable miles no run is suggested — a shorter jog
+       *  isn't worth spending the rest day. */
+      MIN_SUGGEST: 1.5,
+    },
   },
 
   /** Peak-seeking reference horizon (weeks). Each build week closes ~1/N of the

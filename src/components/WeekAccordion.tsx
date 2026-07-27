@@ -33,6 +33,13 @@ export default function WeekAccordion({ week, runState, today, defaultOpen, onUp
     }
     if (entry.done || entry.miles_actual != null) doneCount++;
   }
+  // Rest-day runs (Saturday catch-up) count typed miles toward the header
+  // total; the done counter stays planned-run-days only.
+  for (const day of week.allDays) {
+    if (day.type !== 'rest') continue;
+    const m = runState[day.date]?.miles_actual;
+    if (m != null) loggedMiles += m;
+  }
 
   const containsToday = week.allDays.some(d => d.date === today);
 

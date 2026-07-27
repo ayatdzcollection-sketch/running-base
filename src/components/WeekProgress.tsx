@@ -27,6 +27,13 @@ export default function WeekProgress({ runState, plan, today, week, blockTotalTa
     if (v != null) weekDone += v;
     else if (d.date >= today) runsLeft++;
   }
+  // Rest-day runs (the Saturday catch-up) count toward the week too — typed
+  // miles only, since a rest day has no prescription to credit a bare ✓ at.
+  for (const d of curWeek.allDays) {
+    if (d.type !== 'rest') continue;
+    const m = runState[d.date]?.miles_actual;
+    if (m != null) weekDone += m;
+  }
 
   // Block totals.
   let blockLogged = 0;
@@ -39,6 +46,11 @@ export default function WeekProgress({ runState, plan, today, week, blockTotalTa
       totalRunDays++;
       const v = effective(runState, d.date, d.prescribed);
       if (v != null) { blockLogged += v; daysDone++; }
+    }
+    for (const d of w.allDays) {
+      if (d.type !== 'rest') continue;
+      const m = runState[d.date]?.miles_actual;
+      if (m != null) blockLogged += m; // catch-up miles count; day counters stay planned-days-only
     }
   }
 

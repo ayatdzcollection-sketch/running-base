@@ -587,6 +587,14 @@ export default function App() {
     : inXcSeason ? 'text-teal-400'
     : 'text-slate-400';
 
+  // Missed-day assessment for the current week — drives the advisory card in
+  // the week block AND the Today card's catch-up branch (when today is the
+  // suggested rest day). Pain signals and coach season gate the catch-up; its
+  // session ceiling is the same nextLong every run obeys.
+  const missedToday = assessMissedDays(todayWeek, runState, today, {
+    flare, breach, inSeason: inXcSeason, nextLong,
+  });
+
   function renderBlock(id: BlockId): ReactNode {
     const meta = blockMeta(id);
     if (!meta) return null;
@@ -599,16 +607,17 @@ export default function App() {
             onUpdate={updateEntry} planStart={plan.bonusDay.date}
             nextLong={nextLong} trailingLongest={trailingLongest}
             hrBand={hrBand} hrHardCap={hrHardCap} todaySpeed={todaySpeed} speedWeek={speedWeek}
+            catchup={missedToday?.catchup?.date === today ? missedToday.catchup : null}
           />
         );
       case 'week': {
-        // Missed-day advisory rides with the week block: it appears only while
-        // the current week has missed run days, and never adds miles anywhere.
-        const missed = assessMissedDays(todayWeek, runState, today, { flare });
+        // Missed-day advisory rides with the week block: it appears while the
+        // current week has missed run days. The only thing it can "add" is the
+        // bounded Saturday catch-up — advisory, committed only by logging.
         return (
           <div className="space-y-2">
             <WeekProgress runState={runState} plan={plan} today={today} week={todayWeek} blockTotalTarget={blockTotalTarget} />
-            {missed && <MissedDaysCard a={missed} />}
+            {missedToday && <MissedDaysCard a={missedToday} />}
           </div>
         );
       }

@@ -22,7 +22,24 @@ export default function MissedDaysCard({ a }: { a: MissedAssessment }) {
         </span>
       </div>
       <p className="text-[11.5px] leading-relaxed text-slate-500">{a.detail}</p>
-      {a.kind === 'resume' && (
+      {a.catchup && (
+        <div className="rounded-lg border border-teal-800/40 bg-teal-950/20 px-3 py-2.5 space-y-1">
+          <p className="text-[12px] font-display font-semibold text-teal-300">
+            {a.catchup.longRunSwap
+              ? `Optional: run the missed long run ${a.catchup.dayLabel} — ${a.catchup.miles.toFixed(1)} mi`
+              : `Optional: +${a.catchup.miles.toFixed(1)} mi easy on ${a.catchup.dayLabel}`}
+          </p>
+          <p className="text-[11px] leading-relaxed text-slate-500">
+            {a.catchup.longRunSwap
+              ? 'Moving the long run to the free rest day is the one reschedule coaches endorse. '
+              : 'Capped at an ordinary easy day — never a second long run. '}
+            Brings the week to ~{a.catchup.weekAfter.toFixed(1)} mi
+            {a.catchup.absorbed > 0 ? ` (${a.catchup.absorbed.toFixed(1)} mi stays absorbed — the cap is the feature)` : ''}.
+            Log it on the day and every total counts it. Sunday stays fully off. Skip it if anything niggles.
+          </p>
+        </div>
+      )}
+      {a.kind === 'resume' && !a.catchup && (
         <p className="text-[10px] text-slate-600 leading-relaxed">
           Why no make-up runs: redistributed easy miles and rest-day catch-ups are the most common
           self-inflicted load spike (Koop/CTS · RunnersConnect · CARA). Consistency wins the block, not any one day.

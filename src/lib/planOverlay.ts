@@ -169,17 +169,19 @@ export function resolveEffectivePlan(
   // anchor to yet, so those weeks keep projecting off the frozen trajectory.
   let prevSeason: Season | null = null;
   let resumeApplied = false;
-  // Missed-week re-entry state. The most recent fully COMPLETED week's actual
-  // miles vs its displayed prescription; consulted once, at the first future
-  // (unlocked) week — see the anchor below. A completed week at/above the
-  // trigger, or none at all, leaves the plan byte-identical.
-  let lastDone: { actual: number; prescribed: number } | null = null;
-  let reentryApplied = false;
+  // Missed-week re-entry state. Each fully COMPLETED week is judged exactly
+  // once — at the first engine-built week after it ends — and the judgment is
+  // REPLAYED on every render, so an anchored week keeps its anchored numbers
+  // forever (history never flip-flops when the live boundary moves on).
+  // `judged` remembers which completed week the anchor last consumed, so a
+  // shortfall can never re-cut the trajectory week after week (no 0.8× decay).
+  let lastDone: { weekStart: string; actual: number; prescribed: number } | null = null;
+  let judged: string | null = null;
   // Returns the completed-week record (or null for a still-running week); the
   // caller assigns it so TS control-flow analysis sees the mutation.
   const doneRecord = (weekStart: string, cfg: WeekConfig) =>
     addDaysStr(weekStart, 6) < today
-      ? { actual: weekActualMiles(cfg, weekStart, runState), prescribed: configTotal(cfg) }
+      ? { weekStart, actual: weekActualMiles(cfg, weekStart, runState), prescribed: configTotal(cfg) }
       : null;
 
   for (let i = 0; i < weeksN; i++) {
@@ -225,21 +227,27 @@ export function resolveEffectivePlan(
     // (past/current or logged) always render so history is never dropped.
     if (!locked && opts?.breakStart && weekStart >= opts.breakStart) break;
 
-    // Missed-week RE-ENTRY anchor (downward-only), applied at most once, at the
-    // FIRST future (unlocked) week. When the most recent completed week ran
-    // below MISSED.REENTRY_TRIGGER of its prescription, the build does not leap
-    // back to the paper trajectory — it re-enters at
+    // Missed-week RE-ENTRY anchor (downward-only). Every COMPLETED week is
+    // judged exactly once, at the first engine-built week after it ends: when
+    // it ran below MISSED.REENTRY_TRIGGER of its prescription, the build does
+    // not leap back to the paper trajectory — it re-enters at
     //   max(actual × WEEKLY_GROWTH_MAX, trajectory × REENTRY_FLOOR)
-    // (the published ~70–90% re-entry band; +10% over actuals when even that is
-    // lower), min'd with the existing trajectory so this can only ever LOWER a
-    // week. Missed easy days are never made up — this is the other half of that
-    // rule: after a substantially missed week, the resume is stepped, not a
-    // spike. An explicitly ACCEPTED first week is the athlete's confirmed
-    // prescription and is respected untouched (the attempt is still consumed —
-    // the shortfall informs exactly one boundary, never a later surprise).
-    if (!locked && !reentryApplied) {
-      reentryApplied = true;
-      if (!accepted?.[weekStart]?.length && lastDone && lastDone.prescribed > 0
+    // (the published ~70–90% re-entry band; +10% over actuals when even that
+    // is lower), min'd with the existing trajectory so it can only ever LOWER
+    // a week. Because the judgment derives ONLY from completed weeks and is
+    // replayed at the same position every render, it is stable: an engine-
+    // built current week is anchored from its own Monday and renders
+    // identically all week, and an anchored week KEEPS its anchored numbers
+    // after it completes (history never flip-flops). `judged` guarantees one
+    // cut per shortfall — never a compounding weekly decay. A canonical
+    // static-spliced week stays frozen as originally prescribed and defers
+    // the judgment to the first engine week after it; an explicitly ACCEPTED
+    // week consumes the judgment untouched (the athlete's confirmed
+    // prescription wins, and its own completion is judged in turn).
+    if (lastDone && lastDone.weekStart !== judged && lastDone.prescribed > 0
+        && !(locked && staticCfg)) {
+      judged = lastDone.weekStart;
+      if (!accepted?.[weekStart]?.length
           && lastDone.actual / lastDone.prescribed < TUNABLES.MISSED.REENTRY_TRIGGER) {
         const anchor = Math.max(
           lastDone.actual * TUNABLES.WEEKLY_GROWTH_MAX,
