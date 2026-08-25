@@ -398,20 +398,41 @@ describe('missed-week re-entry anchor (resolveEffectivePlan)', () => {
     expect(reentries).toHaveLength(0);
   });
 
-  it('season-entry after a short week: the MAINTAIN hold is the anchored level, flagged maintain', () => {
-    // The reported defect scenario: last build week badly missed, coach season
-    // starts the next Monday. The hold must be the eased re-entry (0.8 × traj),
-    // and the record must say so — never a silent number change.
+  it('season-entry after a short week: eased re-entry, flagged maintain, never silent', () => {
+    // The reported scenario: last build week badly missed, coach season starts
+    // the next Monday. The first season week re-enters reduced — anchored off
+    // max(actual×1.1, 0.8×traj) plus one governed rebuild step — never the
+    // full paper hold, and never without a record.
     const { plan, reentries } = resolveEffectivePlan(
       settings({ ...RESEEDED, xcStartDate: '2026-07-06' }), RESEEDED_RS, '2026-07-06',
     );
     const w3 = plan.weeks.find(w => w.startDate === '2026-07-06')!;
     expect(w3.note).toBe('maintain');
-    // traj 22 → anchored to max(4×1.1, 22×0.8) = 17.6 → maintain ≈ 17.5.
-    expect(w3.totalPlanned).toBeGreaterThanOrEqual(16.5);
-    expect(w3.totalPlanned).toBeLessThanOrEqual(17.6);
+    // traj 22 → anchored 17.6 → first rebuild step +1.5 → ≈ 19, well below 22.
+    expect(w3.totalPlanned).toBeGreaterThanOrEqual(17.5);
+    expect(w3.totalPlanned).toBeLessThanOrEqual(19.5);
     expect(reentries).toHaveLength(1);
     expect(reentries[0].maintain).toBe(true);
+  });
+
+  it('season weeks CLIMB back to the pre-cut hold (≤ +10%/wk), then hold — never past it', () => {
+    // "I want it to hold at 32 and I'll build to that over the season": the cut
+    // is a starting point, not the season's ceiling. Here the hold is 22 (the
+    // pre-cut trajectory); anchored re-entry 17.6 → ~19 → ~20.5 → 22 → 22 flat.
+    const { plan } = resolveEffectivePlan(
+      settings({ ...RESEEDED, xcStartDate: '2026-07-06', weeksShown: 10 }), RESEEDED_RS, '2026-07-06',
+    );
+    const season = plan.weeks.filter(w => w.startDate >= '2026-07-06' && w.note === 'maintain');
+    expect(season.length).toBeGreaterThanOrEqual(4);
+    const totals = season.map(w => w.totalPlanned);
+    for (let i = 1; i < totals.length; i++) {
+      expect(totals[i]).toBeGreaterThanOrEqual(totals[i - 1] - 1e-9);        // monotonic recovery
+      expect(totals[i]).toBeLessThanOrEqual(totals[i - 1] * 1.1 + 0.5 + 1e-9); // governed rate
+      expect(totals[i]).toBeLessThanOrEqual(22 + 0.5);                        // hold is the ceiling
+    }
+    // It actually gets back to the hold and stays there.
+    expect(totals[totals.length - 1]).toBeGreaterThanOrEqual(21.5);
+    expect(totals[totals.length - 2]).toBeGreaterThanOrEqual(21.5);
   });
 
   it('once the anchored week completes, the next boundary judges IT, not the old miss', () => {

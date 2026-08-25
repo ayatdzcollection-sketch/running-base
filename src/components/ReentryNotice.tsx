@@ -11,7 +11,7 @@ export default function ReentryNotice({ r, weekTotal }: { r: ReentryRecord; week
     <section data-block="reentry" className="rounded-2xl border border-sky-900/50 bg-sky-950/20 px-[18px] py-3.5 space-y-1.5">
       <span className="text-[12.5px] font-display font-semibold text-sky-300 leading-snug">
         {r.maintain
-          ? `Holding at ${shown} mi — eased re-entry after a short week.`
+          ? `Re-entering at ${shown} mi — climbing back to the ${r.from.toFixed(1)} mi hold.`
           : `This week re-entered at ${shown} mi.`}
       </span>
       <p className="text-[11.5px] leading-relaxed text-slate-500 m-0">
@@ -20,7 +20,7 @@ export default function ReentryNotice({ r, weekTotal }: { r: ReentryRecord; week
         re-enters at whichever is higher: what you ran +10%, or 80% of your build trajectory
         ({r.from.toFixed(1)} → {r.to.toFixed(1)}).{' '}
         {r.maintain
-          ? 'In coach season this is the hold level — practice sets your real load, and when the season ends the plan re-anchors to what you actually logged.'
+          ? `Season weeks now step back up (≤ +10%/wk) until the ${r.from.toFixed(1)} mi hold is reached, then hold — the hold itself never rises in season. Practice sets your real load; at season's end the plan re-anchors to what you actually logged.`
           : 'Build weeks step back up from here automatically.'}
       </p>
     </section>

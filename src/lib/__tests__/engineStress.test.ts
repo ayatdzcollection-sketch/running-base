@@ -138,10 +138,15 @@ function violations(
     }
   }
 
-  // (M) consecutive 'maintain' weeks are FLAT (hold, not drift) and ≤ peak.
+  // (M) consecutive 'maintain' weeks never DECREASE (hold, not drift down) and
+  // never grow faster than the +10%/wk governed rebuild — the one sanctioned
+  // upward move in season is the climb back to the hold after a missed-week
+  // re-entry cut, and it obeys the same weekly growth ceiling as any build.
+  // Always ≤ peak.
   for (let i = 1; i < weeks.length; i++) {
     if (weeks[i].note === 'maintain' && weeks[i - 1].note === 'maintain') {
-      if (Math.abs(weeks[i].total - weeks[i - 1].total) > 0.6 + EPS) out.push(`W${i + 1}: maintain drifted ${weeks[i - 1].total}→${weeks[i].total}`);
+      if (weeks[i].total < weeks[i - 1].total - 0.6 - EPS) out.push(`W${i + 1}: maintain drifted down ${weeks[i - 1].total}→${weeks[i].total}`);
+      if (weeks[i].total > weeks[i - 1].total * 1.1 + 2.0 + EPS) out.push(`W${i + 1}: maintain climbed too fast ${weeks[i - 1].total}→${weeks[i].total}`);
     }
     if (weeks[i].note === 'maintain' && weeks[i].total > peak + 0.5 + EPS) out.push(`W${i + 1}: maintain ${weeks[i].total} > peak ${peak}`);
   }

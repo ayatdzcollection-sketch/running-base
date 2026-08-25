@@ -559,6 +559,13 @@ export function seasonResumeTraj(
 export interface StepCarry {
   long: number;
   traj: number;
+  /** The season's maintain HOLD level — min(trajectory at season entry, peak).
+   *  Set on the first maintenance week (or by the re-entry anchor when its cut
+   *  lands in-season, using the PRE-cut trajectory) and carried through the
+   *  season so a missed-week cut can REBUILD toward the hold instead of
+   *  pinning the whole season to the reduced level. Cleared outside seasons.
+   *  Absent = derived from prev.traj (identity for uncut plans). */
+  seasonHold?: number;
 }
 
 /**
@@ -596,7 +603,7 @@ export interface StepCarry {
  */
 export function stepWeek(
   i: number, prev: StepCarry, eff: EffectiveSettings, mod?: AdaptiveModulation | null,
-): { config: WeekConfig; total: number; long: number; traj: number } {
+): { config: WeekConfig; total: number; long: number; traj: number; seasonHold?: number } {
   const days = Math.round(Math.min(6, Math.max(3, eff.daysPerWeek)));
   // Adaptation may only tighten the cadence (min), never loosen it. Identity =
   // no mod, or a mod whose downEvery is ≥ the setting.
@@ -614,6 +621,12 @@ export function stepWeek(
   const isMaint = isMaintenanceIdx(i, eff);
 
   let total: number;
+  // Set for maintenance weeks; carried so the season's hold survives a
+  // missed-week re-entry cut (the rebuild target). Undefined out of season.
+  let seasonHold: number | undefined;
+  // True for a maintenance week REBUILDING toward the hold after a cut — the
+  // one case where a season week's trajectory advances.
+  let maintRebuild = false;
   if (i === 0) {
     total = eff.startMpw;
   } else if (isDown) {
@@ -622,9 +635,26 @@ export function stepWeek(
     // from the last real build level.
     total = prev.traj * (1 - TUNABLES.SCHEDULED_DOWN_CUT);
   } else if (isMaint) {
-    // XC/coach season: maintain — hold at the trajectory (never build past it),
-    // capped at the peak. Volume stays flat while the coach drives the work.
-    total = Math.min(prev.traj, eff.peakMpw);
+    // XC/coach season: maintain — hold at the level the season STARTED with
+    // (min(entry trajectory, peak)); volume stays flat while the coach drives
+    // the work, and maintenance never builds past that hold. The one exception:
+    // when the trajectory sits BELOW the hold (a missed-week re-entry cut, in
+    // or just before the season), season weeks REBUILD toward the hold at the
+    // normal governed rate — +10%/wk cap, buildStep floor, growthFactor easing
+    // — then hold. Rebuilding back to the season's own entry level is recovery,
+    // not growth: the hold stays the ceiling, so this can never exceed what an
+    // uncut season would have prescribed.
+    const hold = Math.min(prev.seasonHold ?? prev.traj, eff.peakMpw);
+    seasonHold = hold;
+    if (prev.traj < hold - 1e-9) {
+      const cap = prev.traj * (TUNABLES.WEEKLY_GROWTH_MAX - 1);
+      const gapSeek = (hold - prev.traj) / TUNABLES.PEAK_RAMP_WEEKS;
+      const step = Math.min(cap, Math.max(eff.buildStep, gapSeek)) * growthFactor;
+      total = Math.min(prev.traj + step, hold);
+      maintRebuild = true;
+    } else {
+      total = hold;
+    }
   } else {
     // Ramp toward peakMpw. `buildStep` is the MINIMUM weekly increase; when the
     // peak is still far the plan closes a share (~1/PEAK_RAMP_WEEKS) of the gap
@@ -665,8 +695,11 @@ export function stepWeek(
   // long run is capped at the peak week: a single run can never exceed a whole
   // week's cap. holdLong only ever HOLDS the ladder — it can never step it up,
   // so identity (no mod / holdLong falsy) is byte-exact.
-  const holdTraj = isDown || isMaint;
-  const holdLongRun = holdTraj || mod?.holdLong === true;
+  // A rebuilding maintenance week advances the trajectory (that IS the climb
+  // back to the hold); the long-run ladder still holds through EVERY season
+  // week — the coach owns quality, so only weekly volume recovers.
+  const holdTraj = isDown || (isMaint && !maintRebuild);
+  const holdLongRun = isDown || isMaint || mod?.holdLong === true;
   const rawLong = holdLongRun ? floorToHalf(prev.long) : nextLongFrom(prev.long);
   const long = Math.min(rawLong, floorToHalf(eff.peakMpw));
   const targetTotal = Math.max(roundHalf(total), long); // a week is never smaller than its long run
@@ -688,12 +721,17 @@ export function stepWeek(
   return {
     config: { miles, note, isDownWeek: isDown },
     total: actualTotal,
-    // The trajectory only advances on real build weeks; absorption AND
-    // maintenance weeks keep the prior trajectory so volume neither drifts up
-    // nor re-baselines down. A long-run HOLD does not freeze the trajectory —
-    // weekly mileage may still progress while the long run stays put.
+    // The trajectory only advances on real build weeks — plus the one season
+    // exception: a maintenance week REBUILDING toward the hold after a re-entry
+    // cut. Plain absorption and flat maintenance weeks keep the prior
+    // trajectory so volume neither drifts up nor re-baselines down. A long-run
+    // HOLD does not freeze the trajectory — weekly mileage may still progress
+    // while the long run stays put.
     traj: holdTraj ? prev.traj : targetTotal,
     long: holdLongRun ? prev.long : long,
+    // Present only for maintenance weeks; carrying it keeps the season's hold
+    // target stable while the trajectory climbs back to it.
+    seasonHold,
   };
 }
 
@@ -709,9 +747,9 @@ export function buildWeekConfigsFromSettings(
   const configs: WeekConfig[] = [];
   let carry: StepCarry = { long: eff.trailingLongest, traj: eff.startMpw };
   for (let i = 0; i < weeksN; i++) {
-    const { config, long, traj } = stepWeek(i, carry, eff, mod);
+    const { config, long, traj, seasonHold } = stepWeek(i, carry, eff, mod);
     configs.push(config);
-    carry = { long, traj };
+    carry = { long, traj, seasonHold };
   }
   return configs;
 }

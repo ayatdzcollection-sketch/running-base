@@ -273,15 +273,25 @@ export function resolveEffectivePlan(
           carry.traj * TUNABLES.MISSED.REENTRY_FLOOR,
         );
         if (anchor < carry.traj - 1e-9) {
+          const maintain = currentSeason(eff, weekStart) != null;
           // Record every real cut so the UI can explain the changed number —
           // a silent adaptation reads as a bug, however right it is.
           reentries.push({
             weekStart, judgedWeekStart: lastDone.weekStart,
             actual: lastDone.actual, prescribed: lastDone.prescribed,
             from: carry.traj, to: anchor,
-            maintain: currentSeason(eff, weekStart) != null,
+            maintain,
           });
-          carry = { ...carry, traj: anchor };
+          carry = {
+            ...carry,
+            traj: anchor,
+            // An in-season cut must not lower the season's HOLD: keep (or set,
+            // when the cut IS the season entry) the pre-cut level as the
+            // target the maintenance weeks rebuild toward.
+            seasonHold: maintain
+              ? carry.seasonHold ?? Math.min(carry.traj, eff.peakMpw)
+              : carry.seasonHold,
+          };
         }
       }
     }
@@ -298,7 +308,7 @@ export function resolveEffectivePlan(
       const isDown = total <= carry.traj * (1 - TUNABLES.SCHEDULED_DOWN_CUT) + TUNABLES.HALF_STEP + 1e-9;
       configs.push({ ...accCfg, isDownWeek: isDown });
       startDates.push(weekStart);
-      carry = { long: acceptedLong(accCfg), traj: isDown ? carry.traj : total };
+      carry = { long: acceptedLong(accCfg), traj: isDown ? carry.traj : total, seasonHold: carry.seasonHold };
       weekSource.set(weekStart, 'accepted');
       lastDone = doneRecord(weekStart, accCfg) ?? lastDone;
       continue;
@@ -316,6 +326,7 @@ export function resolveEffectivePlan(
       carry = {
         long: configLong(staticCfg),
         traj: staticCfg.isDownWeek ? carry.traj : configTotal(staticCfg),
+        seasonHold: carry.seasonHold,
       };
       weekSource.set(weekStart, 'static');
       lastDone = doneRecord(weekStart, staticCfg) ?? lastDone;
@@ -324,10 +335,10 @@ export function resolveEffectivePlan(
 
     // Individual adaptation applies ONLY to future/unlocked weeks; a locked week
     // reflects what was actually run, so it's generated at identity (no mod).
-    const { config, long, traj } = stepWeek(i, carry, eff, locked ? null : opts?.modulation);
+    const { config, long, traj, seasonHold } = stepWeek(i, carry, eff, locked ? null : opts?.modulation);
     configs.push(config);
     startDates.push(weekStart);
-    carry = { long, traj };
+    carry = { long, traj, seasonHold };
     weekSource.set(weekStart, 'settings');
     lastDone = doneRecord(weekStart, config) ?? lastDone;
   }
