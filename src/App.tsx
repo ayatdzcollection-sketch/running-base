@@ -54,6 +54,7 @@ import ShoeTracker from './components/ShoeTracker';
 import CoachNotes from './components/CoachNotes';
 import HeatEffort from './components/HeatEffort';
 import MissedDaysCard from './components/MissedDaysCard';
+import ReentryNotice from './components/ReentryNotice';
 
 /** Replace an item with a matching id, or append it. Used by the shoe store. */
 function upsertById<T extends { id: string }>(list: T[], item: T): T[] {
@@ -122,7 +123,7 @@ export default function App() {
     ? Math.floor((Date.parse(today + 'T12:00:00Z') - Date.parse(settings.startDate + 'T12:00:00Z')) / (7 * 86_400_000)) + 1
     : 0;
   const planCount = settings ? Math.max(clampWeeksShown(settings.weeksShown), weeksToToday) : undefined;
-  const { plan } = resolveEffectivePlan(settings, runState, today, {
+  const { plan, reentries } = resolveEffectivePlan(settings, runState, today, {
     breakStart, modulation: adaptiveMod, acceptedWeeks: globals.acceptedWeeks, count: planCount,
   });
   // Which future weeks may offer "postpone the down week" / undo right now.
@@ -595,6 +596,16 @@ export default function App() {
     flare, breach, inSeason: inXcSeason, nextLong,
   });
 
+  // A re-entry cut worth explaining NOW: one that shaped the current week, or
+  // the next one (a canonical static current week defers its cut forward).
+  const curMonday = todayWeek?.startDate ?? null;
+  const reentryNow = reentries.find(r =>
+    r.weekStart === curMonday || (curMonday != null && r.weekStart === addDaysStr(curMonday, 7)),
+  ) ?? null;
+  const reentryWeekTotal = reentryNow
+    ? plan.weeks.find(w => w.startDate === reentryNow.weekStart)?.totalPlanned ?? null
+    : null;
+
   function renderBlock(id: BlockId): ReactNode {
     const meta = blockMeta(id);
     if (!meta) return null;
@@ -617,6 +628,7 @@ export default function App() {
         return (
           <div className="space-y-2">
             <WeekProgress runState={runState} plan={plan} today={today} week={todayWeek} blockTotalTarget={blockTotalTarget} />
+            {reentryNow && <ReentryNotice r={reentryNow} weekTotal={reentryWeekTotal} />}
             {missedToday && <MissedDaysCard a={missedToday} />}
           </div>
         );

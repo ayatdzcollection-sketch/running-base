@@ -53,12 +53,30 @@ export function isMondayReplannable(weekStart: string, runState: RunState, today
   return true;
 }
 
+/** One missed-week re-entry cut the anchor applied — kept so the UI can SAY
+ *  why a week's number dropped instead of adapting silently. */
+export interface ReentryRecord {
+  /** The week whose prescription was re-anchored (where the cut landed). */
+  weekStart: string;
+  /** The completed shortfall week that was judged. */
+  judgedWeekStart: string;
+  actual: number;
+  prescribed: number;
+  /** Build trajectory before / after the cut. */
+  from: number;
+  to: number;
+  /** The anchored week sits inside a coach season (it is the maintain hold). */
+  maintain: boolean;
+}
+
 export interface ResolvedPlan {
   plan: BuiltPlan;
   /** weekStart → whether that week came from the static plan, settings, or a
    *  confirmed accepted (generated) week. */
   weekSource: Map<string, 'static' | 'settings' | 'accepted'>;
   clamps: ClampNote[];
+  /** Every re-entry cut applied in this resolution (usually 0 or 1). */
+  reentries: ReentryRecord[];
 }
 
 function configTotal(cfg: WeekConfig): number {
@@ -146,7 +164,7 @@ export function resolveEffectivePlan(
     // Monday aligns; everything else is the untouched static scaffold.
     if (!accepted || Object.keys(accepted).length === 0) {
       for (const w of staticPlan.weeks) weekSource.set(w.startDate, 'static');
-      return { plan: staticPlan, weekSource, clamps: [] };
+      return { plan: staticPlan, weekSource, clamps: [], reentries: [] };
     }
     const cfgs = WEEK_CONFIGS.map((cfg, i) => {
       const ws = addDaysStr(PLAN_START_DATE, i * 7);
@@ -154,7 +172,7 @@ export function resolveEffectivePlan(
       weekSource.set(ws, acc ? 'accepted' : 'static');
       return acc ?? cfg;
     });
-    return { plan: buildPlan(cfgs, PLAN_START_DATE), weekSource, clamps: [] };
+    return { plan: buildPlan(cfgs, PLAN_START_DATE), weekSource, clamps: [], reentries: [] };
   }
 
   const { eff, clamps } = effectiveSettings(raw, runState, today);
@@ -177,6 +195,7 @@ export function resolveEffectivePlan(
   // shortfall can never re-cut the trajectory week after week (no 0.8× decay).
   let lastDone: { weekStart: string; actual: number; prescribed: number } | null = null;
   let judged: string | null = null;
+  const reentries: ReentryRecord[] = [];
   // Returns the completed-week record (or null for a still-running week); the
   // caller assigns it so TS control-flow analysis sees the mutation.
   const doneRecord = (weekStart: string, cfg: WeekConfig) =>
@@ -253,7 +272,17 @@ export function resolveEffectivePlan(
           lastDone.actual * TUNABLES.WEEKLY_GROWTH_MAX,
           carry.traj * TUNABLES.MISSED.REENTRY_FLOOR,
         );
-        carry = { ...carry, traj: Math.min(carry.traj, anchor) };
+        if (anchor < carry.traj - 1e-9) {
+          // Record every real cut so the UI can explain the changed number —
+          // a silent adaptation reads as a bug, however right it is.
+          reentries.push({
+            weekStart, judgedWeekStart: lastDone.weekStart,
+            actual: lastDone.actual, prescribed: lastDone.prescribed,
+            from: carry.traj, to: anchor,
+            maintain: currentSeason(eff, weekStart) != null,
+          });
+          carry = { ...carry, traj: anchor };
+        }
       }
     }
 
@@ -306,7 +335,7 @@ export function resolveEffectivePlan(
   // buildPlan assumes contiguous weeks from eff.startDate. That still holds:
   // we only skipped the TAIL (weeks past breakStart), never a middle week.
   const plan = buildPlan(configs, eff.startDate);
-  return { plan, weekSource, clamps };
+  return { plan, weekSource, clamps, reentries };
 }
 
 // ── Postpone-a-down-week controls ─────────────────────────────

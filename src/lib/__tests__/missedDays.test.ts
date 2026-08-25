@@ -381,6 +381,39 @@ describe('missed-week re-entry anchor (resolveEffectivePlan)', () => {
     expect(wednesday.longRunCap).toBeCloseTo(monday.longRunCap, 5);
   });
 
+  it('every real cut is recorded so the UI can explain it (never silent)', () => {
+    const { reentries } = resolveEffectivePlan(settings(RESEEDED), RESEEDED_RS, '2026-07-06');
+    expect(reentries).toHaveLength(1);
+    const r = reentries[0];
+    expect(r.weekStart).toBe('2026-07-06');
+    expect(r.judgedWeekStart).toBe('2026-06-29');
+    expect(r.actual).toBeCloseTo(4, 5);
+    expect(r.prescribed).toBeGreaterThan(20);
+    expect(r.to).toBeLessThan(r.from);
+    expect(r.maintain).toBe(false);
+  });
+
+  it('identity: full adherence emits no re-entry records', () => {
+    const { reentries } = resolveEffectivePlan(settings(), { ...W1_DONE, ...W2_DONE }, TODAY);
+    expect(reentries).toHaveLength(0);
+  });
+
+  it('season-entry after a short week: the MAINTAIN hold is the anchored level, flagged maintain', () => {
+    // The reported defect scenario: last build week badly missed, coach season
+    // starts the next Monday. The hold must be the eased re-entry (0.8 × traj),
+    // and the record must say so — never a silent number change.
+    const { plan, reentries } = resolveEffectivePlan(
+      settings({ ...RESEEDED, xcStartDate: '2026-07-06' }), RESEEDED_RS, '2026-07-06',
+    );
+    const w3 = plan.weeks.find(w => w.startDate === '2026-07-06')!;
+    expect(w3.note).toBe('maintain');
+    // traj 22 → anchored to max(4×1.1, 22×0.8) = 17.6 → maintain ≈ 17.5.
+    expect(w3.totalPlanned).toBeGreaterThanOrEqual(16.5);
+    expect(w3.totalPlanned).toBeLessThanOrEqual(17.6);
+    expect(reentries).toHaveLength(1);
+    expect(reentries[0].maintain).toBe(true);
+  });
+
   it('once the anchored week completes, the next boundary judges IT, not the old miss', () => {
     // Run the anchored W3 fully at its (reduced) prescription → the following
     // Monday, W4 builds off the anchored trajectory with no fresh anchor.
