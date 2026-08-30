@@ -11,6 +11,17 @@ interface Props {
   today: string;
   settings: RawSettings | null;
   adaptive: AdaptiveModulation | null;
+  /** The rolling plan's prescribed total per week start. Drafts are capped at
+   *  their own week's target so a proposal can never exceed — and then
+   *  override — what the plan is deliberately holding (season maintenance,
+   *  a missed-week re-entry, a scheduled down week). */
+  planTargets?: Record<string, number> | null;
+  /** The plan's down-week verdict per week start, so a draft never disagrees
+   *  with the displayed plan about absorption weeks. */
+  planDownWeeks?: Record<string, boolean> | null;
+  /** Planned miles per date, so ✓-done-without-distance days count toward the
+   *  volume the draft builds from. */
+  prescribedFor?: (date: string) => number | null | undefined;
   onUpdateGlobals: (patch: Partial<GlobalState>) => void;
 }
 
@@ -21,7 +32,7 @@ const COUNTS = [1, 2, 4];
 // Accepted weeks store additively in globals.acceptedWeeks — the static plan is
 // never rewritten, and any accepted week that later conflicts with a safety
 // gate is flagged (never silently changed) with a safer suggestion.
-export default function GenerateWeek({ runState, globals, today, settings, adaptive, onUpdateGlobals }: Props) {
+export default function GenerateWeek({ runState, globals, today, settings, adaptive, planTargets, planDownWeeks, prescribedFor, onUpdateGlobals }: Props) {
   const [open, setOpen] = useState(false);
   const [drafts, setDrafts] = useState<WeekProposal[]>([]);
   const [count, setCount] = useState(1);
@@ -33,7 +44,7 @@ export default function GenerateWeek({ runState, globals, today, settings, adapt
 
   function generate() {
     setSavedMsg('');
-    setDrafts(generateWeeks({ runState, globals, today, settings, adaptive, count }).proposals);
+    setDrafts(generateWeeks({ runState, globals, today, settings, adaptive, planTargets, planDownWeeks, prescribedFor, count }).proposals);
   }
 
   function bumpDay(wi: number, di: number, delta: number) {
@@ -99,8 +110,10 @@ export default function GenerateWeek({ runState, globals, today, settings, adapt
           ))}
 
           <p className="text-[11px] text-slate-600 leading-relaxed">
-            Built from your actual completed training, obeying the speed state. Continues the build,
-            forces a down week on cadence, and never lets a long run exceed the {settings?.capPct ?? 110}% cap.
+            Your plan already projects future weeks on its own — this is for drafting one from your ACTUAL
+            logged training when you want to hand-tune it. Built from completed runs, obeying the speed state,
+            never letting a long run exceed the {settings?.capPct ?? 110}% cap, and never exceeding what the
+            plan prescribes for that week (a season hold, a re-entry, or a down week still binds).
             Nothing saves until you confirm; your edits are kept.
           </p>
 

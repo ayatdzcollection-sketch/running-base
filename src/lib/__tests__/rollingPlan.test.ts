@@ -130,4 +130,32 @@ describe('rolling progression preserves the previous progression fix', () => {
       expect(after).toBeGreaterThanOrEqual(before - 1.5); // splitWeek round-loss headroom
     }
   });
+
+  // ── The window ROLLS: an explicit count is a real horizon, not capped at 24 ──
+  // App passes (elapsed weeks + weeksShown) so the future depth stays constant
+  // as the season advances. If the resolver silently clamped that to 24, weeks
+  // would stop appearing — and eventually TODAY would fall off the plan, which
+  // renders as "No planned day" on an ordinary training day.
+
+  it('an explicit count beyond 24 weeks is honored (the horizon can roll forward)', () => {
+    const weeks = resolveEffectivePlan(scenarioSettings(), scenarioLog(), TODAY, { count: 40 }).plan.weeks;
+    expect(weeks).toHaveLength(40);
+    expect(clampWeeksShown(40)).toBe(24); // the USER setting is still capped
+  });
+
+  it('today always falls inside the plan for a long-running block', () => {
+    // 60 weeks after the start date, with App's count formula.
+    const start = '2026-06-29';
+    const today = '2027-08-23'; // ~60 weeks later, a Monday
+    const weeksToToday = Math.max(1, Math.floor(
+      (Date.parse(today + 'T12:00:00Z') - Date.parse(start + 'T12:00:00Z')) / (7 * 86_400_000),
+    ) + 1);
+    const count = weeksToToday - 1 + clampWeeksShown(8);
+    const { plan } = resolveEffectivePlan(
+      scenarioSettings({ startDate: start, weeksShown: 8 }), scenarioLog(), today, { count },
+    );
+    expect(plan.dateToDay.get(today)).toBeTruthy();          // never "No planned day"
+    const future = plan.weeks.filter(w => w.startDate > today);
+    expect(future.length).toBeGreaterThanOrEqual(7);         // the asked-for depth survives
+  });
 });

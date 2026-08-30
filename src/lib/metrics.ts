@@ -271,14 +271,30 @@ export function isReducedWeek(week: WeekActual, prevWeek: WeekActual | null | un
   return week.miles <= prevWeek.miles * (1 - TUNABLES.SCHEDULED_DOWN_CUT) + TUNABLES.HALF_STEP + 1e-9;
 }
 
-/** Actual miles per calendar week, ascending by week. Done-without-miles days count 0 here (actuals only). */
-export function weeklyActuals(runState: RunState, upTo: string): WeekActual[] {
+/**
+ * Actual miles per calendar week, ascending by week.
+ *
+ * `prescribedFor` (optional) resolves a date's PLANNED miles so a day marked
+ * ✓-done WITHOUT a typed distance is credited at its prescription — the same
+ * effective-miles rule the plan overlay, the week totals, the award, and the
+ * shoe tracker all use. Without it such a day is invisible here, and a week
+ * logged entirely by tapping ✓ reads as "no week at all": the generator then
+ * announced "you missed last week" and resumed flat for an athlete who had in
+ * fact run every day. Omitted = actuals only (the original behavior).
+ */
+export function weeklyActuals(
+  runState: RunState,
+  upTo: string,
+  prescribedFor?: (date: string) => number | null | undefined,
+): WeekActual[] {
   const byWeek = new Map<string, WeekActual>();
   for (const e of Object.values(runState)) {
-    if (e.miles_actual == null || e.date > upTo) continue;
+    if (e.date > upTo) continue;
+    const miles = e.miles_actual ?? (e.done ? prescribedFor?.(e.date) ?? null : null);
+    if (miles == null) continue;
     const ws = mondayOf(e.date);
     const w = byWeek.get(ws) ?? { weekStart: ws, miles: 0, runCount: 0 };
-    w.miles += e.miles_actual;
+    w.miles += miles;
     w.runCount++;
     byWeek.set(ws, w);
   }

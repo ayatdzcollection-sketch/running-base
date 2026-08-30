@@ -17,7 +17,7 @@ import { DEFAULT_HIDDEN_IDS } from '../config/homeBlocks';
 import { TUNABLES } from '../config/tunables';
 import {
   mondayOf, nextMonday, addDaysStr, weeklyActuals, trailing30Longest, nextLongFrom, floorToHalf,
-  isSeasonDate, lastEndedSeason, nextSeasonStart, normalizedSeasons,
+  isSeasonDate, lastEndedSeason, nextSeasonStart, normalizedSeasons, currentSeason,
 } from './metrics';
 
 const SETTINGS_VERSION = 1 as const;
@@ -314,6 +314,11 @@ export function returnFromBreak(
       : undefined,
     startMpw,
     peakMpw: Math.max(base.peakMpw, startMpw),
+    // The week grid is re-anchored to a new startDate, so stored down-week
+    // postponements no longer describe any real cadence Monday. They are inert
+    // in the rolling plan, but the generator matched them by raw date and would
+    // conjure a phantom down week — drop them with the reseed.
+    downPostponed: undefined,
     trailingLongest: seed,
     updated_at: nowIso,
   };
@@ -377,12 +382,23 @@ export function splitWeek(total: number, long: number, daysPerWeek: number): num
   return easy;
 }
 
-/** Clamp the display window (how many future weeks the app renders). Purely a
- *  visualization horizon — the rolling engine can generate arbitrarily many
- *  weeks beyond it. Kept ≥1 so there's always something to show, and ≤24 so
- *  the DOM/computation stays cheap. */
+/** Clamp the user-facing display window: how many weeks the app shows FROM THE
+ *  CURRENT WEEK ONWARD (this week + the future depth the athlete asked for).
+ *  Purely a visualization horizon — the rolling engine can generate arbitrarily
+ *  many weeks beyond it. Kept ≥1 so there's always something to show, and ≤24
+ *  so the DOM stays cheap. */
 export function clampWeeksShown(n: number): number {
   return Math.round(Math.min(24, Math.max(1, n)));
+}
+
+/** Clamp an explicit resolve COUNT (weeks generated from startDate). This is
+ *  the internal horizon, not the user's setting: it must also cover every
+ *  ELAPSED week back to startDate, or the plan would eventually stop reaching
+ *  today and the app would render "No planned day" on a perfectly normal
+ *  training day. Generously bounded so that can't happen in practice, while
+ *  still guarding against a pathological startDate. */
+export function clampResolveCount(n: number): number {
+  return Math.round(Math.min(260, Math.max(1, n)));
 }
 
 /** Normalized down-week cadence — every Nth week, N ≥ 2. */
@@ -560,12 +576,22 @@ export interface StepCarry {
   long: number;
   traj: number;
   /** The season's maintain HOLD level — min(trajectory at season entry, peak).
-   *  Set on the first maintenance week (or by the re-entry anchor when its cut
-   *  lands in-season, using the PRE-cut trajectory) and carried through the
-   *  season so a missed-week cut can REBUILD toward the hold instead of
-   *  pinning the whole season to the reduced level. Cleared outside seasons.
-   *  Absent = derived from prev.traj (identity for uncut plans). */
+   *  Set on the first maintenance week and carried through the season so a
+   *  missed-week cut can REBUILD toward the hold instead of pinning the whole
+   *  season to the reduced level. Cleared outside seasons, and reset when a
+   *  DIFFERENT season starts (see seasonId) so a finished season's hold can
+   *  never become the next one's. Absent = derived at season entry. */
   seasonHold?: number;
+  /** Which season `seasonHold` belongs to. Two seasons can be adjacent (an
+   *  open-ended season implicitly closes the day before the next one starts),
+   *  so "not in a season" is NOT a reliable reset signal on its own. */
+  seasonId?: string;
+  /** The build trajectory BEFORE a missed-week re-entry cut, kept until the
+   *  trajectory climbs back past it. It is what the athlete had actually
+   *  earned, so it — not the reduced level — is the season's hold when a cut
+   *  lands in, or in the week just before, season entry. Without it a cut
+   *  timed one week before the season pinned the entire season to the cut. */
+  preCutTraj?: number;
 }
 
 /**
@@ -603,7 +629,7 @@ export interface StepCarry {
  */
 export function stepWeek(
   i: number, prev: StepCarry, eff: EffectiveSettings, mod?: AdaptiveModulation | null,
-): { config: WeekConfig; total: number; long: number; traj: number; seasonHold?: number } {
+): { config: WeekConfig; total: number; long: number; traj: number; seasonHold?: number; seasonId?: string; preCutTraj?: number } {
   const days = Math.round(Math.min(6, Math.max(3, eff.daysPerWeek)));
   // Adaptation may only tighten the cadence (min), never loosen it. Identity =
   // no mod, or a mod whose downEvery is ≥ the setting.
@@ -620,10 +646,30 @@ export function stepWeek(
   const isDown = slot === 'down' || slot === 'landing';
   const isMaint = isMaintenanceIdx(i, eff);
 
+  // The season's hold target. Derived for EVERY in-season week — including
+  // absorption weeks, which compute their total from the trajectory but must
+  // not erase the hold the maintenance weeks rebuild toward. (Computing this
+  // inside the maintain branch alone was a real bug: a down week mid-season
+  // took the earlier isDown branch, returned no hold, and the next maintenance
+  // week re-derived it from the REDUCED trajectory — pinning the rest of the
+  // season to the cut it was supposed to climb out of.)
+  //
+  // The hold is reset whenever a DIFFERENT season starts, not merely when one
+  // ends: seasons can be adjacent (an open-ended season implicitly closes the
+  // day before the next begins), so an id check is what actually stops a
+  // finished season's hold from becoming the next season's.
+  //
+  // At entry the hold is the trajectory the athlete had EARNED — max(current,
+  // pre-cut) — so a missed-week cut landing in, or just before, the first
+  // season week sets the hold to the real pre-cut level and the season climbs
+  // back to it, instead of the cut becoming the season's permanent ceiling.
+  const season = currentSeason(eff, addDaysStr(eff.startDate, i * 7));
+  const holdCarriedOver = season && prev.seasonId === season.id ? prev.seasonHold : undefined;
+  const seasonHold = isMaint
+    ? Math.min(holdCarriedOver ?? Math.max(prev.traj, prev.preCutTraj ?? 0), eff.peakMpw)
+    : undefined;
+
   let total: number;
-  // Set for maintenance weeks; carried so the season's hold survives a
-  // missed-week re-entry cut (the rebuild target). Undefined out of season.
-  let seasonHold: number | undefined;
   // True for a maintenance week REBUILDING toward the hold after a cut — the
   // one case where a season week's trajectory advances.
   let maintRebuild = false;
@@ -644,8 +690,7 @@ export function stepWeek(
     // — then hold. Rebuilding back to the season's own entry level is recovery,
     // not growth: the hold stays the ceiling, so this can never exceed what an
     // uncut season would have prescribed.
-    const hold = Math.min(prev.seasonHold ?? prev.traj, eff.peakMpw);
-    seasonHold = hold;
+    const hold = seasonHold as number;   // always set when isMaint
     if (prev.traj < hold - 1e-9) {
       const cap = prev.traj * (TUNABLES.WEEKLY_GROWTH_MAX - 1);
       const gapSeek = (hold - prev.traj) / TUNABLES.PEAK_RAMP_WEEKS;
@@ -713,6 +758,8 @@ export function stepWeek(
   // bound on the display anyway.
   const actualTotal = miles.reduce((a, b) => a + b, 0);
 
+  const nextTraj = holdTraj ? prev.traj : targetTotal;
+
   let note: string | undefined;
   if (isDown) note = 'down week';
   else if (isMaint) note = 'maintain';
@@ -727,11 +774,16 @@ export function stepWeek(
     // trajectory so volume neither drifts up nor re-baselines down. A long-run
     // HOLD does not freeze the trajectory — weekly mileage may still progress
     // while the long run stays put.
-    traj: holdTraj ? prev.traj : targetTotal,
+    traj: nextTraj,
     long: holdLongRun ? prev.long : long,
     // Present only for maintenance weeks; carrying it keeps the season's hold
     // target stable while the trajectory climbs back to it.
     seasonHold,
+    seasonId: season?.id,
+    // The pre-cut level is spent once the trajectory has climbed back past it.
+    preCutTraj: prev.preCutTraj != null && prev.preCutTraj > nextTraj + 1e-9
+      ? prev.preCutTraj
+      : undefined,
   };
 }
 
@@ -743,13 +795,13 @@ export function stepWeek(
 export function buildWeekConfigsFromSettings(
   eff: EffectiveSettings, count?: number, mod?: AdaptiveModulation | null,
 ): WeekConfig[] {
-  const weeksN = clampWeeksShown(count ?? eff.weeksShown);
+  const weeksN = count != null ? clampResolveCount(count) : clampWeeksShown(eff.weeksShown);
   const configs: WeekConfig[] = [];
   let carry: StepCarry = { long: eff.trailingLongest, traj: eff.startMpw };
   for (let i = 0; i < weeksN; i++) {
-    const { config, long, traj, seasonHold } = stepWeek(i, carry, eff, mod);
+    const { config, long, traj, seasonHold, seasonId, preCutTraj } = stepWeek(i, carry, eff, mod);
     configs.push(config);
-    carry = { long, traj, seasonHold };
+    carry = { long, traj, seasonHold, seasonId, preCutTraj };
   }
   return configs;
 }

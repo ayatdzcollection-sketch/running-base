@@ -44,7 +44,7 @@ const GROUPS: GroupDef[] = [
       { key: 'daysPerWeek', label: 'Run days / week', unit: 'days', min: 3, max: 6, step: 1,
         info: 'How many days you run each week. Fewer days means more rest; each run may stretch a little to hold weekly volume.' },
       { key: 'weeksShown', label: 'Planning window', unit: 'weeks', min: 4, max: 24, step: 1,
-        info: 'How many future weeks the app SHOWS. The plan is rolling — the engine keeps going beyond this window; this only changes how many weeks are visible.' },
+        info: 'How many weeks ahead the app SHOWS, counted from the current week — the window rolls forward with you, so new weeks appear on their own as time passes. The plan is rolling and the engine keeps going beyond this window; this only changes how far ahead you can see.' },
       { key: 'downEvery', label: 'Down week every', unit: 'weeks', min: 3, max: 6, step: 1,
         info: "How often a lighter 'down' week drops in so your body absorbs the work. Lower = recover more often." },
       { key: 'startDate', label: 'Start date', type: 'date', min: 0, max: 0, step: 0,

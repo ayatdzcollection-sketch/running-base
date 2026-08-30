@@ -115,14 +115,17 @@ export default function App() {
   // Mutually exclusive with bodyAdjusted by construction (any easing disables it).
   const earnedTrustActive = !!adaptiveProfile?.earnedTrust.active;
 
-  // The rolling plan has no end: the display window is anchored at startDate,
-  // so once real time moves past it the resolved count is extended to keep
-  // covering today (weeksShown still sets the future depth the user asked to
-  // see — this only ever ADDS already-elapsed weeks, never changes the slope).
+  // The rolling plan has no end, and the window ROLLS WITH TODAY: `weeksShown`
+  // is the depth from the CURRENT week onward (this week + the future the
+  // athlete asked to see), so the future horizon stays constant as weeks pass.
+  // The resolved count adds the elapsed weeks back to startDate on top of it —
+  // history keeps rendering, and new future weeks appear on their own instead
+  // of needing the window widened by hand every week. Elapsed weeks only ADD
+  // rendering; they never change the slope (buildStep drives that).
   const weeksToToday = settings
-    ? Math.floor((Date.parse(today + 'T12:00:00Z') - Date.parse(settings.startDate + 'T12:00:00Z')) / (7 * 86_400_000)) + 1
+    ? Math.max(1, Math.floor((Date.parse(today + 'T12:00:00Z') - Date.parse(settings.startDate + 'T12:00:00Z')) / (7 * 86_400_000)) + 1)
     : 0;
-  const planCount = settings ? Math.max(clampWeeksShown(settings.weeksShown), weeksToToday) : undefined;
+  const planCount = settings ? weeksToToday - 1 + clampWeeksShown(settings.weeksShown) : undefined;
   const { plan, reentries } = resolveEffectivePlan(settings, runState, today, {
     breakStart, modulation: adaptiveMod, acceptedWeeks: globals.acceptedWeeks, count: planCount,
   });
@@ -131,6 +134,19 @@ export default function App() {
   const downControls = downWeekControls(settings, runState, today, {
     breakStart, modulation: adaptiveMod, acceptedWeeks: globals.acceptedWeeks, count: planCount,
   });
+  // The plan's own prescribed total per week — handed to the draft generator as
+  // a per-week ceiling so a draft can never propose past what the plan is
+  // deliberately holding (season maintenance, re-entry, a scheduled down week).
+  const planTargets: Record<string, number> = {};
+  const planDownWeeks: Record<string, boolean> = {};
+  for (const w of plan.weeks) {
+    planTargets[w.startDate] = w.totalPlanned;
+    planDownWeeks[w.startDate] = w.isDownWeek;
+  }
+  // Planned miles per date — lets every consumer credit a ✓-done day with no
+  // typed distance at its prescription, the app's standard effective-miles rule.
+  const prescribedFor = (date: string) => plan.dateToDay.get(date)?.prescribed ?? null;
+
   const award = getAward(settings);
   const blockTotalTarget = planTotalMiles(plan);
 
@@ -682,7 +698,13 @@ export default function App() {
           </div>
         );
       case 'nextweek':
-        return <GenerateWeek runState={runState} globals={globals} today={today} settings={settings} adaptive={adaptiveMod} onUpdateGlobals={updateGlobals} />;
+        return (
+          <GenerateWeek
+            runState={runState} globals={globals} today={today} settings={settings}
+            adaptive={adaptiveMod} planTargets={planTargets} planDownWeeks={planDownWeeks}
+            prescribedFor={prescribedFor} onUpdateGlobals={updateGlobals}
+          />
+        );
       case 'races':
         return FLAGS.RACE_LOG ? (
           <RaceLog
@@ -720,7 +742,7 @@ export default function App() {
         return FLAGS.shoeMileage ? (
           <ShoeTracker
             shoes={shoes} runState={runState} today={today}
-            prescribedFor={date => plan.dateToDay.get(date)?.prescribed ?? null}
+            prescribedFor={prescribedFor}
             onSave={(s: Shoe) => updateGlobals({ shoes: upsertById(shoes, s) })}
             onDelete={id => updateGlobals({ shoes: shoes.filter(s => s.id !== id) })}
           />

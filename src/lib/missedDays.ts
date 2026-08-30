@@ -103,15 +103,17 @@ function catchupFor(
 ): CatchupSuggestion | null {
   if (opts.breach || opts.inSeason) return null;
 
-  // First rest day after the final planned run day, with a later rest day
-  // still in the week (Sunday stays off). Weeks whose run days already reach
-  // Saturday have no free slot — nothing is ever suggested on Sunday.
+  // The LAST free rest day before the week's final rest day — Saturday for a
+  // Mon-start week, whether the plan runs 5 days or 3. Sunday is never spent.
+  // (Taking the FIRST free rest day put a 3-day week's catch-up on Thursday,
+  // immediately after Wednesday's long run — the day-after-long stacking this
+  // module argues against, and not the "Saturday" the feature promises.)
   const lastRun = week.runDays[week.runDays.length - 1];
   const restAfter = week.allDays
     .filter(d => d.type === 'rest' && d.date > lastRun.date)
     .sort((a, b) => (a.date < b.date ? -1 : 1));
   if (restAfter.length < 2) return null;
-  const slot = restAfter[0];
+  const slot = restAfter[restAfter.length - 2];
   if (slot.date < today) return null;
   const slotEntry = runState[slot.date];
   if (slotEntry && (slotEntry.done || slotEntry.miles_actual != null)) return null;
@@ -182,7 +184,13 @@ export function assessMissedDays(
     detail =
       'Recovery outranks mileage right now. The missed miles stay missed, and that is the right call: '
       + 'flares settle with load reduction, not loading through.';
-  } else if (week.isDownWeek) {
+  } else if (week.isDownWeek
+             && (week.totalPlanned <= 0
+                 || (week.totalPlanned - missedMiles) / week.totalPlanned >= M.REENTRY_TRIGGER)) {
+    // Only reassuring while the week still lands ABOVE the re-entry trigger.
+    // A down week missed so heavily that it drops under the trigger IS judged
+    // by the re-entry anchor like any other week, so promising "nothing to make
+    // up" there would be the card contradicting the engine.
     kind = 'downweek';
     headline = `Missed ${names} on a down week — that's fine.`;
     detail =

@@ -435,6 +435,46 @@ describe('missed-week re-entry anchor (resolveEffectivePlan)', () => {
     expect(totals[totals.length - 2]).toBeGreaterThanOrEqual(21.5);
   });
 
+  it('a mid-season DOWN week does not cancel the climb (the reported stall)', () => {
+    // Screenshot bug: W9 re-entered at 27.5 and climbed, then the W10 down week
+    // wiped the carried hold, so W11/W12 sat at 27.5 forever instead of
+    // continuing to 32. The absorption week must PRESERVE the hold.
+    const { plan } = resolveEffectivePlan(
+      settings({ ...RESEEDED, xcStartDate: '2026-07-06', downEvery: 4, weeksShown: 12 }),
+      RESEEDED_RS, '2026-07-06',
+    );
+    const season = plan.weeks.filter(w => w.startDate >= '2026-07-06');
+    const downIdx = season.findIndex(w => w.isDownWeek);
+    expect(downIdx).toBeGreaterThan(0);                       // a down week interrupts the climb
+    const beforeDown = season[downIdx - 1].totalPlanned;
+    const afterDown = season.slice(downIdx + 1).filter(w => !w.isDownWeek);
+    expect(afterDown.length).toBeGreaterThan(0);
+    // The very next maintenance week resumes ABOVE the pre-down level…
+    expect(afterDown[0].totalPlanned).toBeGreaterThan(beforeDown);
+    // …and the climb still reaches the season's entry hold (~21.5), which under
+    // the bug was unreachable (pinned at the reduced level).
+    expect(Math.max(...afterDown.map(w => w.totalPlanned))).toBeGreaterThanOrEqual(21);
+  });
+
+  it('a finished season\'s hold never leaks into the next one', () => {
+    // Two seasons with a build gap between: the second season must set its own
+    // hold from its own entry trajectory, not inherit the first season's.
+    const raw = settings({
+      ...RESEEDED, weeksShown: 20,
+      seasons: [
+        { id: 's1', label: 'XC', startDate: '2026-07-06', endDate: '2026-07-26' },
+        { id: 's2', label: 'Track', startDate: '2026-09-07', endDate: null },
+      ],
+    });
+    const { plan } = resolveEffectivePlan(raw, RESEEDED_RS, '2026-07-06');
+    const s2 = plan.weeks.filter(w => w.startDate >= '2026-09-07' && w.note === 'maintain');
+    const lastBuild = [...plan.weeks].filter(w => w.startDate < '2026-09-07' && w.note !== 'maintain' && !w.isDownWeek).pop()!;
+    expect(s2.length).toBeGreaterThan(0);
+    // Season 2 holds at the level it ENTERED with (the rebuilt trajectory),
+    // not the older, lower season-1 hold.
+    expect(s2[0].totalPlanned).toBeGreaterThanOrEqual(lastBuild.totalPlanned - 0.6);
+  });
+
   it('once the anchored week completes, the next boundary judges IT, not the old miss', () => {
     // Run the anchored W3 fully at its (reduced) prescription → the following
     // Monday, W4 builds off the anchored trajectory with no fresh anchor.

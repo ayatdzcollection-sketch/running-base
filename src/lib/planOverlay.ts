@@ -20,8 +20,9 @@ import type { AdaptiveModulation } from './adaptive';
 import { TUNABLES } from '../config/tunables';
 import { mondayOf, addDaysStr, currentSeason } from './metrics';
 import {
-  effectiveSettings, stepWeek, clampWeeksShown, seasonResumeTraj, downSlot,
-  type ClampNote, type StepCarry,
+  effectiveSettings, stepWeek, clampWeeksShown, clampResolveCount, seasonResumeTraj,
+  downSlot,
+  type ClampNote, type StepCarry, type EffectiveSettings,
 } from './settings';
 
 /**
@@ -105,6 +106,23 @@ function weekActualMiles(cfg: WeekConfig, weekStart: string, runState: RunState)
   return sum;
 }
 
+/** The season hold to carry THROUGH a week this overlay prescribes itself
+ *  (accepted / locked-static), mirroring stepWeek: derived from the PRE-week
+ *  trajectory while in season, and cleared outside one so a finished season's
+ *  hold can never leak into the next. Without this an accepted or spliced week
+ *  in the middle of a season would drop the hold, and the following maintenance
+ *  week would re-derive it from a possibly-reduced trajectory. */
+function holdThrough(
+  weekStart: string,
+  carry: StepCarry,
+  eff: EffectiveSettings,
+): number | undefined {
+  const season = currentSeason(eff, weekStart);
+  if (!season) return undefined;
+  const carried = carry.seasonId === season.id ? carry.seasonHold : undefined;
+  return Math.min(carried ?? Math.max(carry.traj, carry.preCutTraj ?? 0), eff.peakMpw);
+}
+
 /** A confirmed accepted week (GenerateWeek output) as a displayable WeekConfig.
  *  Run days in date order; day kinds carried so threshold/long/easy survive
  *  into the displayed plan. null when the entry has no run days. */
@@ -176,17 +194,20 @@ export function resolveEffectivePlan(
   }
 
   const { eff, clamps } = effectiveSettings(raw, runState, today);
-  const weeksN = clampWeeksShown(opts?.count ?? eff.weeksShown);
+  const weeksN = opts?.count != null ? clampResolveCount(opts.count) : clampWeeksShown(eff.weeksShown);
   const configs: WeekConfig[] = [];
   const startDates: string[] = [];
   let carry: StepCarry = { long: eff.trailingLongest, traj: eff.startMpw };
   // Season-END re-anchor state. The trajectory is frozen for the whole season,
   // so it is stale by the close; at the boundary we resume from recent ACTUAL
-  // volume instead (see seasonResumeTraj). Fires at most once, and only when the
-  // season has genuinely ended in the PAST — a future end date has no actuals to
-  // anchor to yet, so those weeks keep projecting off the frozen trajectory.
+  // volume instead (see seasonResumeTraj). It fires at EVERY season boundary
+  // that lies in the past (an athlete with an XC season and a track season gets
+  // one re-anchor each), and it is evaluated AS OF THAT BOUNDARY rather than as
+  // of today — otherwise a months-old boundary would be recomputed from this
+  // week's actuals and past weeks would silently re-render with new numbers
+  // every week. A boundary whose season has NOT ended yet has no actuals to
+  // anchor to, so those weeks keep projecting off the frozen trajectory.
   let prevSeason: Season | null = null;
-  let resumeApplied = false;
   // Missed-week re-entry state. Each fully COMPLETED week is judged exactly
   // once — at the first engine-built week after it ends — and the judgment is
   // REPLAYED on every render, so an anchored week keeps its anchored numbers
@@ -208,12 +229,14 @@ export function resolveEffectivePlan(
     const locked = isWeekLocked(weekStart, runState, today);
 
     const thisSeason = currentSeason(eff, weekStart);
-    if (prevSeason && !thisSeason && !resumeApplied
-        && prevSeason.endDate && prevSeason.endDate <= today) {
-      const anchor = seasonResumeTraj(runState, eff, today);
+    // A boundary is any change of season identity — including season→season,
+    // since an open-ended season implicitly closes the day before the next one
+    // starts, so adjacent windows never pass through a "no season" week.
+    const leftSeason = prevSeason != null && prevSeason.id !== (thisSeason?.id ?? null);
+    if (leftSeason && prevSeason?.endDate && prevSeason.endDate <= today) {
+      const anchor = seasonResumeTraj(runState, eff, weekStart);
       // null = no logged weeks = UNKNOWN → keep the frozen trajectory untouched.
-      if (anchor != null) carry = { ...carry, traj: anchor };
-      resumeApplied = true;
+      if (anchor != null) carry = { ...carry, traj: anchor, preCutTraj: undefined };
     }
     prevSeason = thisSeason;
     // A postponement marker OVERRIDES the static splice for the weeks it
@@ -225,7 +248,13 @@ export function resolveEffectivePlan(
     // every locked week in the reseeded case): markers are only settable while
     // the week is future or still a blank Monday, so the engine deterministically
     // reproduces exactly what the athlete committed to, all week long.
-    const idDownEvery = Math.max(2, Math.round(eff.downEvery));
+    // Same cadence resolution stepWeek uses — adaptation may only tighten it.
+    // Reading the un-tightened setting here made a marker that stepWeek treats
+    // as inert still suppress the static splice for that week.
+    const modDownEvery = opts?.modulation?.downEvery;
+    const idDownEvery = Math.max(2, Math.round(
+      modDownEvery != null ? Math.min(eff.downEvery, modDownEvery) : eff.downEvery,
+    ));
     const slotHere = downSlot(i, idDownEvery, eff);
     const markerTouched = slotHere === 'postponed' || slotHere === 'landing';
 
@@ -285,12 +314,12 @@ export function resolveEffectivePlan(
           carry = {
             ...carry,
             traj: anchor,
-            // An in-season cut must not lower the season's HOLD: keep (or set,
-            // when the cut IS the season entry) the pre-cut level as the
-            // target the maintenance weeks rebuild toward.
-            seasonHold: maintain
-              ? carry.seasonHold ?? Math.min(carry.traj, eff.peakMpw)
-              : carry.seasonHold,
+            // Remember what the athlete had actually EARNED before the cut. A
+            // season entering at (or one week after) this point holds at that
+            // level and climbs back to it — a cut must never become the
+            // season's permanent ceiling, whether it lands on the first season
+            // week or in the week just before it.
+            preCutTraj: Math.max(carry.preCutTraj ?? 0, carry.traj),
           };
         }
       }
@@ -308,7 +337,13 @@ export function resolveEffectivePlan(
       const isDown = total <= carry.traj * (1 - TUNABLES.SCHEDULED_DOWN_CUT) + TUNABLES.HALF_STEP + 1e-9;
       configs.push({ ...accCfg, isDownWeek: isDown });
       startDates.push(weekStart);
-      carry = { long: acceptedLong(accCfg), traj: isDown ? carry.traj : total, seasonHold: carry.seasonHold };
+      carry = {
+        long: acceptedLong(accCfg),
+        traj: isDown ? carry.traj : total,
+        seasonHold: holdThrough(weekStart, carry, eff),
+        seasonId: thisSeason?.id,
+        preCutTraj: carry.preCutTraj,
+      };
       weekSource.set(weekStart, 'accepted');
       lastDone = doneRecord(weekStart, accCfg) ?? lastDone;
       continue;
@@ -326,7 +361,9 @@ export function resolveEffectivePlan(
       carry = {
         long: configLong(staticCfg),
         traj: staticCfg.isDownWeek ? carry.traj : configTotal(staticCfg),
-        seasonHold: carry.seasonHold,
+        seasonHold: holdThrough(weekStart, carry, eff),
+        seasonId: thisSeason?.id,
+        preCutTraj: carry.preCutTraj,
       };
       weekSource.set(weekStart, 'static');
       lastDone = doneRecord(weekStart, staticCfg) ?? lastDone;
@@ -335,10 +372,11 @@ export function resolveEffectivePlan(
 
     // Individual adaptation applies ONLY to future/unlocked weeks; a locked week
     // reflects what was actually run, so it's generated at identity (no mod).
-    const { config, long, traj, seasonHold } = stepWeek(i, carry, eff, locked ? null : opts?.modulation);
+    const { config, long, traj, seasonHold, seasonId, preCutTraj } =
+      stepWeek(i, carry, eff, locked ? null : opts?.modulation);
     configs.push(config);
     startDates.push(weekStart);
-    carry = { long, traj, seasonHold };
+    carry = { long, traj, seasonHold, seasonId, preCutTraj };
     weekSource.set(weekStart, 'settings');
     lastDone = doneRecord(weekStart, config) ?? lastDone;
   }
@@ -377,7 +415,7 @@ export function downWeekControls(
   const out = new Map<string, DownAction>();
   if (!raw) return out;
   const { eff } = effectiveSettings(raw, runState, today);
-  const weeksN = clampWeeksShown(opts?.count ?? eff.weeksShown);
+  const weeksN = opts?.count != null ? clampResolveCount(opts.count) : clampWeeksShown(eff.weeksShown);
   const mod = opts?.modulation ?? null;
   // Same cadence resolution as stepWeek: adaptation may only tighten (min).
   const downEvery = Math.max(2, Math.round(mod ? Math.min(eff.downEvery, mod.downEvery) : eff.downEvery));

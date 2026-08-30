@@ -76,9 +76,27 @@ export interface GeneratorInput {
    *  projection (stepWeek) widens its cap. Keeping the from-actuals draft
    *  conservative is intentional — see Phase 2D follow-ups to unify if desired. */
   adaptive?: AdaptiveModulation | null;
+  /** The ROLLING PLAN's own prescribed total for the week being proposed, when
+   *  known. A pure CEILING: the draft may come in under it, never over. This is
+   *  what keeps the two engines from contradicting each other — the rolling
+   *  plan already applies coach-season maintenance holds, the missed-week
+   *  re-entry anchor, postponed down weeks and the peak cap, and none of that
+   *  is re-derivable from actuals alone. Without it a draft happily proposed a
+   *  BUILD in the middle of a season the plan was holding flat, and confirming
+   *  it overrode the hold. Absent/null = unbounded (pre-existing behavior). */
+  planTarget?: number | null;
+  /** The rolling plan's own down-week verdict for the week being proposed.
+   *  When provided it decides the cadence (a pain spike can still force a
+   *  deload on top), so a draft can never disagree with the displayed plan
+   *  about whether this is an absorption week. Absent = the generator's own
+   *  from-actuals cadence, unchanged. */
+  planIsDownWeek?: boolean | null;
+  /** Resolves a date's PLANNED miles so ✓-done-without-distance days count
+   *  toward weekly volume (see metrics.weeklyActuals). Absent = actuals only. */
+  prescribedFor?: (date: string) => number | null | undefined;
 }
 
-export function generateNextWeek({ runState, planContext, globals, today, settings, adaptive }: GeneratorInput): WeekProposal {
+export function generateNextWeek({ runState, planContext, globals, today, settings, adaptive, planTarget, planIsDownWeek, prescribedFor }: GeneratorInput): WeekProposal {
   const warnings: string[] = [];
   const notes: string[] = [];
   const weekStart = nextMonday(today);
@@ -111,7 +129,7 @@ export function generateNextWeek({ runState, planContext, globals, today, settin
   // week counts for the next) instead of dipping then jumping.
   const currentWeekStart = mondayOf(today);
   const currentWeekComplete = today >= addDaysStr(currentWeekStart, 6);
-  const weeks = weeklyActuals(planLog, today).filter(
+  const weeks = weeklyActuals(planLog, today, prescribedFor).filter(
     w => w.weekStart < currentWeekStart || (w.weekStart === currentWeekStart && currentWeekComplete),
   );
   const recent = weeks.slice(-3);
@@ -193,7 +211,9 @@ export function generateNextWeek({ runState, planContext, globals, today, settin
   // Never two cadence-driven down weeks in a row (a flare can still force
   // one). Structurally the counter already resets after a detected down week;
   // the explicit guard keeps the invariant even if detection semantics drift.
-  const cadenceDown = (buildsSinceDown >= downEvery || postponedHere) && !lastWeekIsDown && !postponedAway;
+  const cadenceDown = planIsDownWeek != null
+    ? planIsDownWeek                                    // the plan decides; drafts never disagree
+    : (buildsSinceDown >= downEvery || postponedHere) && !lastWeekIsDown && !postponedAway;
   const isDownWeek = painSpike || cadenceDown;
   if (postponedAway && !painSpike && buildsSinceDown >= downEvery) {
     notes.push('Scheduled down week postponed by you: building through this week; next week takes the absorption cut instead.');
@@ -224,9 +244,20 @@ export function generateNextWeek({ runState, planContext, globals, today, settin
         : `Long run = ${long} mi: the largest half-mile step within ~110% of your trailing-30-day longest (${t30} mi).`,
   );
 
-  let weekTotal = Math.max(Math.min(roundHalf(baseVolume), peakCap), long); // ≥ long, ≤ peak
+  // Ceiling = the tighter of the peak cap and the rolling plan's own target for
+  // this week (a maintenance hold, a re-entered level, a scheduled down week…).
+  // Never a floor: a pain deload or eased build still lands below it.
+  const planCap = planTarget != null && Number.isFinite(planTarget) ? planTarget : Infinity;
+  const ceiling = Math.min(peakCap, planCap);
+  let weekTotal = Math.max(Math.min(roundHalf(baseVolume), ceiling), long); // ≥ long, ≤ ceiling
   if (peakCap !== Infinity && roundHalf(baseVolume) > peakCap) {
     notes.push(`Held to your peak-week ceiling of ${peakCap} mi.`);
+  } else if (planCap !== Infinity && roundHalf(baseVolume) > planCap) {
+    notes.push(
+      `Held to the plan's target for this week (${planCap.toFixed(1)} mi). Your logged trend alone would ask for `
+      + `more, but the plan is holding here — coach season, a re-entry after a short week, or a scheduled down week. `
+      + `Drafts can come in under the plan, never over it.`,
+    );
   }
   const longPct = long / weekTotal;
   if (longPct > TUNABLES.LONG_RUN_WEEK_PCT_FLAG) {
@@ -377,9 +408,16 @@ function seedPlanWeek(planLog: RunState, days: ProposedDay[], stampFrom: string)
 }
 
 export function generateWeeks(
-  input: GeneratorInput & { count: number },
+  input: GeneratorInput & {
+    count: number;
+    /** The rolling plan's prescribed total per week start — each proposal is
+     *  capped at its own week's target (see GeneratorInput.planTarget). */
+    planTargets?: Record<string, number> | null;
+    /** The rolling plan's down-week verdict per week start. */
+    planDownWeeks?: Record<string, boolean> | null;
+  },
 ): MultiWeekResult {
-  const { runState, globals, today, settings, adaptive } = input;
+  const { runState, globals, today, settings, adaptive, planTargets, planDownWeeks, prescribedFor } = input;
   const count = Math.max(1, Math.min(12, Math.round(input.count)));
   const accepted = globals.acceptedWeeks ?? {};
   const proposals: WeekProposal[] = [];
@@ -400,7 +438,12 @@ export function generateWeeks(
       continue;
     }
     // runState = actuals (safety evidence); scratch = plan context (volume only).
-    const p = generateNextWeek({ runState, planContext: scratch, globals, today: cursor, settings, adaptive });
+    const p = generateNextWeek({
+      runState, planContext: scratch, globals, today: cursor, settings, adaptive,
+      planTarget: planTargets?.[ws] ?? null,
+      planIsDownWeek: planDownWeeks?.[ws] ?? null,
+      prescribedFor,
+    });
     proposals.push(p);
     // Simulate this week into the PLAN CONTEXT so the next week ladders from it.
     seedPlanWeek(scratch, p.days, cursor);
