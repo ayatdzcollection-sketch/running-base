@@ -238,7 +238,7 @@ export function planWeek(data: RunnerData, monday: ISODate, today: ISODate): Wee
     const cap = longCap(trailing, p.startLongest);
     const runDays = runDaysOf(p.daysPerWeek, p.longRunDay);
     const workout = new Set(phase.season?.workoutDays ?? []);
-    const easy = half(aim / Math.max(1, p.daysPerWeek));
+    const easy = Math.min(cap, Math.max(RULES.MIN_RUN_MI, half(aim / Math.max(1, p.daysPerWeek))));
     const base: PlannedDay[] = [0, 1, 2, 3, 4, 5, 6].map(d => {
       const date = addDays(monday, d);
       const meet = meets.get(date);

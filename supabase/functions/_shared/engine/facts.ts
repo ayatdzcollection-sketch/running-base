@@ -101,7 +101,9 @@ export function usualWeek(data: RunnerData, beforeWeek: ISODate, today: ISODate)
   const known = knownWeeks(data, beforeWeek, today, RULES.USUAL_SEARCH_WEEKS).slice(0, RULES.USUAL_WEEKS);
   const prev = weekFacts(data, addDays(beforeWeek, -7), today);
   if (known.length === 0) {
-    return prev.reliability === 'partial' && prev.miles > 0 ? { mpw: prev.miles, basis: [prev.start] } : { mpw: null, basis: [] };
+    // A partly logged week is only a lower bound: use it only when it's more
+    // than the runner told us at setup (callers fall back to that).
+    return prev.reliability === 'partial' && prev.miles > data.profile.startMpw ? { mpw: prev.miles, basis: [prev.start] } : { mpw: null, basis: [] };
   }
   let mpw = median(known.map(w => w.miles));
   if (prev.reliability === 'partial' && prev.miles > mpw) mpw = prev.miles;

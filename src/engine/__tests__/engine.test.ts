@@ -138,6 +138,16 @@ describe('school seasons', () => {
   });
 });
 
+describe('new runner in season', () => {
+  it('one partly logged week below what they told us does not become their usual week', () => {
+    const xc = { id: 'xc', kind: 'xc' as const, label: 'XC', startDate: '2026-08-20', endDate: null, workoutDays: [1, 3] };
+    const d = base({ seasons: [xc], activities: [run('2026-09-26', 6)], profile: { ...base().profile, startMpw: 15, planStart: '2026-09-28', daysPerWeek: 6 } });
+    const p = planWeek(d, '2026-09-28', '2026-09-28');
+    expect(p.target).toBe(15);
+    for (const x of p.days) if (x.miles && x.kind === 'easy') expect(x.miles).toBeGreaterThanOrEqual(2);
+  });
+});
+
 // ── usual week ───────────────────────────────────────────────────────
 describe('usual week', () => {
   it('is the median of the last 3 known weeks, and silence does not move it', () => {

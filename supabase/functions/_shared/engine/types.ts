@@ -86,6 +86,23 @@ export interface Shoe {
   retiredAt?: ISODate | null;
 }
 
+/** A day of the plan changed on purpose. Future days only; past days are facts. */
+export type OverrideKind = 'easy' | 'long' | 'rest' | 'cross' | 'workout';
+export interface PlanOverride {
+  date: ISODate;
+  kind: OverrideKind;
+  miles?: number | null;
+  note?: string | null;
+  source: 'app' | 'claude';
+}
+
+export interface Note {
+  id: string;
+  date: ISODate;
+  body: string;
+  source: 'app' | 'claude' | 'import';
+}
+
 export interface RunnerData {
   profile: Profile;
   seasons: Season[];
@@ -97,6 +114,8 @@ export interface RunnerData {
   shoes: Shoe[];
   speedLevel: number;
   speedLevelSince?: ISODate | null;
+  overrides?: PlanOverride[];
+  notes?: Note[];
   /** True when a watch has sent a run in the last 14 days. Days with no
    *  run then count as rest (the watch would have sent it), not unknown. */
   watchConnected?: boolean;

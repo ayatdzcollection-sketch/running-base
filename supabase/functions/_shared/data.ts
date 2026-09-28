@@ -12,7 +12,7 @@ export function localToday(tz: string | undefined): string {
 
 export async function loadRunner(db: SupabaseClient, userId: string): Promise<{ data: RunnerData; tz: string }> {
   const q = <T>(table: string, cols = '*') => db.from(table).select(cols).eq('user_id', userId) as unknown as Promise<{ data: T[] | null; error: unknown }>;
-  const [p, seasons, meets, acts, days, checkins, injuries, shoes, state, tokens] = await Promise.all([
+  const [p, seasons, meets, acts, days, checkins, injuries, shoes, state, tokens, overrides, notes] = await Promise.all([
     db.from('bb_profiles').select('*').eq('user_id', userId).single(),
     q<Record<string, unknown>>('bb_seasons'),
     q<Record<string, unknown>>('bb_meets'),
@@ -23,6 +23,8 @@ export async function loadRunner(db: SupabaseClient, userId: string): Promise<{ 
     q<Record<string, unknown>>('bb_shoes'),
     db.from('bb_state').select('*').eq('user_id', userId).maybeSingle(),
     db.from('bb_tokens').select('last_used_at').eq('user_id', userId).eq('kind', 'shortcut').is('revoked_at', null),
+    q<Record<string, unknown>>('bb_plan_overrides'),
+    q<Record<string, unknown>>('bb_notes'),
   ]);
   const prof = p.data as Record<string, unknown>;
   if (!prof) throw new Error('No profile for this runner');
@@ -67,6 +69,8 @@ export async function loadRunner(db: SupabaseClient, userId: string): Promise<{ 
       id: String(s.id), name: String(s.name), startDate: String(s.start_date), baseMiles: Number(s.base_miles),
       retireAt: Number(s.retire_at), retiredAt: (s.retired_at as string) ?? null,
     })),
+    overrides: (overrides.data ?? []).map(o => ({ date: String(o.date), kind: o.kind as never, miles: num(o.miles), note: (o.note as string) ?? null, source: o.source as never })),
+    notes: (notes.data ?? []).map(n => ({ id: String(n.id), date: String(n.date), body: String(n.body), source: n.source as never })),
     speedLevel: Number(state.data?.speed_level ?? 0),
     speedLevelSince: (state.data?.speed_level_since as string) ?? null,
     watchConnected,

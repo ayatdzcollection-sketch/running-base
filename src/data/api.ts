@@ -34,6 +34,7 @@ export interface Loaded {
   activities: ActivityRow[];
   runner: RunnerData;
   invite: string | null;
+  changes: { id: string; at: string; tool: string; summary: string; undone_at: string | null }[];
 }
 
 const n = (v: unknown) => (v == null ? null : Number(v));
@@ -41,7 +42,7 @@ const n = (v: unknown) => (v == null ? null : Number(v));
 export async function loadAll(uid: string, today: string): Promise<Loaded | null> {
   const p = await db.from('bb_profiles').select('*').eq('user_id', uid).maybeSingle();
   if (!p.data) return null;
-  const [seasons, meets, acts, days, checkins, injuries, shoes, state, tokens, invite] = await Promise.all([
+  const [seasons, meets, acts, days, checkins, injuries, shoes, state, tokens, invite, overrides, notes, changes] = await Promise.all([
     db.from('bb_seasons').select('*').eq('user_id', uid).order('start_date'),
     db.from('bb_meets').select('*').eq('user_id', uid),
     db.from('bb_activities').select('*').eq('user_id', uid).order('date'),
@@ -52,6 +53,9 @@ export async function loadAll(uid: string, today: string): Promise<Loaded | null
     db.from('bb_state').select('*').eq('user_id', uid).maybeSingle(),
     db.from('bb_tokens').select('id,kind,hint,created_at,last_used_at,revoked_at').eq('user_id', uid).is('revoked_at', null),
     db.rpc('bb_my_invite'),
+    db.from('bb_plan_overrides').select('*').eq('user_id', uid),
+    db.from('bb_notes').select('*').eq('user_id', uid).order('date'),
+    db.from('bb_changes').select('id,at,tool,summary,undone_at').eq('user_id', uid).order('at', { ascending: false }).limit(20),
   ]);
   const err = [seasons, meets, acts, days, checkins, injuries, shoes, tokens].find(r => r.error)?.error;
   if (err) throw new Error(err.message);
@@ -80,6 +84,8 @@ export async function loadAll(uid: string, today: string): Promise<Loaded | null
       stage: i.stage, stageSince: i.stage_since, clearedByClinician: i.cleared_by_clinician,
     })),
     shoes: ((shoes.data ?? []) as ShoeRow[]).map(s => ({ id: s.id, name: s.name, startDate: s.start_date, baseMiles: Number(s.base_miles), retireAt: Number(s.retire_at), retiredAt: s.retired_at })),
+    overrides: (overrides.data ?? []).map(o => ({ date: o.date, kind: o.kind, miles: n(o.miles), note: o.note, source: o.source })),
+    notes: (notes.data ?? []).map(x => ({ id: x.id, date: x.date, body: x.body, source: x.source })),
     speedLevel: Number(state.data?.speed_level ?? 0),
     speedLevelSince: state.data?.speed_level_since ?? null,
     watchConnected,
@@ -87,6 +93,7 @@ export async function loadAll(uid: string, today: string): Promise<Loaded | null
   return {
     profile: prof, seasons: (seasons.data ?? []) as SeasonRow[], shoes: (shoes.data ?? []) as ShoeRow[],
     tokens: (tokens.data ?? []) as TokenRow[], activities, runner, invite: (invite.data as string | null) ?? null,
+    changes: (changes.data ?? []) as Loaded['changes'],
   };
 }
 
@@ -138,6 +145,9 @@ export const api = {
     const row = { ...s, user_id: uid, updated_at: new Date().toISOString() };
     must(s.id ? await db.from('bb_shoes').update(row).eq('user_id', uid).eq('id', s.id) : await db.from('bb_shoes').insert(row));
   },
+  async resetDay(uid: string, date: string) { must(await db.from('bb_plan_overrides').delete().eq('user_id', uid).eq('date', date)); },
+  async addNote(uid: string, date: string, body: string) { must(await db.from('bb_notes').insert({ user_id: uid, date, body, source: 'app' })); },
+  async deleteNote(uid: string, id: string) { must(await db.from('bb_notes').delete().eq('user_id', uid).eq('id', id)); },
   async setSpeedLevel(uid: string, level: number, since: string) {
     must(await db.from('bb_state').upsert({ user_id: uid, speed_level: level, speed_level_since: since, updated_at: new Date().toISOString() }));
   },
