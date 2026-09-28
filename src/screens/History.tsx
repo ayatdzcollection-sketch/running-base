@@ -3,7 +3,7 @@ import { addDays } from '../engine/index.ts';
 import { api, type ActivityRow } from '../data/api.ts';
 import { useStore } from '../data/store.tsx';
 import { monthShort, mi, shortDay, duration } from '../app/format.ts';
-import { Bubble, Icon, LargeTitle, Pill, Sheet } from '../ui/kit.tsx';
+import { Bubble, Icon, LargeTitle, Pill, Section, Sheet } from '../ui/kit.tsx';
 import { AddRunSheet } from './AddRun.tsx';
 
 const SOURCE: Record<string, [string, string]> = {
@@ -34,6 +34,7 @@ export function History({ onAdd }: { onAdd: (date?: string) => void }) {
     <main className="page">
       <LargeTitle title="History" right={<Pill kind="cap" icon="pencil" onClick={() => { setNoteDate(today); setNoteOpen(true); }}>Note</Pill>} />
       {weeks.length > 0 && (
+        <Section title="Weekly miles" hint="Your last 12 weeks. Tap a bar to see that week.">
         <section className="card pad">
           <div className="hstack" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <div className="stack" style={{ gap: 2 }}>
@@ -42,7 +43,8 @@ export function History({ onAdd }: { onAdd: (date?: string) => void }) {
             </div>
             <span className="small" style={{ textAlign: 'right' }}>{shown === best && sel == null ? 'Best week' : shown.reliability === 'none' ? 'No data' : shown.estimatedMiles ? `${mi(shown.estimatedMiles)} from checked-off days` : shown.reliability === 'partial' ? 'Some days missing' : ''}</span>
           </div>
-          <div className="chart" style={{ gridTemplateColumns: `repeat(${weeks.length}, minmax(0,1fr))` }}>
+          <div className="chart" style={{ gridTemplateColumns: 'repeat(12, minmax(0,1fr))' }}>
+            {Array.from({ length: 12 - weeks.length }, (_, i) => <span key={'pad' + i} aria-hidden="true" />)}
             {weeks.map((w, i) => {
               if (w.reliability === 'none' && w.miles === 0) return (
                 <button key={w.start} className="bar" aria-label={`${w.start}: no data`} onClick={() => setSel(i)} style={{ alignItems: 'center' }}>
@@ -59,7 +61,8 @@ export function History({ onAdd }: { onAdd: (date?: string) => void }) {
               );
             })}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${weeks.length}, minmax(0,1fr))`, gap: 5 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0,1fr))', gap: 5 }}>
+            {Array.from({ length: 12 - weeks.length }, (_, i) => <span key={'lpad' + i} />)}
             {weeks.map((w, i) => <span key={w.start} className="small" style={{ fontSize: 11 }}>{i === 0 || monthShort(w.start) !== monthShort(weeks[i - 1].start) ? monthShort(w.start) : ''}</span>)}
           </div>
           <div className="legend">
@@ -68,7 +71,10 @@ export function History({ onAdd }: { onAdd: (date?: string) => void }) {
             <span><i style={{ border: '1.5px dashed var(--unk)', borderRadius: 5 }} />No data</span>
           </div>
         </section>
+        </Section>
       )}
+
+      <div className="sechead"><div className="stack"><h2>Runs by week</h2><p>Tap a run to fix it. Days with no data show a “?”: add the run, or mark it as rest.</p></div></div>
 
       {recent.map(ws => {
         const days = [0, 1, 2, 3, 4, 5, 6].map(k => addDays(ws, k)).filter(d => d <= today).reverse();

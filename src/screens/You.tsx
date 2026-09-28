@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api, db } from '../data/api.ts';
 import { useStore } from '../data/store.tsx';
 import { go } from '../app/router.ts';
+import { shortDay } from '../app/format.ts';
 import { Bubble, Group, LargeTitle, Row, Seg, Sheet } from '../ui/kit.tsx';
 
 export function You() {
@@ -13,6 +14,7 @@ export function You() {
   if (!loaded || !snap) return null;
   const p = loaded.profile;
   const watch = loaded.tokens.find(t => t.kind === 'shortcut');
+  const lastWatchRun = loaded.activities.filter(a => a.source === 'watch').map(a => a.date).sort().pop();
   const claude = loaded.tokens.find(t => t.kind === 'mcp');
   const seasonsLine = loaded.seasons.map(s => s.label).join(', ') || 'No seasons yet';
 
@@ -29,20 +31,20 @@ export function You() {
       <LargeTitle title="You" right={<span className="center" style={{ width: 44, height: 44, borderRadius: 22, background: 'var(--ink)', color: 'var(--card)', fontWeight: 600 }}>{(p.display_name || '?')[0].toUpperCase()}</span>} />
       <p className="sec" style={{ fontSize: 15, marginTop: -8 }}>{p.display_name} · {seasonsLine}</p>
 
-      <Group title="Connections">
-        <Row label="Apple Watch" sub={watch ? (watch.last_used_at ? `Last heard from ${new Date(watch.last_used_at).toLocaleDateString()}` : 'Set up, waiting for a run') : 'Not connected'}
+      <Group title="Connections" hint="Let runs and updates come in without typing.">
+        <Row label="Apple Watch" sub={watch ? (lastWatchRun ? `Connected · last run ${shortDay(lastWatchRun)}` : 'Connected · waiting for your first run') : 'Not set up: runs won’t log themselves'}
           lead={<Bubble icon="watch" small />} action={watch ? undefined : 'Set up'} onClick={() => go('watch')} />
-        <Row label="Claude" sub={claude ? 'Connected' : 'Optional'} lead={<Bubble icon="spark" bg="var(--bg)" fg="var(--body2)" small />}
+        <Row label="Claude" sub={claude ? 'Connected · log runs and change your plan by chatting' : 'Optional · log runs by chatting with Claude'} lead={<Bubble icon="spark" bg="var(--bg)" fg="var(--body2)" small />}
           action={claude ? undefined : 'Connect'} onClick={() => go('claude')} />
       </Group>
 
-      <Group title="Training">
+      <Group title="Training" hint="What your plan is built around.">
         <Row label="Seasons" value={loaded.seasons.length} onClick={() => go('seasons')} />
         <Row label="Run days" value={`${p.days_per_week} a week`} onClick={() => setDays(true)} />
         <Row label="About you" sub={`${p.birth_year ? `Born ${p.birth_year}` : 'Birth year not set'} · ${p.experience_years ?? '?'} years running`} onClick={() => setAbout(true)} />
       </Group>
 
-      <Group title="Shoes">
+      <Group title="Shoes" hint="Miles count from each run. Worn shoes are a common cause of aches.">
         {snap.shoes.map(s => (
           <Row key={s.id} label={s.name} value={`${s.miles} mi`} badge={s.over ? <span className="badge">Past {s.retireAt} mi</span> : undefined}
             onClick={() => confirm(`Retire ${s.name}? Its miles stop counting.`) && act(() => api.saveShoe(uid, { id: s.id, name: s.name, start_date: loaded.shoes.find(x => x.id === s.id)!.start_date, retired_at: today }), 'Shoe retired')} />
@@ -51,7 +53,7 @@ export function You() {
       </Group>
 
       {loaded.changes.length > 0 && (
-        <Group title="Changes by Claude">
+        <Group title="Changes by Claude" hint="Everything Claude changed, newest first.">
           {loaded.changes.slice(0, 5).map(c => (
             <Row key={c.id} label={c.summary} sub={`${new Date(c.at).toLocaleDateString()}${c.undone_at ? ' · undone' : ''}`} />
           ))}
@@ -60,7 +62,7 @@ export function You() {
       {loaded.changes.length > 0 && <p className="small" style={{ padding: '0 16px', marginTop: -8 }}>Ask Claude to “undo that” to reverse a change. Changed plan days also have an Undo on Today.</p>}
 
       {loaded.invite && (
-        <Group title="Invite a teammate">
+        <Group title="Invite a teammate" hint="The app is invite-only. Share this code.">
           <Row label={<span className="num" style={{ letterSpacing: '0.04em', fontWeight: 600 }}>{loaded.invite}</span>} sub="They enter this after signing in."
             action="Copy" onClick={() => navigator.clipboard.writeText(loaded.invite!).then(() => toast('Invite code copied'))} />
         </Group>

@@ -3,7 +3,7 @@ import { api } from '../data/api.ts';
 import { useStore } from '../data/store.tsx';
 import { go } from '../app/router.ts';
 import { monthShort, shortDay } from '../app/format.ts';
-import { Icon, LargeTitle } from '../ui/kit.tsx';
+import { Icon, LargeTitle, Section, Why } from '../ui/kit.tsx';
 
 export function Plan() {
   const { snap, loaded, uid, today, act } = useStore();
@@ -20,10 +20,9 @@ export function Plan() {
     <main className="page">
       <LargeTitle title="Plan" right={<button className="btn btn-cap" onClick={() => go('seasons')}>Seasons</button>} />
 
+      <Section title="Your year" hint="Orange is a school season: your coach leads. Green is between seasons: the app builds you up. The line is today.">
       <section className="card pad">
-        <div className="hstack" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-          <h2 style={{ fontSize: 17, fontWeight: 700 }}>Your year</h2><span className="small">Jul {y} → Jun {y + 1}</span>
-        </div>
+        <span className="small">Jul {y} → Jun {y + 1}</span>
         <div role="img" aria-label="Seasons across the school year" style={{ position: 'relative', height: 30, borderRadius: 9, background: 'var(--teal-t)' }}>
           {seasons.map(s => {
             const a = pos(s.startDate);
@@ -54,8 +53,9 @@ export function Plan() {
         {!seasons.length && <button className="btn btn-tint" onClick={() => go('seasons')}>Add your school seasons</button>}
       </section>
 
-      <section className="group">
-        <h2 className="section-title">Coming up</h2>
+      </Section>
+
+      <Section title="Coming up" hint="About how many miles each week will be. The plan updates as you log runs.">
         <div className="card rows">
           {[{ start: snap.week.start, label: 'This week', target: snap.week.target, kind: snap.phase.kind === 'coach' ? 'Coach mode' : snap.week.isDown ? 'Lighter week' : snap.phase.kind === 'break' ? 'Break' : 'Build', meets: snap.week.days.filter(d => d.planned.kind === 'meet').map(d => d.planned.label) },
             ...snap.upcoming.slice(0, 3).map((u, i) => ({ ...u, label: i === 0 ? 'Next week' : u.label }))].map(w => (
@@ -66,15 +66,15 @@ export function Plan() {
             </div>
           ))}
         </div>
-        <p className="small" style={{ padding: '0 16px' }}>
-          {snap.phase.kind === 'coach' ? 'In season the plan follows what you actually run. Your coach sets the hard days.' : 'Weeks build a little at a time. Every 5th week is lighter.'}
-        </p>
-      </section>
+        <Why label="How are these numbers picked?">
+          {snap.phase.kind === 'coach'
+            ? <><p>In season, the aim is your usual week: the middle of your last 3 fully logged weeks. Your coach sets the hard days; the app fills in easy days around them.</p><p>Days with no data never lower it.</p></>
+            : <><p>Weeks go up about 10% at a time, and every 5th week is lighter so your body catches up.</p><p>If you run a lot less than planned in a fully logged week, the next week starts from what you actually ran. Days with no data never lower it.</p></>}
+        </Why>
+      </Section>
 
+      <Section title="Speed work" hint="Faster running unlocks one step at a time, after runs where nothing hurt." right={<span className="small">Level {sp.level} of 7</span>}>
       <section className="card pad">
-        <div className="hstack" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-          <h2 style={{ fontSize: 17, fontWeight: 700 }}>Speed work</h2><span className="small">Level {sp.level} of 7</span>
-        </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0,1fr))', gap: 4 }}>
           {LEVELS.slice(1).map(l => <span key={l.n} style={{ height: 8, borderRadius: 4, background: l.n <= sp.level ? 'var(--blue)' : 'var(--line)' }} />)}
         </div>
@@ -82,13 +82,14 @@ export function Plan() {
         {sp.next && <p style={{ fontSize: 15, lineHeight: '20px' }}><strong style={{ fontWeight: 600 }}>Next: {sp.next.name.toLowerCase()}.</strong> <span className="body2">{sp.eligible ? sp.next.detail : sp.blockedBy}</span></p>}
         {sp.eligible && sp.next && <button className="btn btn-tint" onClick={() => act(() => api.setSpeedLevel(uid, sp.next!.n, today), `${sp.next!.name} unlocked`)}>Unlock {sp.next.name.toLowerCase()}</button>}
         {!sp.eligible && sp.next && !sp.blockedBy?.startsWith('In season') && !snap.injury && (
-          <p className="small">Pain-free check-ins: {sp.progress} of {sp.needed}</p>
+          <p className="small">Pain-free check-ins: {sp.progress} of {sp.needed}. After a run, tap <b>Check in</b> on Today and answer “Nope” for pain.</p>
         )}
       </section>
+      </Section>
 
       {snap.injury?.stage && (
         <section className="card pad">
-          <h2 style={{ fontSize: 17, fontWeight: 700 }}>Comeback stages</h2>
+          <h2 className="card-title">Comeback stages</h2>
           {STAGES.map(s => <p key={s.n} className={s.n === snap.injury!.stage!.n ? '' : 'sec'} style={{ fontSize: 15, fontWeight: s.n === snap.injury!.stage!.n ? 600 : 400 }}>{s.n}. {s.title}, {s.minutes} min: {s.detail}</p>)}
         </section>
       )}

@@ -25,7 +25,8 @@ function unitOf(v: unknown, fallback: string): keyof typeof MI_PER {
 function date(v: unknown): Date | null {
   if (typeof v === 'number') return new Date(v > 1e12 ? v : v * 1000);
   if (typeof v !== 'string' || !v.trim()) return null;
-  const d = new Date(v.replace(' at ', ' '));
+  // iOS writes dates like "Sep 27, 2026 at 7:42 AM" with narrow no-break spaces.
+  const d = new Date(v.replace(/[\u202f\u00a0]/g, ' ').replace(' at ', ' '));
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
@@ -67,7 +68,9 @@ Deno.serve(async req => {
   if (!start || rawDistance == null) {
     return finish('Got it, but no start time or distance was in the message. Saved it so nothing is lost.', 202);
   }
-  const miles = Math.round(rawDistance * MI_PER[unitOf(body.distanceUnit ?? body.unit, 'mi')] * 100) / 100;
+  // The unit can come separately or inside the value ("8.2 km", "5.1 mi").
+  const inline = typeof (body.distance ?? body.totalDistance) === 'string' ? String(body.distance ?? body.totalDistance).replace(/[\d.,\s]/g, '') : '';
+  const miles = Math.round(rawDistance * MI_PER[unitOf(body.distanceUnit ?? body.unit ?? (inline || undefined), 'mi')] * 100) / 100;
   if (miles <= 0.05 || miles >= 100) return finish(`Skipped: distance ${miles} mi looks wrong.`, 202);
 
   let duration = num(body.duration ?? body.durationSeconds);

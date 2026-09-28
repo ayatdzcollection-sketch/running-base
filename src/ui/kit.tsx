@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { go, type Route } from '../app/router.ts';
 
 const PATHS = {
@@ -44,14 +44,48 @@ export function Bubble({ icon, bg = 'var(--blue-t)', fg = 'var(--blue)', small, 
 }
 
 export function LargeTitle({ title, eyebrow, right }: { title: string; eyebrow?: string; right?: ReactNode }) {
+  // A glass bar with the small title fades in once the large one scrolls away.
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const on = () => setScrolled(window.scrollY > 56);
+    on();
+    window.addEventListener('scroll', on, { passive: true });
+    return () => window.removeEventListener('scroll', on);
+  }, []);
   return (
-    <header className="largetitle">
-      <div className="stack" style={{ gap: 2 }}>
-        {eyebrow && <span className="eyebrow">{eyebrow}</span>}
-        <h1>{title}</h1>
+    <>
+      <div className={`topbar${scrolled ? ' on' : ''}`} aria-hidden="true">{title}</div>
+      <header className="largetitle">
+        <div className="stack" style={{ gap: 2 }}>
+          {eyebrow && <span className="eyebrow">{eyebrow}</span>}
+          <h1>{title}</h1>
+        </div>
+        {right}
+      </header>
+    </>
+  );
+}
+
+/** A section heading with one plain line saying what the section is for. */
+export function Section({ title, hint, right, children }: { title: string; hint?: string; right?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="stack" style={{ gap: 10 }}>
+      <div className="sechead">
+        <div className="stack"><h2>{title}</h2>{hint && <p>{hint}</p>}</div>
+        {right}
       </div>
-      {right}
-    </header>
+      {children}
+    </section>
+  );
+}
+
+/** Tap to read more: keeps screens short while every number stays explained. */
+export function Why({ label = 'What does this mean?', children }: { label?: string; children: ReactNode }) {
+  return (
+    <details className="why">
+      <summary>{label}</summary>
+      <div>{children}</div>
+    </details>
   );
 }
 
@@ -117,10 +151,15 @@ export function Row({ label, sub, value, onClick, lead, badge, action, danger }:
     : <div className={`row${danger ? ' danger' : ''}`}>{inner}</div>;
 }
 
-export function Group({ title, children, right }: { title?: string; children: ReactNode; right?: ReactNode }) {
+export function Group({ title, hint, children, right }: { title?: string; hint?: string; children: ReactNode; right?: ReactNode }) {
   return (
-    <section className="group">
-      {(title || right) && <div className="hstack" style={{ justifyContent: 'space-between', paddingRight: 16 }}>{title && <h2 className="section-title">{title}</h2>}{right}</div>}
+    <section className="group" style={{ gap: 8 }}>
+      {(title || right) && (
+        <div className="sechead">
+          <div className="stack">{title && <h2>{title}</h2>}{hint && <p>{hint}</p>}</div>
+          {right}
+        </div>
+      )}
       <div className="card rows">{children}</div>
     </section>
   );
