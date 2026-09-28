@@ -1,8 +1,9 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { registerSW } from 'virtual:pwa-register'
-import './index.css'
-import App from './App.tsx'
+import './styles.css'
+import App from './app/App.tsx'
+import { StoreProvider } from './data/store.tsx'
 
 // ── Service-worker update flow ──────────────────────────────
 // The app precaches its shell so it opens offline. The cost of that is a stale
@@ -54,6 +55,8 @@ registerSW({
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <StoreProvider>
+      <App />
+    </StoreProvider>
   </StrictMode>,
 )
