@@ -7,6 +7,7 @@ import { Bubble, Group, LargeTitle, Row, Seg, Sheet } from '../ui/kit.tsx';
 export function You() {
   const { loaded, snap, uid, act, toast, today } = useStore();
   const [days, setDays] = useState(false);
+  const [about, setAbout] = useState(false);
   const [shoe, setShoe] = useState(false);
   const [name, setName] = useState('');
   if (!loaded || !snap) return null;
@@ -38,6 +39,7 @@ export function You() {
       <Group title="Training">
         <Row label="Seasons" value={loaded.seasons.length} onClick={() => go('seasons')} />
         <Row label="Run days" value={`${p.days_per_week} a week`} onClick={() => setDays(true)} />
+        <Row label="About you" sub={`${p.birth_year ? `Born ${p.birth_year}` : 'Birth year not set'} · ${p.experience_years ?? '?'} years running`} onClick={() => setAbout(true)} />
       </Group>
 
       <Group title="Shoes">
@@ -78,6 +80,19 @@ export function You() {
           <Seg label="Long run day" value={String(p.long_run_day)} options={['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((l, i) => ({ value: String(i), label: l }))}
             onChange={v => act(() => api.updateProfile(uid, { long_run_day: Number(v) }), 'Saved')} />
           <button className="btn btn-primary" onClick={() => setDays(false)}>Done</button>
+        </Sheet>
+      )}
+      {about && (
+        <Sheet onClose={() => setAbout(false)} white label="About you">
+          <h2 style={{ fontSize: 20, fontWeight: 700 }}>About you</h2>
+          <p className="small">These set safe limits. Runners 15 and under get a lower weekly ceiling.</p>
+          <label className="field"><span>Birth year</span>
+            <input className="input" inputMode="numeric" defaultValue={p.birth_year ?? ''} placeholder="e.g. 2010" onBlur={e => { const v = Number(e.target.value); if (v >= 1990 && v <= 2020) void act(() => api.updateProfile(uid, { birth_year: v }), 'Saved'); }} />
+          </label>
+          <label className="field"><span>Years of running</span>
+            <input className="input" inputMode="decimal" defaultValue={p.experience_years ?? ''} onBlur={e => { const v = Number(e.target.value); if (v >= 0 && v <= 20) void act(() => api.updateProfile(uid, { experience_years: v }), 'Saved'); }} />
+          </label>
+          <button className="btn btn-primary" onClick={() => setAbout(false)}>Done</button>
         </Sheet>
       )}
       {shoe && (

@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "vitest run",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "sync:engine": "node scripts/sync-engine.mjs",
+    "deploy:functions": "node scripts/sync-engine.mjs && supabase functions deploy mcp --no-verify-jwt --use-api && supabase functions deploy ingest --no-verify-jwt --use-api"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.109.0",

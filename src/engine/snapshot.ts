@@ -67,7 +67,7 @@ function dayViews(data: RunnerData, plan: WeekPlan, today: ISODate, runsByDate: 
     else if (mark === 'skipped') state = 'skipped';
     else if (mark) state = 'marked';
     else if (pd.kind === 'rest' || pd.kind === 'free') state = 'rest';
-    else state = data.watchConnected ? 'rest' : 'unknown';
+    else state = 'unknown';
     return { date: pd.date, planned: pd, actualMiles: miles, activities: acts, state, mark };
   });
 }

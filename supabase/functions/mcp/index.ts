@@ -49,7 +49,7 @@ const TOOLS = [
   { name: 'preview_plan_change', description: 'Check a plan change WITHOUT saving: returns before/after days and totals, errors (refused) and warnings. Always show this to the runner first.', inputSchema: obj({ changes: { type: 'array', minItems: 1, maxItems: 14, items: CHANGE } }, ['changes']), annotations: RO },
   { name: 'apply_plan_change', description: 'Save a plan change the runner agreed to (same input as the preview). Refused if the checks fail.', inputSchema: obj({ changes: { type: 'array', minItems: 1, maxItems: 14, items: CHANGE } }, ['changes']) },
   { name: 'reset_plan_days', description: 'Put days back to what the engine planned (removes plan changes).', inputSchema: obj({ dates: { type: 'array', minItems: 1, maxItems: 31, items: ISO } }, ['dates']) },
-  { name: 'update_settings', description: 'Change training settings: run days a week (3–7), long run day (0 = Mon … 6 = Sun), weekly ceiling in miles (10–60), easy heart-rate limit.', inputSchema: obj({ days_per_week: { type: 'integer', minimum: 3, maximum: 7 }, long_run_day: { type: 'integer', minimum: 0, maximum: 6 }, goal_mpw: { type: ['number', 'null'], minimum: 10, maximum: 60 }, hr_easy_max: { type: ['integer', 'null'], minimum: 120, maximum: 210 } }) },
+  { name: 'update_settings', description: 'Change training settings: run days a week (3–7), long run day (0 = Mon … 6 = Sun), weekly ceiling in miles (10–60), easy heart-rate limit, birth year, years of running.', inputSchema: obj({ days_per_week: { type: 'integer', minimum: 3, maximum: 7 }, long_run_day: { type: 'integer', minimum: 0, maximum: 6 }, goal_mpw: { type: ['number', 'null'], minimum: 10, maximum: 60 }, hr_easy_max: { type: ['integer', 'null'], minimum: 120, maximum: 210 }, birth_year: { type: 'integer', minimum: 1990, maximum: 2020 }, experience_years: { type: 'number', minimum: 0, maximum: 20 } }) },
   // ── logging ──
   { name: 'log_runs', description: 'Add runs the runner told you about. kind "workout" for team workouts, "race" for meets. Effort (1–10) and pain (0–10) are optional check-ins.',
     inputSchema: obj({ runs: { type: 'array', minItems: 1, maxItems: 30, items: obj({
@@ -81,6 +81,7 @@ const TOOLS = [
 
 type Ctx = { db: SupabaseClient; userId: string };
 type Args = Record<string, unknown>;
+const UNDOABLE = new Set(['bb_activities', 'bb_checkins', 'bb_days', 'bb_notes', 'bb_plan_overrides', 'bb_profiles', 'bb_injuries', 'bb_seasons', 'bb_meets', 'bb_shoes']);
 type Op = { table: string; op: 'insert' | 'update' | 'delete' | 'upsert'; match: Record<string, unknown>; before: Record<string, unknown> | null; after: Record<string, unknown> | null };
 
 // ── helpers ─────────────────────────────────────────────────────────
@@ -240,7 +241,7 @@ async function call(ctx: Ctx, name: string, a: Args): Promise<unknown> {
     }
     case 'update_settings': {
       const patch: Args = {};
-      for (const k of ['days_per_week', 'long_run_day', 'goal_mpw', 'hr_easy_max']) if (a[k] !== undefined) patch[k] = a[k];
+      for (const k of ['days_per_week', 'long_run_day', 'goal_mpw', 'hr_easy_max', 'birth_year', 'experience_years']) if (a[k] !== undefined) patch[k] = a[k];
       if (!Object.keys(patch).length) fail('Nothing to change.');
       const before = must(await db.from('bb_profiles').select(Object.keys(patch).join(',')).eq('user_id', uid).single()) as Record<string, unknown>;
       must(await db.from('bb_profiles').update({ ...patch, updated_at: new Date().toISOString() }).eq('user_id', uid));
@@ -354,6 +355,8 @@ async function call(ctx: Ctx, name: string, a: Args): Promise<unknown> {
       if (a.action === 'resolve') patch = { status: 'resolved' };
       else if (a.action === 'advance') {
         if (inj.outcome === 'stop' && !inj.cleared_by_clinician) fail('Running is paused until a trainer or doctor clears it.');
+        if (inj.outcome === 'easy' && Number(inj.stage) === 0) fail('This one is "easy runs while it settles", not a comeback. Use resolve when it feels fine.');
+        if (Number(inj.stage) === 0 && inj.outcome === 'cross' && !snap.injury?.shouldAdvance) fail('Not yet: the comeback starts after a morning check-in with pain 2 or less.');
         if (!snap.injury?.shouldAdvance && Number(inj.stage) > 0) fail(`Not yet: the next stage needs ${RULES.COMEBACK_GOOD_DAYS} good days (pain 3 or less, fine the next morning). ${snap.injury?.goodDays ?? 0} so far.`);
         patch = { stage: Math.min(6, Number(inj.stage) + 1), stage_since: today };
       } else {
@@ -424,7 +427,12 @@ async function call(ctx: Ctx, name: string, a: Args): Promise<unknown> {
       if (a.id) q = db.from('bb_changes').select('*').eq('user_id', uid).eq('id', a.id).is('undone_at', null).limit(1);
       const ch = (must(await q) as Record<string, unknown>[])[0];
       if (!ch) fail('Nothing to undo.');
-      for (const op of [...(ch.ops as Op[])].reverse()) {
+      // Undo replays logged rows with the service role, so it only ever
+      // touches this runner's rows in the tables the connector itself logs.
+      const ops = (ch.ops as Op[]) ?? [];
+      if (ch.source !== 'claude' || ops.some(op => !UNDOABLE.has(op.table) || !['insert', 'update', 'delete', 'upsert'].includes(op.op))) fail('That change can’t be undone here.');
+      const mine = (row: Record<string, unknown> | null) => (row ? { ...row, user_id: uid } : row);
+      for (const op of [...ops].reverse()) {
         const t = db.from(op.table);
         const scope = (x: ReturnType<typeof t.delete> | ReturnType<typeof t.update>) => {
           let y = x.eq('user_id', uid);
@@ -432,10 +440,10 @@ async function call(ctx: Ctx, name: string, a: Args): Promise<unknown> {
           return y;
         };
         if (op.op === 'insert') must(await scope(db.from(op.table).delete()));
-        else if (op.op === 'delete') must(await db.from(op.table).insert(op.before!));
-        else if (op.op === 'update') must(await scope(db.from(op.table).update(op.before!)));
+        else if (op.op === 'delete') must(await db.from(op.table).insert(mine(op.before)!));
+        else if (op.op === 'update') must(await scope(db.from(op.table).update(mine(op.before)!)));
         else if (op.op === 'upsert') {
-          if (op.before) must(await db.from(op.table).upsert(op.before));
+          if (op.before) must(await db.from(op.table).upsert(mine(op.before)!));
           else must(await scope(db.from(op.table).delete()));
         }
       }

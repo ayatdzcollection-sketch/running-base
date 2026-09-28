@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import {
   addDays, planWeek, previewChanges, auditEngine, peakFor, snapshot, splitWeek, triage, injuryStatus, speedStatus, usualWeek, weekFacts, phaseOfWeek,
   type Activity, type RunnerData,
@@ -145,6 +145,24 @@ describe('new runner in season', () => {
     const p = planWeek(d, '2026-09-28', '2026-09-28');
     expect(p.target).toBe(15);
     for (const x of p.days) if (x.miles && x.kind === 'easy') expect(x.miles).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('watch connected', () => {
+  it('a silent week is still unknown: the plan holds and the gap shows', () => {
+    const d = { ...followPlan(base(), '2026-01-05', 3), watchConnected: true };   // 20, 22, 24, then a silent week
+    expect(weekFacts(d, '2026-01-26', '2026-02-02').reliability).toBe('none');
+    expect(planWeek(d, '2026-02-02', '2026-02-02').target).toBeGreaterThanOrEqual(22);
+    expect(snapshot(d, '2026-02-02').gap?.days).toBeGreaterThanOrEqual(7);
+  });
+});
+
+describe('connector engine copy', () => {
+  it('is identical to src/engine (run node scripts/sync-engine.mjs)', () => {
+    const a = new URL('../', import.meta.url), b = new URL('../../../supabase/functions/_shared/engine/', import.meta.url);
+    for (const f of readdirSync(a).filter(x => x.endsWith('.ts'))) {
+      expect(readFileSync(new URL(f, b), 'utf8'), f).toBe(readFileSync(new URL(f, a), 'utf8'));
+    }
   });
 });
 

@@ -48,8 +48,10 @@ export function weekFacts(data: RunnerData, start: ISODate, today: ISODate, runs
   const finished = end < today;
   const needed = Math.max(1, data.profile.daysPerWeek - RULES.KNOWN_SLACK_DAYS);
   let reliability: Reliability;
-  if (known === 0) reliability = data.watchConnected && finished ? 'full' : 'none';
-  else if (known >= needed || (data.watchConnected && finished)) reliability = finished ? 'full' : 'partial';
+  // A connected watch does NOT make silent days known: a Shortcut can fail
+  // quietly, or a run can happen without the watch. Silence stays unknown.
+  if (known === 0) reliability = 'none';
+  else if (known >= needed) reliability = finished ? 'full' : 'partial';
   else reliability = 'partial';
   return { start, end, miles: round1(miles), estimatedMiles: round1(est), runs, knownDays: known, longest, reliability, finished };
 }
@@ -112,7 +114,6 @@ export function usualWeek(data: RunnerData, beforeWeek: ISODate, today: ISODate)
 
 /** Consecutive days with no run and no mark, ending yesterday. */
 export function currentGap(data: RunnerData, today: ISODate): { from: ISODate; to: ISODate; days: number } | null {
-  if (data.watchConnected) return null;
   const known = new Set([...data.activities.map(a => a.date), ...data.days.map(d => d.date)]);
   let d = addDays(today, -1), days = 0;
   while (!known.has(d) && days < 400 && d >= data.profile.planStart) {

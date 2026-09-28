@@ -67,7 +67,7 @@ function dayViews(data: RunnerData, plan: WeekPlan, today: ISODate, runsByDate: 
     else if (mark === 'skipped') state = 'skipped';
     else if (mark) state = 'marked';
     else if (pd.kind === 'rest' || pd.kind === 'free') state = 'rest';
-    else state = data.watchConnected ? 'rest' : 'unknown';
+    else state = 'unknown';
     return { date: pd.date, planned: pd, actualMiles: miles, activities: acts, state, mark };
   });
 }
@@ -114,7 +114,9 @@ export function snapshot(data: RunnerData, today: ISODate): Snapshot {
 
   // History from the plan start.
   const history: Snapshot['history'] = [];
-  for (let w = weekStart(data.profile.planStart); w < monday; w = addDays(w, 7)) {
+  const firstRun = data.activities.map(a => a.date).sort()[0];
+  const historyFrom = weekStart(firstRun && firstRun < data.profile.planStart ? firstRun : data.profile.planStart);
+  for (let w = historyFrom; w < monday; w = addDays(w, 7)) {
     const f = weekFacts(data, w, today, runsByDate);
     history.push({ start: w, miles: f.miles, estimatedMiles: f.estimatedMiles, reliability: f.reliability });
   }

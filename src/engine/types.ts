@@ -116,7 +116,7 @@ export interface RunnerData {
   speedLevelSince?: ISODate | null;
   overrides?: PlanOverride[];
   notes?: Note[];
-  /** True when a watch has sent a run in the last 14 days. Days with no
-   *  run then count as rest (the watch would have sent it), not unknown. */
+  /** True when a watch has sent a run in the last 14 days. Display only:
+   *  silent days still count as unknown (a Shortcut can fail quietly). */
   watchConnected?: boolean;
 }
