@@ -183,6 +183,12 @@ describe('injury triage', () => {
     ], '2026-03-08');
     expect(sore.goodDays).toBe(1);
   });
+  it('a brand-new injury is not nagged for a check-in', () => {
+    const inj = { id: 'i', area: 'knee' as const, startedOn: '2026-03-02', outcome: 'easy' as const, status: 'active' as const, stage: 0 };
+    const ids = (t: string) => snapshot(base({ injuries: [inj], activities: [run('2026-02-25', 4)] }), t).issues.map(i => i.id);
+    expect(ids('2026-03-02')).not.toContain('injury-checkin');
+    expect(ids('2026-03-06')).toContain('injury-checkin');
+  });
   it('a "stop" pauses running until a clinician clears it', () => {
     const inj = { id: 'i', area: 'hip' as const, startedOn: '2026-03-01', outcome: 'stop' as const, status: 'active' as const, stage: 0 };
     const s = snapshot(base({ injuries: [inj], activities: [run('2026-02-25', 4)] }), '2026-03-02');
