@@ -1,0 +1,17 @@
+# Only the settings declared here are pushed (`supabase config push`);
+# everything else on the project stays as it is.
+project_id = "running-base"
+
+[auth]
+site_url = "https://ayatdzcollection-sketch.github.io/running-base/"
+additional_redirect_urls = ["https://ayatdzcollection-sketch.github.io/running-base/", "http://localhost:5173/", "http://localhost:5199/"]
+
+# Email templates with the sign-in code. Supabase only accepts template
+# changes once a custom SMTP sender is configured (free tier rule), so these
+# are pushed after SMTP is set up:
+# [auth.email.template.magic_link]
+# subject = "Your Bulletproof Base code"
+# content_path = "./supabase/templates/code.html"
+# [auth.email.template.confirmation]
+# subject = "Your Bulletproof Base code"
+# content_path = "./supabase/templates/code.html"

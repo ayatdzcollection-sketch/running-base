@@ -1,0 +1,315 @@
+import { describe, expect, it } from 'vitest';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import {
+  addDays, planWeek, previewChanges, auditEngine, peakFor, snapshot, splitWeek, triage, injuryStatus, speedStatus, usualWeek, weekFacts, phaseOfWeek,
+  type Activity, type RunnerData,
+} from '../index.ts';
+
+// ── helpers ──────────────────────────────────────────────────────────
+const base = (over: Partial<RunnerData> = {}): RunnerData => ({
+  profile: { displayName: 'T', daysPerWeek: 5, longRunDay: 5, startMpw: 20, startLongest: 5, planStart: '2026-01-05', experienceYears: 2 },
+  seasons: [], meets: [], activities: [], days: [], checkins: [], injuries: [], shoes: [],
+  speedLevel: 0, ...over,
+});
+let n = 0;
+const run = (date: string, mi: number, extra: Partial<Activity> = {}): Activity =>
+  ({ id: `a${n++}`, date, distanceMi: mi, kind: 'easy', source: 'manual', ...extra });
+
+/** Run `plan` exactly: fills each week's run days with the planned miles. */
+function followPlan(data: RunnerData, from: string, weeks: number, share = 1): RunnerData {
+  let d = data;
+  for (let i = 0; i < weeks; i++) {
+    const monday = addDays(from, 7 * i);
+    const p = planWeek(d, monday, monday);
+    const acts = p.days.filter(x => x.miles).map(x => run(x.date, Math.round(x.miles! * share * 10) / 10));
+    d = { ...d, activities: [...d.activities, ...acts] };
+  }
+  return d;
+}
+const sum = (xs: (number | null)[]) => xs.reduce<number>((s, x) => s + (x ?? 0), 0);
+
+// ── splitting a week ─────────────────────────────────────────────────
+describe('splitWeek', () => {
+  it('lands on the target, long run on its day, rest after it', () => {
+    const days = splitWeek('2026-01-05', 25, 5, 5, 99);
+    expect(sum(days.map(d => d.miles))).toBe(25);
+    expect(days[5].kind).toBe('long');
+    expect(days[6].kind).toBe('rest'); // day after the long run
+    expect(days.filter(d => d.miles).length).toBe(5);
+  });
+  it('keeps the long run within 30% of the week and under the cap', () => {
+    const days = splitWeek('2026-01-05', 40, 5, 5, 99);
+    expect(days[5].miles!).toBeLessThanOrEqual(12);
+    const capped = splitWeek('2026-01-05', 40, 5, 5, 8);
+    expect(capped[5].miles).toBe(8);
+  });
+  it('drops run days rather than prescribe tiny runs', () => {
+    const days = splitWeek('2026-01-05', 8, 6, 5, 99);
+    for (const d of days) if (d.miles) expect(d.miles).toBeGreaterThanOrEqual(2);
+  });
+  it('never calls a run "long" when it is not longer than the easy days', () => {
+    const days = splitWeek('2026-01-05', 20, 5, 5, 3.5);
+    expect(days[5].kind).toBe('easy');
+  });
+});
+
+// ── build trajectory ─────────────────────────────────────────────────
+describe('build weeks', () => {
+  it('a new runner builds ~10% a week with a lighter 5th week', () => {
+    const d = base();
+    const targets = [0, 1, 2, 3, 4].map(i => planWeek(d, addDays('2026-01-05', 7 * i), '2026-01-05').target);
+    expect(targets).toEqual([20, 22, 24, 26, 22]);
+  });
+  it('keeps building when the runner does the plan', () => {
+    const d = followPlan(base(), '2026-01-05', 5);
+    const next = planWeek(d, '2026-02-09', '2026-02-09');
+    expect(next.target).toBeGreaterThan(26);
+    expect(next.isDown).toBe(false);
+  });
+  it('never climbs past the ceiling', () => {
+    const d = followPlan(base({ profile: { ...base().profile, goalMpw: 24 } }), '2026-01-05', 8);
+    for (let i = 0; i < 10; i++) expect(planWeek(d, addDays('2026-01-05', 7 * i), '2026-03-02').target!).toBeLessThanOrEqual(24);
+  });
+  it('restarts from the facts after a fully known short week (once, not compounding)', () => {
+    let d = followPlan(base(), '2026-01-05', 2);         // 20, 22 done
+    d = { ...d, activities: [...d.activities, ...['2026-01-19', '2026-01-20', '2026-01-22', '2026-01-23'].map(x => run(x, 3))] }; // 12 of 24
+    const w4 = planWeek(d, '2026-01-26', '2026-01-26');
+    expect(w4.target).toBe(12);
+    const w5 = planWeek(d, '2026-02-02', '2026-01-26');
+    expect(w5.target).toBeGreaterThan(12);               // grows again, no second cut
+  });
+  it('MISSING DATA NEVER CUTS: unknown weeks hold the plan', () => {
+    const d = followPlan(base(), '2026-01-05', 3);         // 20, 22, 24, then silence
+    const held = [3, 4, 5, 6].map(i => planWeek(d, addDays('2026-01-05', 7 * i), addDays('2026-01-05', 7 * i)).target!);
+    for (const t of held) expect(t).toBeGreaterThanOrEqual(20);
+    expect(Math.min(...held)).toBeGreaterThanOrEqual(22); // lighter week at most, never a slide
+  });
+  it('a partly logged week that met the target still counts as on track', () => {
+    let d = followPlan(base(), '2026-01-05', 1);
+    d = { ...d, activities: [...d.activities, run('2026-01-12', 12), run('2026-01-17', 11)] }; // 23 in 2 runs
+    expect(weekFacts(d, '2026-01-12', '2026-01-19').reliability).toBe('partial');
+    expect(planWeek(d, '2026-01-19', '2026-01-19').target).toBe(24);
+  });
+  it('a short partly logged week before the start never shrinks week 1', () => {
+    const d = base({ activities: [run('2026-01-02', 3)] }); // one bonus run the Friday before
+    expect(planWeek(d, '2026-01-05', '2026-01-05').target).toBe(20);
+  });
+  it('caps the plan at 15% over the biggest recent verified week', () => {
+    const d = { ...base(), profile: { ...base().profile, startMpw: 40 } };
+    const easy = ['2026-01-05', '2026-01-06', '2026-01-08', '2026-01-09', '2026-01-10'].map(x => run(x, 4)); // 20 verified
+    const w2 = planWeek({ ...d, activities: easy }, '2026-01-12', '2026-01-12');
+    expect(w2.target!).toBeLessThanOrEqual(23);
+  });
+});
+
+// ── seasons ──────────────────────────────────────────────────────────
+describe('school seasons', () => {
+  const xc = { id: 'xc', kind: 'xc' as const, label: 'XC', startDate: '2026-08-20', endDate: '2026-11-14', workoutDays: [1, 3] };
+  it('is coach mode inside the season, then a 2-week break, then builds', () => {
+    expect(phaseOfWeek('2026-08-17', [xc], '2026-06-01').kind).toBe('coach'); // Thursday start counts
+    expect(phaseOfWeek('2026-11-09', [xc], '2026-06-01').kind).toBe('coach');
+    expect(phaseOfWeek('2026-11-16', [xc], '2026-06-01').kind).toBe('break');
+    expect(phaseOfWeek('2026-11-23', [xc], '2026-06-01').kind).toBe('break');
+    expect(phaseOfWeek('2026-11-30', [xc], '2026-06-01').kind).toBe('build');
+  });
+  it('an open-ended season stays in coach mode until the next season starts', () => {
+    const open = { ...xc, endDate: null };
+    const track = { id: 't', kind: 'outdoor' as const, label: 'Track', startDate: '2027-03-01', endDate: null, workoutDays: [1, 3] };
+    expect(phaseOfWeek('2027-01-04', [open, track], '2026-06-01').kind).toBe('coach');
+    expect(phaseOfWeek('2027-03-01', [open, track], '2026-06-01').season?.label).toBe('Track');
+  });
+  it('coach mode: team days, meets, no app lighter weeks, aim = usual week', () => {
+    const acts: Activity[] = [];
+    for (const w of ['2026-08-24', '2026-08-31', '2026-09-07']) for (const k of [0, 1, 3, 4, 5]) acts.push(run(addDays(w, k), 6));
+    const d = base({ seasons: [xc], activities: acts, meets: [{ id: 'm', date: '2026-09-19', name: 'Invite' }],
+      profile: { ...base().profile, planStart: '2026-06-01' } });
+    const p = planWeek(d, '2026-09-14', '2026-09-14');
+    expect(p.phase.kind).toBe('coach');
+    expect(p.target).toBe(30);
+    expect(p.isDown).toBe(false);
+    expect(p.days[1].kind).toBe('team');
+    expect(p.days[5].kind).toBe('meet');
+  });
+  it('after the break the build starts at ~60% of the in-season week', () => {
+    const acts: Activity[] = [];
+    for (let w = '2026-10-19'; w <= '2026-11-09'; w = addDays(w, 7)) for (const k of [0, 1, 3, 4, 5]) acts.push(run(addDays(w, k), 6));
+    const d = base({ seasons: [xc], activities: acts, profile: { ...base().profile, planStart: '2026-06-01' } });
+    expect(planWeek(d, '2026-11-30', '2026-11-30').target).toBe(18);
+  });
+});
+
+describe('new runner in season', () => {
+  it('one partly logged week below what they told us does not become their usual week', () => {
+    const xc = { id: 'xc', kind: 'xc' as const, label: 'XC', startDate: '2026-08-20', endDate: null, workoutDays: [1, 3] };
+    const d = base({ seasons: [xc], activities: [run('2026-09-26', 6)], profile: { ...base().profile, startMpw: 15, planStart: '2026-09-28', daysPerWeek: 6 } });
+    const p = planWeek(d, '2026-09-28', '2026-09-28');
+    expect(p.target).toBe(15);
+    for (const x of p.days) if (x.miles && x.kind === 'easy') expect(x.miles).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('watch connected', () => {
+  it('a silent week is still unknown: the plan holds and the gap shows', () => {
+    const d = { ...followPlan(base(), '2026-01-05', 3), watchConnected: true };   // 20, 22, 24, then a silent week
+    expect(weekFacts(d, '2026-01-26', '2026-02-02').reliability).toBe('none');
+    expect(planWeek(d, '2026-02-02', '2026-02-02').target).toBeGreaterThanOrEqual(22);
+    expect(snapshot(d, '2026-02-02').gap?.days).toBeGreaterThanOrEqual(7);
+  });
+});
+
+describe('connector engine copy', () => {
+  it('is identical to src/engine (run node scripts/sync-engine.mjs)', () => {
+    const a = new URL('../', import.meta.url), b = new URL('../../../supabase/functions/_shared/engine/', import.meta.url);
+    for (const f of readdirSync(a).filter(x => x.endsWith('.ts'))) {
+      expect(readFileSync(new URL(f, b), 'utf8'), f).toBe(readFileSync(new URL(f, a), 'utf8'));
+    }
+  });
+});
+
+// ── usual week ───────────────────────────────────────────────────────
+describe('usual week', () => {
+  it('is the median of the last 3 known weeks, and silence does not move it', () => {
+    const acts = [
+      ...[0, 1, 3, 4, 5].map(k => run(addDays('2026-02-02', k), 6)),  // 30
+      ...[0, 1, 3, 4].map(k => run(addDays('2026-02-09', k), 3)),     // 12
+      ...[0, 1, 3, 4, 5].map(k => run(addDays('2026-02-16', k), 5.6)),// 28
+    ];
+    const d = base({ activities: acts });
+    expect(usualWeek(d, '2026-02-23', '2026-02-23').mpw).toBe(28);
+    expect(usualWeek(d, '2026-02-23', '2026-05-01').mpw).toBe(28);
+  });
+});
+
+// ── injury check ─────────────────────────────────────────────────────
+describe('injury triage', () => {
+  it('red flags always stop running', () => {
+    expect(triage('shin', { pain: 2, spot: true }).outcome).toBe('stop');
+    expect(triage('shin', { pain: 1, hop: true }).outcome).toBe('stop');
+    expect(triage('hip', { pain: 3, groin: true, hop: true }).likely).toMatch(/stress fracture/);
+    expect(triage('ankle', { pain: 2, walk4: false }).outcome).toBe('stop');
+    expect(triage('back', { pain: 2, nerve: true }).outcome).toBe('stop');
+    expect(triage('other', { pain: 8 }).outcome).toBe('stop');
+  });
+  it('follows the pain-monitoring rule without red flags', () => {
+    expect(triage('shin', { pain: 1, spot: false, hop: false, warm: 'better', morning: false }).outcome).toBe('run');
+    expect(triage('shin', { pain: 3, spot: false, hop: false, warm: 'better' }).outcome).toBe('easy');
+    expect(triage('shin', { pain: 4, spot: false, hop: false, warm: 'better' }).outcome).toBe('easy');
+    expect(triage('shin', { pain: 5, spot: false, hop: false }).outcome).toBe('cross');
+    expect(triage('knee', { pain: 2, where: 'front', warm: 'worse' }).outcome).toBe('cross');
+    expect(triage('shin', { pain: 4, spot: false, hop: false, warm: 'better' }).likely).toBe('Shin splints');
+  });
+  it('comeback moves up only after 2 good days', () => {
+    const inj = { id: 'i', area: 'shin' as const, startedOn: '2026-03-01', outcome: 'cross' as const, status: 'active' as const, stage: 2, stageSince: '2026-03-05' };
+    expect(injuryStatus(inj, [{ date: '2026-03-05', moment: 'post_run', pain: 2 }], '2026-03-06').shouldAdvance).toBe(false);
+    const ok = injuryStatus(inj, [
+      { date: '2026-03-05', moment: 'post_run', pain: 2 }, { date: '2026-03-07', moment: 'post_run', pain: 3 },
+    ], '2026-03-08');
+    expect(ok.shouldAdvance).toBe(true);
+    const sore = injuryStatus(inj, [
+      { date: '2026-03-05', moment: 'post_run', pain: 2 }, { date: '2026-03-06', moment: 'morning', pain: 5 },
+      { date: '2026-03-07', moment: 'post_run', pain: 3 },
+    ], '2026-03-08');
+    expect(sore.goodDays).toBe(1);
+  });
+  it('a brand-new injury is not nagged for a check-in', () => {
+    const inj = { id: 'i', area: 'knee' as const, startedOn: '2026-03-02', outcome: 'easy' as const, status: 'active' as const, stage: 0 };
+    const ids = (t: string) => snapshot(base({ injuries: [inj], activities: [run('2026-02-25', 4)] }), t).issues.map(i => i.id);
+    expect(ids('2026-03-02')).not.toContain('injury-checkin');
+    expect(ids('2026-03-06')).toContain('injury-checkin');
+  });
+  it('a "stop" pauses running until a clinician clears it', () => {
+    const inj = { id: 'i', area: 'hip' as const, startedOn: '2026-03-01', outcome: 'stop' as const, status: 'active' as const, stage: 0 };
+    const s = snapshot(base({ injuries: [inj], activities: [run('2026-02-25', 4)] }), '2026-03-02');
+    expect(s.todayPlan.kind).toBe('paused');
+    expect(s.todayPlan.miles).toBeNull();
+  });
+});
+
+// ── speed ladder ─────────────────────────────────────────────────────
+describe('speed ladder', () => {
+  const four = ['2026-03-01', '2026-03-02', '2026-03-04', '2026-03-05'].map(date => ({ date, moment: 'post_run' as const, pain: 1 }));
+  it('needs 4 pain-free check-ins; unlogged pain never counts', () => {
+    expect(speedStatus({ level: 0, since: null, checkins: four.slice(0, 3), injuryActive: false, inSeason: false, usualMpw: 25 }).eligible).toBe(false);
+    expect(speedStatus({ level: 0, since: null, checkins: four, injuryActive: false, inSeason: false, usualMpw: 25 }).eligible).toBe(true);
+  });
+  it('in season only strides are added by the app; injuries pause it', () => {
+    expect(speedStatus({ level: 1, since: null, checkins: four, injuryActive: false, inSeason: true, usualMpw: 30 }).eligible).toBe(false);
+    expect(speedStatus({ level: 0, since: null, checkins: four, injuryActive: true, inSeason: false, usualMpw: 30 }).eligible).toBe(false);
+  });
+});
+
+// ── plan changes ─────────────────────────────────────────────────────
+describe('plan changes', () => {
+  it('a week cut short on purpose and then completed counts as on track', () => {
+    let d = followPlan(base(), '2026-01-05', 1);                                    // week 1 done (20)
+    d = { ...d, overrides: [{ date: '2026-01-15', kind: 'rest', source: 'claude' }, { date: '2026-01-16', kind: 'rest', source: 'claude' }] };
+    const w2 = planWeek(d, '2026-01-12', '2026-01-12');
+    expect(w2.target).toBeLessThan(w2.baseTarget!);
+    d = { ...d, activities: [...d.activities, ...w2.days.filter(x => x.miles && x.kind !== 'cross').map(x => run(x.date, x.miles!))] };
+    const w3 = planWeek(d, '2026-01-19', '2026-01-19');
+    expect(w3.target).toBeGreaterThanOrEqual(22);                                    // kept building, no rebase to ~13
+  });
+  it('moving and cutting miles is fine; adding past the week or long-run limit is refused', () => {
+    const d = base();
+    const ok = previewChanges(d, '2026-01-05', [{ date: '2026-01-06', kind: 'rest' }, { date: '2026-01-07', kind: 'easy', miles: 4 }], 'claude');
+    expect(ok.ok).toBe(true);
+    const tooLong = previewChanges(d, '2026-01-05', [{ date: '2026-01-10', kind: 'long', miles: 12 }], 'claude');
+    expect(tooLong.ok).toBe(false);
+    expect(tooLong.errors.join(' ')).toMatch(/long-run limit/);
+    const tooMuch = previewChanges(d, '2026-01-05', [{ date: '2026-01-07', kind: 'easy', miles: 5.5 }, { date: '2026-01-08', kind: 'easy', miles: 5.5 }, { date: '2026-01-06', kind: 'easy', miles: 5.5 }], 'claude');
+    expect(tooMuch.ok).toBe(false);
+    expect(previewChanges(d, '2026-01-05', [{ date: '2026-01-02', kind: 'rest' }], 'claude').ok).toBe(false); // past
+  });
+  it('an active injury only allows rest or cross-training', () => {
+    const inj = { id: 'i', area: 'shin' as const, startedOn: '2026-01-04', outcome: 'cross' as const, status: 'active' as const, stage: 0 };
+    const r = previewChanges(base({ injuries: [inj] }), '2026-01-05', [{ date: '2026-01-07', kind: 'easy', miles: 3 }], 'claude');
+    expect(r.ok).toBe(false);
+    expect(previewChanges(base({ injuries: [inj] }), '2026-01-05', [{ date: '2026-01-07', kind: 'cross' }], 'claude').ok).toBe(true);
+  });
+});
+
+describe('ceiling by age', () => {
+  it('younger runners get a lower ceiling', () => {
+    expect(peakFor(3, null, 2014, '2026-09-01')).toBe(25);
+    expect(peakFor(3, null, 2011, '2026-09-01')).toBe(40);
+    expect(peakFor(3, null, 2009, '2026-09-01')).toBe(45);
+    expect(peakFor(3, 70, 2009, '2026-09-01')).toBe(60);
+  });
+});
+
+describe('engine audit', () => {
+  it('finds nothing wrong on a runner who follows the plan, or goes quiet', () => {
+    const d = followPlan(base(), '2026-01-05', 10);
+    expect(auditEngine(d, '2026-03-16').findings).toEqual([]);
+    expect(auditEngine(base({ activities: [run('2026-01-06', 4)] }), '2026-03-16').findings).toEqual([]);
+  });
+});
+
+// ── the real log (private fixture, not committed) ────────────────────
+const FIXTURE = new URL('./fixtures/private/youcef.json', import.meta.url);
+describe.runIf(existsSync(FIXTURE))('real log regression', () => {
+  const data = () => JSON.parse(readFileSync(FIXTURE, 'utf8')) as RunnerData;
+  it('history matches the imported weeks exactly', () => {
+    const s = snapshot(data(), '2026-09-28');
+    const got = Object.fromEntries(s.history.map(h => [h.start, h.miles]));
+    expect(got).toMatchObject({ '2026-07-06': 22.8, '2026-07-13': 25.9, '2026-07-20': 28, '2026-07-27': 23.8, '2026-08-03': 27.4,
+      '2026-08-10': 20, '2026-08-17': 14, '2026-08-24': 28, '2026-08-31': 12.1, '2026-09-07': 32, '2026-09-14': 8 });
+  });
+  it('the Sep 16+ gap cuts nothing: coach mode holds his usual 28 for months', () => {
+    for (const today of ['2026-09-28', '2026-10-16', '2026-11-20']) {
+      const s = snapshot(data(), today);
+      expect(s.phase.kind).toBe('coach');
+      expect(s.usualMpw).toBe(28);
+      expect(s.week.target).toBe(28);
+      expect(s.longRun.nextCap).toBe(8.5);
+    }
+  });
+  it('passes the engine audit', () => {
+    expect(auditEngine(data(), '2026-09-28', 14, 6).findings).toEqual([]);
+  });
+  it('flags what needs attention, calmly', () => {
+    const ids = snapshot(data(), '2026-09-28').issues.map(i => i.id);
+    expect(ids).toEqual(expect.arrayContaining(['gap', 'season-end', 'shoe-asics']));
+    expect(ids).not.toContain('spike');
+  });
+});

@@ -1,0 +1,16 @@
+export * from './types.ts';
+export * from './dates.ts';
+export { RULES, peakFor, ENGINE_VERSION } from './rules.ts';
+export { weekFacts, usualWeek, trailingLongest, currentGap, knownWeeks } from './facts.ts';
+export { phaseOfWeek, seasonWindows } from './phase.ts';
+export { planWeek, splitWeek, runDaysOf, longCap, applyOverrides, traceWeek } from './plan.ts';
+export type { PlannedDay, WeekPlan, TraceRow, DayKind } from './plan.ts';
+export { previewChanges } from './changes.ts';
+export type { ProposedChange, ChangePreview } from './changes.ts';
+export { auditEngine } from './audit.ts';
+export type { AuditResult, AuditFinding } from './audit.ts';
+export { triage, injuryStatus, QUESTIONS, AREA_LABEL, STAGES } from './injury.ts';
+export type { Question, Answer, TriageResult, InjuryStatus, Stage } from './injury.ts';
+export { speedStatus, LEVELS } from './speed.ts';
+export { snapshot, findIssues } from './snapshot.ts';
+export type { Snapshot, DayView, TodayView, Issue, DayState } from './snapshot.ts';
