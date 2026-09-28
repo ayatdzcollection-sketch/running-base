@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import {
-  addDays, planWeek, snapshot, splitWeek, triage, injuryStatus, speedStatus, usualWeek, weekFacts, phaseOfWeek,
+  addDays, planWeek, previewChanges, auditEngine, peakFor, snapshot, splitWeek, triage, injuryStatus, speedStatus, usualWeek, weekFacts, phaseOfWeek,
   type Activity, type RunnerData,
 } from '../index.ts';
 
@@ -210,6 +210,53 @@ describe('speed ladder', () => {
   });
 });
 
+// ── plan changes ─────────────────────────────────────────────────────
+describe('plan changes', () => {
+  it('a week cut short on purpose and then completed counts as on track', () => {
+    let d = followPlan(base(), '2026-01-05', 1);                                    // week 1 done (20)
+    d = { ...d, overrides: [{ date: '2026-01-15', kind: 'rest', source: 'claude' }, { date: '2026-01-16', kind: 'rest', source: 'claude' }] };
+    const w2 = planWeek(d, '2026-01-12', '2026-01-12');
+    expect(w2.target).toBeLessThan(w2.baseTarget!);
+    d = { ...d, activities: [...d.activities, ...w2.days.filter(x => x.miles && x.kind !== 'cross').map(x => run(x.date, x.miles!))] };
+    const w3 = planWeek(d, '2026-01-19', '2026-01-19');
+    expect(w3.target).toBeGreaterThanOrEqual(22);                                    // kept building, no rebase to ~13
+  });
+  it('moving and cutting miles is fine; adding past the week or long-run limit is refused', () => {
+    const d = base();
+    const ok = previewChanges(d, '2026-01-05', [{ date: '2026-01-06', kind: 'rest' }, { date: '2026-01-07', kind: 'easy', miles: 4 }], 'claude');
+    expect(ok.ok).toBe(true);
+    const tooLong = previewChanges(d, '2026-01-05', [{ date: '2026-01-10', kind: 'long', miles: 12 }], 'claude');
+    expect(tooLong.ok).toBe(false);
+    expect(tooLong.errors.join(' ')).toMatch(/long-run limit/);
+    const tooMuch = previewChanges(d, '2026-01-05', [{ date: '2026-01-07', kind: 'easy', miles: 5.5 }, { date: '2026-01-08', kind: 'easy', miles: 5.5 }, { date: '2026-01-06', kind: 'easy', miles: 5.5 }], 'claude');
+    expect(tooMuch.ok).toBe(false);
+    expect(previewChanges(d, '2026-01-05', [{ date: '2026-01-02', kind: 'rest' }], 'claude').ok).toBe(false); // past
+  });
+  it('an active injury only allows rest or cross-training', () => {
+    const inj = { id: 'i', area: 'shin' as const, startedOn: '2026-01-04', outcome: 'cross' as const, status: 'active' as const, stage: 0 };
+    const r = previewChanges(base({ injuries: [inj] }), '2026-01-05', [{ date: '2026-01-07', kind: 'easy', miles: 3 }], 'claude');
+    expect(r.ok).toBe(false);
+    expect(previewChanges(base({ injuries: [inj] }), '2026-01-05', [{ date: '2026-01-07', kind: 'cross' }], 'claude').ok).toBe(true);
+  });
+});
+
+describe('ceiling by age', () => {
+  it('younger runners get a lower ceiling', () => {
+    expect(peakFor(3, null, 2014, '2026-09-01')).toBe(25);
+    expect(peakFor(3, null, 2011, '2026-09-01')).toBe(40);
+    expect(peakFor(3, null, 2009, '2026-09-01')).toBe(45);
+    expect(peakFor(3, 70, 2009, '2026-09-01')).toBe(60);
+  });
+});
+
+describe('engine audit', () => {
+  it('finds nothing wrong on a runner who follows the plan, or goes quiet', () => {
+    const d = followPlan(base(), '2026-01-05', 10);
+    expect(auditEngine(d, '2026-03-16').findings).toEqual([]);
+    expect(auditEngine(base({ activities: [run('2026-01-06', 4)] }), '2026-03-16').findings).toEqual([]);
+  });
+});
+
 // ── the real log (private fixture, not committed) ────────────────────
 const FIXTURE = new URL('./fixtures/private/youcef.json', import.meta.url);
 describe.runIf(existsSync(FIXTURE))('real log regression', () => {
@@ -228,6 +275,9 @@ describe.runIf(existsSync(FIXTURE))('real log regression', () => {
       expect(s.week.target).toBe(28);
       expect(s.longRun.nextCap).toBe(8.5);
     }
+  });
+  it('passes the engine audit', () => {
+    expect(auditEngine(data(), '2026-09-28', 14, 6).findings).toEqual([]);
   });
   it('flags what needs attention, calmly', () => {
     const ids = snapshot(data(), '2026-09-28').issues.map(i => i.id);

@@ -2,6 +2,8 @@
 // Changing a value here changes the plan for every runner, so each one
 // says where it comes from.
 
+export const ENGINE_VERSION = '2.1.0';
+
 export const RULES = {
   /** Weekly mileage grows at most this fraction per build week. The common
    *  "about 10%" guideline; the evidence is modest, but for teenagers a
@@ -57,6 +59,11 @@ export const RULES = {
     { minYears: 3, mpw: 45 },
   ],
   PEAK_HARD_MAX: 60,
+  /** Younger runners get a lower ceiling (years of age → max miles/week). */
+  PEAK_BY_AGE: [
+    { maxAge: 13, mpw: 25 },
+    { maxAge: 15, mpw: 40 },
+  ],
 
   /** Pain-monitoring model: during a run, pain at or below this is OK. */
   PAIN_OK: 3,
@@ -74,10 +81,15 @@ export const RULES = {
   GAP_DAYS: 5,              // this many days in a row with no data
 } as const;
 
-export function peakFor(years: number | null | undefined, goal: number | null | undefined): number {
-  if (goal && goal > 0) return Math.min(goal, RULES.PEAK_HARD_MAX);
+export function peakFor(years: number | null | undefined, goal: number | null | undefined, birthYear?: number | null, asOf?: string): number {
+  let ageCap: number = RULES.PEAK_HARD_MAX;
+  if (birthYear && asOf) {
+    const age = Number(asOf.slice(0, 4)) - birthYear;
+    for (const a of RULES.PEAK_BY_AGE) if (age <= a.maxAge) { ageCap = a.mpw; break; }
+  }
+  if (goal && goal > 0) return Math.min(goal, RULES.PEAK_HARD_MAX, ageCap);
   const y = years ?? 0;
   let peak: number = RULES.PEAK_BY_EXPERIENCE[0].mpw;
   for (const p of RULES.PEAK_BY_EXPERIENCE) if (y >= p.minYears) peak = p.mpw;
-  return peak;
+  return Math.min(peak, ageCap);
 }

@@ -57,3 +57,15 @@ where r.access_code = 'XC2026' and r.pain_next_am is not null
   and not exists (select 1 from public.bb_checkins c
                   where c.user_id = '86831193-48a9-49a9-9df4-92eb8adbe313' and c.date = r.date::date + 1
                     and c.moment = 'morning' and c.note = 'imported from the old app');
+
+-- Weekly check-ins (sleep/energy/stress/soreness + a note) become notes on
+-- the Monday of that week, word for word, with the 1–5 scores kept.
+insert into public.bb_notes (user_id, date, body, source)
+select '86831193-48a9-49a9-9df4-92eb8adbe313'::uuid, (c.key)::date,
+       'Weekly check-in: sleep ' || (c.value->>'sleep') || '/5, energy ' || (c.value->>'energy') || '/5, stress '
+       || (c.value->>'stress') || '/5, soreness ' || (c.value->>'soreness') || '/5.'
+       || coalesce(E'\n' || nullif(c.value->>'note', ''), ''),
+       'import'
+from public.athlete_state s, jsonb_each(s.state->'checkins') c
+where s.access_code = 'XC2026'
+  and not exists (select 1 from public.bb_notes n where n.user_id = '86831193-48a9-49a9-9df4-92eb8adbe313' and n.date = (c.key)::date and n.source = 'import');
