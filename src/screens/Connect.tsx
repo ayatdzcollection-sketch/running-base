@@ -66,32 +66,52 @@ function Guide({ title, steps, step, setStep, onClose, children, next, nextLabel
 }
 
 // ── Apple Watch ────────────────────────────────────────────────────
+type Method = 'hae' | 'shortcut';
+const HAE_URL = 'https://apps.apple.com/app/id1115567069';
+
+function MethodCard({ title, badge, body, onClick, icon }: { title: string; badge?: string; body: string; onClick: () => void; icon: 'watch' | 'spark' | 'share' }) {
+  return (
+    <button className="card row" style={{ alignItems: 'flex-start', padding: 16, borderRadius: 24 }} onClick={onClick}>
+      <Bubble icon={icon} small />
+      <span className="grow" style={{ gap: 4 }}>
+        <span className="hstack" style={{ gap: 8 }}><span className="label" style={{ fontWeight: 700 }}>{title}</span>{badge && <span className="badge" style={{ background: 'var(--green-t)', color: 'var(--green-d)' }}>{badge}</span>}</span>
+        <span className="sub" style={{ fontSize: 14, lineHeight: '19px' }}>{body}</span>
+      </span>
+      <Icon name="chev" size={16} color="#9C9CA3" stroke={2} />
+    </button>
+  );
+}
+
 export function ConnectWatch() {
   const { code, live, make, revoke } = useCode('shortcut');
   const { loaded, refresh } = useStore();
-  const [step, setStep] = useState(live ? 5 : 0);
+  const [method, setMethod] = useState<Method | null>(null);
+  const [step, setStep] = useState(live ? 99 : 0);
   const link = code ? `${FUNCTIONS_URL}/ingest/${code}` : null;
-  const lastWatch = loaded?.activities.filter(a => a.source === 'watch').sort((a, b) => (a.start_at ?? a.date).localeCompare(b.start_at ?? b.date)).pop();
+  const watchRuns = loaded?.activities.filter(a => a.source === 'watch') ?? [];
+  const lastWatch = [...watchRuns].sort((a, b) => (a.start_at ?? a.date).localeCompare(b.start_at ?? b.date)).pop();
   const startCount = useRef<number | null>(null);
-  const watchCount = loaded?.activities.filter(a => a.source === 'watch').length ?? 0;
+  const testing = step === 3;
 
-  // Step 4: listen for the test run.
   useEffect(() => {
-    if (step !== 3) return;
-    if (startCount.current == null) startCount.current = watchCount;
+    if (!testing) return;
+    if (startCount.current == null) startCount.current = watchRuns.length;
     const id = setInterval(() => void refresh(), 4000);
     return () => clearInterval(id);
-  }, [step, refresh, watchCount]);
-  const heard = step === 3 && startCount.current != null && watchCount > startCount.current;
+  }, [testing, refresh, watchRuns.length]);
+  const heard = testing && startCount.current != null && watchRuns.length > startCount.current;
   const pinged = !!live?.last_used_at && Date.now() - Date.parse(live.last_used_at) < 10 * 60_000;
+  const close = () => history.back();
+  const total = 4;
 
-  if (step === 5) return (
+  // Connected
+  if (step === 99) return (
     <main className="page flow">
-      <NavBar title="Apple Watch" onBack={() => history.back()} />
+      <NavBar title="Apple Watch" onBack={close} />
       <div className="stack" style={{ gap: 14, alignItems: 'center', textAlign: 'center', paddingTop: 12 }}>
         <Bubble icon="watch" size={64} />
         <h1 className="h1-flow">Your watch is connected</h1>
-        <p className="lead">Every run you finish on your Apple Watch shows up in the app by itself.</p>
+        <p className="lead">Runs you finish on your Apple Watch show up in the app by themselves.</p>
       </div>
       <div className="card pad" style={{ gap: 6 }}>
         <span className="card-title">Last run received</span>
@@ -99,113 +119,135 @@ export function ConnectWatch() {
       </div>
       <Why label="A run didn’t show up?">
         <p>Your iPhone keeps health data locked while it’s locked, so a run can arrive the next time you unlock it.</p>
-        <p>Still missing? Open Shortcuts and check that the automation is on and set to <b>Run Immediately</b>. You can always add a run by hand with the + button.</p>
+        <p>Health Auto Export sends on its own schedule (every hour, for example). With the Shortcut, check the automation is on and set to <b>Run Immediately</b>.</p>
+        <p>You can always add or fix a run by hand with the + button.</p>
       </Why>
       <div className="spacer" />
-      <button className="btn btn-gray" onClick={() => setStep(1)}>Set it up again</button>
-      <button className="btn btn-danger" onClick={() => confirm('Disconnect your watch? Runs will stop coming in until you set it up again.') && revoke().then(() => setStep(0))}>Disconnect</button>
+      <button className="btn btn-gray" onClick={() => { setMethod(null); setStep(0); }}>Set it up again</button>
+      <button className="btn btn-danger" onClick={() => confirm('Disconnect your watch? Runs stop coming in until you set it up again.') && revoke().then(() => setStep(0))}>Disconnect</button>
     </main>
   );
 
-  const close = () => history.back();
-  if (step === 0) return (
-    <Guide title="Apple Watch" steps={5} step={0} setStep={setStep} onClose={close} next={() => setStep(1)} nextLabel="Start">
-      <div className="stack" style={{ gap: 14, alignItems: 'center', textAlign: 'center', paddingTop: 8 }}>
-        <Bubble icon="watch" size={64} />
-        <h1 className="h1-flow">Runs log themselves</h1>
-        <p className="lead">When you finish a run on your Apple Watch, your iPhone sends the distance and time here. No typing.</p>
+  // Choose a method
+  if (step === 0 || !method) return (
+    <main className="page flow">
+      <NavBar title="Apple Watch" onBack={close} />
+      <div className="stack" style={{ gap: 6, paddingTop: 4 }}>
+        <h1 className="h1-flow">How should runs get in?</h1>
+        <p className="lead">Pick one. You can switch later.</p>
       </div>
-      <div className="card rows">
-        <div className="tapstep"><span className="n">1</span><span className="t">Copy your personal link</span></div>
-        <div className="tapstep"><span className="n">2</span><span className="t">Build a small Shortcut (2 actions)</span></div>
-        <div className="tapstep"><span className="n">3</span><span className="t">Run it once to test</span></div>
-        <div className="tapstep"><span className="n">4</span><span className="t">Make it run after every workout</span></div>
-      </div>
-      <p className="hint" style={{ textAlign: 'center' }}>About 5 minutes, on your iPhone. You’ll use the Shortcuts app that came with it.</p>
-    </Guide>
+      <MethodCard icon="watch" title="Health Auto Export" badge="Most reliable" onClick={() => { setMethod('hae'); setStep(1); }}
+        body="An App Store app sends every run by itself, with time and heart rate. Needs its Premium upgrade (free 7-day trial)." />
+      <MethodCard icon="share" title="Free Shortcut" onClick={() => { setMethod('shortcut'); setStep(1); }}
+        body="Built into your iPhone. Adds up the distance from the hour before, so a walk right before a run can count. You can fix it in History." />
+      <MethodCard icon="spark" title="Just tell Claude" onClick={() => go('claude')}
+        body="No phone setup. Say “I ran 6 with the team today” and it logs it. Or tap + in the app." />
+    </main>
   );
 
-  if (step === 1) return (
-    <Guide title="Step 1 of 4" steps={5} step={1} setStep={setStep} onClose={close} next={() => setStep(2)} nextLabel="I copied it" nextDisabled={!link}>
-      <div className="stack" style={{ gap: 6 }}>
-        <h1 className="h1-flow">Copy your link</h1>
-        <p className="lead">This link is how the Shortcut adds runs to <b>your</b> account. Keep it private, like a password.</p>
-      </div>
-      {link
-        ? <CopyLink value={link} label="Your link" hint="You’ll paste it in step 2." />
-        : <button className="btn btn-tint" onClick={make}>{live ? 'Make a new link (the old one stops working)' : 'Make my link'}</button>}
-    </Guide>
+  const guide = (title: string, body: ReactNode, next: () => void, label: string, disabled?: boolean) => (
+    <Guide title={title} steps={total} step={step - 1} setStep={n => setStep(n + 1)} onClose={() => setStep(0)} next={next} nextLabel={label} nextDisabled={disabled}>{body}</Guide>
   );
 
-  if (step === 2) return (
-    <Guide title="Step 2 of 4" steps={5} step={2} setStep={setStep} onClose={close} next={() => setStep(3)} nextLabel="I built it">
-      <div className="stack" style={{ gap: 6 }}>
-        <h1 className="h1-flow">Build the Shortcut</h1>
-        <p className="lead">Open the <b>Shortcuts</b> app and follow along.</p>
+  // Step 1: link (both methods)
+  if (step === 1) return guide(`Step 1 of 3`, <>
+    <div className="stack" style={{ gap: 6 }}>
+      <h1 className="h1-flow">Copy your link</h1>
+      <p className="lead">This link is how runs get into <b>your</b> account. Keep it private, like a password.</p>
+    </div>
+    {link
+      ? <CopyLink value={link} label="Your link" hint="You’ll paste it in the next step." />
+      : <button className="btn btn-tint" onClick={make}>{live ? 'Make a new link (the old one stops working)' : 'Make my link'}</button>}
+  </>, () => setStep(2), 'I copied it', !link);
+
+  // Step 2: set up the sender
+  if (step === 2 && method === 'hae') return guide('Step 2 of 3', <>
+    <div className="stack" style={{ gap: 6 }}>
+      <h1 className="h1-flow">Set up Health Auto Export</h1>
+      <p className="lead">It reads your workouts and sends them here on a schedule.</p>
+    </div>
+    <a className="btn btn-tint" style={{ height: 50, borderRadius: 25 }} href={HAE_URL} target="_blank" rel="noreferrer">Get Health Auto Export</a>
+    <Taps steps={[
+      <>Open it and allow Health access, including <K>Workouts</K>.</>,
+      <>Start the Premium trial or upgrade. Automatic sending is a Premium feature.</>,
+      <>Go to <K>Automations</K> and tap <K>+</K> (New Automation). Choose <K>REST API</K>.</>,
+      <>Name it <b>Bulletproof Base</b>. In <K>URL</K>, paste your link.</>,
+      <>Set <K>Data Type</K> to <b>Workouts</b> and <K>Export Format</K> to <b>JSON</b>. Turn off <K>Include Route Data</K>.</>,
+      <>Set how often it syncs, for example every <b>1 hour</b>. Turn the automation on and save.</>,
+    ]} />
+    <Why label="Something looks different?">
+      <p>Only three things matter: the <b>URL</b> is your link, the data is <b>Workouts</b>, and the format is <b>JSON</b>. Headers aren’t needed. Only runs are saved; walks and bike rides are skipped.</p>
+    </Why>
+  </>, () => setStep(3), 'Next: test it');
+
+  if (step === 2) return guide('Step 2 of 3', <>
+    <div className="stack" style={{ gap: 6 }}>
+      <h1 className="h1-flow">Build the Shortcut</h1>
+      <p className="lead">Open the <b>Shortcuts</b> app, tap <K>+</K>, and add these 3 actions.</p>
+    </div>
+    <p className="section-title" style={{ padding: '0 4px' }}>1 · Find your recent distance</p>
+    <Taps steps={[
+      <>Search <b>Find Health Samples</b> and tap it.</>,
+      <>Tap the blue word after “Find” and choose <K>Walking + Running Distance</K>.</>,
+      <>Tap <K>Add Filter</K>: <K>Start Date</K> <K>is in the last</K> <b>1 hour</b>. (Use 2 hours if your runs are longer than an hour.)</>,
+    ]} />
+    <p className="section-title" style={{ padding: '0 4px' }}>2 · Add it up</p>
+    <Taps steps={[
+      <>Search <b>Calculate Statistics</b> and tap it. Set it to <K>Sum</K> of <K>Health Samples</K>.</>,
+    ]} />
+    <p className="section-title" style={{ padding: '0 4px' }}>3 · Send it</p>
+    <Taps steps={[
+      <>Search <b>Get Contents of URL</b>, tap it, and paste your link in <K>URL</K>.</>,
+      <>Tap the <K>›</K> arrow. <K>Method</K>: POST. <K>Request Body</K>: JSON.</>,
+      <>Tap <K>Add new field</K> → <K>Text</K>. Key <b className="mono">distance</b>, value: pick <K>Statistics</K> from the bar above the keyboard.</>,
+      <>Add another <K>Text</K> field: key <b className="mono">start</b>, value: <K>Current Date</K>.</>,
+      <>Name the shortcut <b>Send run to Base</b> and tap <K>Done</K>.</>,
+    ]} />
+    <Why label="Why “the last hour”?">
+      <p>iPhone’s Shortcuts can’t read a workout directly, so this adds up the distance your watch recorded in the hour before it runs. Since it runs right when you finish, that’s your run. A walk just before it can sneak in; tap the run in History to fix it.</p>
+    </Why>
+  </>, () => setStep(3), 'Next: test it');
+
+  // Step 3: live test
+  if (step === 3) return guide('Step 3 of 3', <>
+    <div className="stack" style={{ gap: 6 }}>
+      <h1 className="h1-flow">Test it once</h1>
+      <p className="lead">{method === 'hae'
+        ? <>In Health Auto Export, open your automation and tap <b>Manual Export</b> (or wait for the next sync). It sends your recent runs.</>
+        : <>In Shortcuts, tap <b>Send run to Base</b>. Allow Health access when your iPhone asks.</>}</p>
+    </div>
+    <div className="card pad">
+      <div className="live">
+        <span className={`pulse${heard ? ' ok' : ''}`} />
+        <span className="stack">
+          <span style={{ fontWeight: 600 }}>{heard ? 'It works!' : pinged ? 'Got a message, checking it…' : 'Waiting for your test…'}</span>
+          <span className="hint">{heard && lastWatch ? `Received ${lastWatch.distance_mi} mi from ${shortDay(lastWatch.date)}. It’s in your History.` : 'This updates by itself.'}</span>
+        </span>
       </div>
-      <p className="section-title" style={{ padding: '0 4px' }}>Action 1: find your latest workout</p>
-      <Taps steps={[
-        <>Tap <K>+</K> in the top corner to start a new shortcut.</>,
-        <>Tap <K>Search Actions</K>, type <b>Find Health Samples</b>, and tap it.</>,
-        <>Tap the blue word after “Find”, and choose <K>Workouts</K>.</>,
-        <>Below it, set <K>Sort by</K> to Start Date and <K>Order</K> to Latest First. Turn on <K>Limit</K> and set it to 1. (Skip “Add Filter”.)</>,
-      ]} />
-      <p className="section-title" style={{ padding: '0 4px' }}>Action 2: send it to the app</p>
-      <Taps steps={[
-        <>Search <b>Get Contents of URL</b> and tap it.</>,
-        <>Tap <K>URL</K> and paste your link from step 1.</>,
-        <>Tap the <K>›</K> arrow. Set <K>Method</K> to POST and <K>Request Body</K> to JSON.</>,
-        <>Tap <K>Add new field</K> → <K>Text</K>. Key: <b className="mono">start</b>. For the value, tap <K>Health Samples</K>, then tap it again and pick <K>Start Date</K>.</>,
-        <>Add two more the same way: <b className="mono">end</b> = <K>End Date</K>, and <b className="mono">distance</b> = <K>Distance</K>.</>,
-        <>Tap the name at the top and call it <b>Send run to Base</b>. Tap <K>Done</K>.</>,
-      ]} />
-      <Why label="Stuck on a step?">
-        <p>The value picker: after you tap in the value box, a bar of variables appears above the keyboard. Tap <b>Health Samples</b>, then tap the blue <b>Health Samples</b> bubble again to pick which detail (Start Date, End Date, Distance).</p>
-        <p>You can also ask Claude to walk you through it with this screen open.</p>
+    </div>
+    {pinged && !heard && (
+      <Why label="It sent something but no run appeared">
+        {method === 'hae'
+          ? <p>Only runs are saved. If your recent workouts were walks or rides, finish a run and it’ll come through. Check the format is <b>JSON</b> and the data type is <b>Workouts</b>.</p>
+          : <><p>Check the keys are spelled exactly <b className="mono">distance</b> and <b className="mono">start</b>.</p><p>If you haven’t walked or run in the last hour, the distance is 0 and nothing is saved. That’s fine; it’ll work after your next run.</p></>}
       </Why>
-    </Guide>
-  );
+    )}
+    {method === 'shortcut' && <p className="hint" style={{ padding: '0 4px' }}>Next you’ll make it run by itself after every run.</p>}
+  </>, () => (method === 'shortcut' ? setStep(4) : setStep(99)), heard ? (method === 'shortcut' ? 'Next' : 'Done') : 'Skip the test');
 
-  if (step === 3) return (
-    <Guide title="Step 3 of 4" steps={5} step={3} setStep={setStep} onClose={close} next={() => setStep(4)} nextLabel={heard ? 'Next' : 'Skip the test'}>
-      <div className="stack" style={{ gap: 6 }}>
-        <h1 className="h1-flow">Test it once</h1>
-        <p className="lead">In Shortcuts, tap <b>Send run to Base</b> to run it. Allow Health access when your iPhone asks.</p>
-      </div>
-      <div className="card pad">
-        <div className="live">
-          <span className={`pulse${heard ? ' ok' : ''}`} />
-          <span className="stack">
-            <span style={{ fontWeight: 600 }}>{heard ? 'It works!' : pinged ? 'Got a message, checking it…' : 'Waiting for your test…'}</span>
-            <span className="hint">{heard && lastWatch ? `Received ${lastWatch.distance_mi} mi from ${shortDay(lastWatch.date)}. It’s in your History.` : 'This updates by itself. It sends your most recent workout.'}</span>
-          </span>
-        </div>
-      </div>
-      {pinged && !heard && (
-        <Why label="It sent something but no run appeared">
-          <p>Check the three JSON keys are spelled exactly <b className="mono">start</b>, <b className="mono">end</b>, <b className="mono">distance</b>, and that each value is a Health Samples detail (not the whole Health Samples).</p>
-          <p>Your latest workout also needs a distance (a run or walk, not strength training).</p>
-        </Why>
-      )}
-    </Guide>
-  );
-
-  return (
-    <Guide title="Step 4 of 4" steps={5} step={4} setStep={setStep} onClose={close} next={() => setStep(5)} nextLabel="Done">
-      <div className="stack" style={{ gap: 6 }}>
-        <h1 className="h1-flow">Make it automatic</h1>
-        <p className="lead">Now tell your iPhone to run it after every run. iPhone makes you do this part yourself.</p>
-      </div>
-      <Taps steps={[
-        <>In Shortcuts, tap <K>Automation</K> at the bottom, then <K>+</K>.</>,
-        <>Scroll to <K>Apple Watch Workout</K> and tap it.</>,
-        <>Choose <K>Ends</K>, tap <K>Choose</K> next to Workout, and pick <K>Running</K>.</>,
-        <>Pick <K>Run Immediately</K>, then tap <K>Next</K>.</>,
-        <>Choose <b>Send run to Base</b>. Done.</>,
-      ]} />
-      <p className="hint" style={{ padding: '0 4px' }}>Your iPhone keeps health data locked while it’s locked, so a run can show up the next time you unlock it.</p>
-    </Guide>
-  );
+  // Step 4 (Shortcut only): automation
+  return guide('Last step', <>
+    <div className="stack" style={{ gap: 6 }}>
+      <h1 className="h1-flow">Make it automatic</h1>
+      <p className="lead">Tell your iPhone to run it every time you finish a run. iPhone makes you do this part yourself.</p>
+    </div>
+    <Taps steps={[
+      <>In Shortcuts, tap <K>Automation</K>, then <K>+</K>.</>,
+      <>Scroll to <K>Apple Watch Workout</K> and tap it.</>,
+      <>Choose <K>Ends</K>, tap <K>Choose</K> next to Workout, and pick <K>Running</K>.</>,
+      <>Pick <K>Run Immediately</K>, then <K>Next</K>, and choose <b>Send run to Base</b>.</>,
+    ]} />
+  </>, () => setStep(99), 'Done');
 }
 
 // ── Claude ─────────────────────────────────────────────────────────

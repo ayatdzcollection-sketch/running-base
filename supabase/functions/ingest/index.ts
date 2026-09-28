@@ -25,6 +25,9 @@ function unitOf(v: unknown, fallback: string): keyof typeof MI_PER {
 function date(v: unknown): Date | null {
   if (typeof v === 'number') return new Date(v > 1e12 ? v : v * 1000);
   if (typeof v !== 'string' || !v.trim()) return null;
+  // Health Auto Export: "2024-02-06 07:00:00 -0800"
+  const hae = v.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) ([+-]\d{2})(\d{2})$/);
+  if (hae) return new Date(`${hae[1]}T${hae[2]}${hae[3]}:${hae[4]}`);
   // iOS writes dates like "Sep 27, 2026 at 7:42 AM" with narrow no-break spaces.
   const d = new Date(v.replace(/[\u202f\u00a0]/g, ' ').replace(' at ', ' '));
   return Number.isNaN(d.getTime()) ? null : d;
@@ -40,6 +43,36 @@ function localDay(v: unknown, d: Date, tzOffsetMin: number | null): string {
   return shifted.toISOString().slice(0, 10);
 }
 
+/** One workout, whatever app sent it. */
+interface Workout { startRaw: unknown; endRaw: unknown; distance: unknown; unit: unknown; duration: unknown; durationUnit: unknown; avgHr: unknown; maxHr: unknown; name: string }
+
+const qty = (v: unknown) => (v && typeof v === 'object' && 'qty' in (v as Record<string, unknown>) ? (v as Record<string, unknown>).qty : v);
+const units = (v: unknown) => (v && typeof v === 'object' && 'units' in (v as Record<string, unknown>) ? (v as Record<string, unknown>).units : undefined);
+
+/** Accepts the iPhone Shortcut's single object, a list of them, or
+ *  Health Auto Export's { data: { workouts: [...] } }. */
+function workoutsIn(body: Record<string, unknown>): Workout[] {
+  const data = body.data as Record<string, unknown> | undefined;
+  const list = Array.isArray(data?.workouts) ? data!.workouts as Record<string, unknown>[]
+    : Array.isArray(body.workouts) ? body.workouts as Record<string, unknown>[]
+    : Array.isArray(body) ? body as unknown as Record<string, unknown>[]
+    : [body];
+  return list.map(w => {
+    const hr = w.heartRate as Record<string, unknown> | undefined;
+    return {
+      startRaw: w.start ?? w.startDate ?? w.start_date,
+      endRaw: w.end ?? w.endDate ?? w.end_date,
+      distance: qty(w.distance ?? w.totalDistance),
+      unit: w.distanceUnit ?? w.unit ?? units(w.distance),
+      duration: w.duration ?? w.durationSeconds,
+      durationUnit: w.durationUnit,
+      avgHr: qty(w.avgHR ?? w.averageHeartRate ?? w.avgHeartRate ?? hr?.avg),
+      maxHr: qty(w.maxHR ?? w.maxHeartRate ?? hr?.max),
+      name: String(w.name ?? w.type ?? w.workoutType ?? ''),
+    };
+  });
+}
+
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ ok: false, error: 'POST a workout' }, 405);
@@ -50,11 +83,7 @@ Deno.serve(async req => {
 
   const text = await req.text();
   let body: Record<string, unknown> = {};
-  try {
-    body = JSON.parse(text);
-  } catch {
-    body = { _raw: text };
-  }
+  try { body = JSON.parse(text); } catch { body = { _raw: text }; }
   const log = await db.from('bb_ingest_log').insert({ user_id: userId, payload: body }).select('id').single();
   const logId = log.data?.id;
   const finish = async (result: string, status: number, extra: Record<string, unknown> = {}) => {
@@ -62,40 +91,42 @@ Deno.serve(async req => {
     return json({ ok: status < 300, message: result, ...extra }, status);
   };
 
-  const start = date(body.start ?? body.startDate ?? body.start_date);
-  const end = date(body.end ?? body.endDate ?? body.end_date);
-  const rawDistance = num(body.distance ?? body.totalDistance);
-  if (!start || rawDistance == null) {
-    return finish('Got it, but no start time or distance was in the message. Saved it so nothing is lost.', 202);
+  const saved: { id: string; date: string; distance_mi: number }[] = [];
+  const skipped: string[] = [];
+  for (const w of workoutsIn(body)) {
+    if (w.name && !/run|jog/i.test(w.name)) { skipped.push(`${w.name} (not a run)`); continue; }
+    const start = date(w.startRaw);
+    const end = date(w.endRaw);
+    const rawDistance = num(w.distance);
+    if (!start || rawDistance == null) { skipped.push('no start time or distance'); continue; }
+    const inline = typeof w.distance === 'string' ? w.distance.replace(/[\d.,\s]/g, '') : '';
+    const miles = Math.round(rawDistance * MI_PER[unitOf(w.unit ?? (inline || undefined), 'mi')] * 100) / 100;
+    if (miles <= 0.05 || miles >= 100) { skipped.push(`distance ${miles} mi looks wrong`); continue; }
+    let duration = num(w.duration);
+    if (duration == null && end) duration = Math.round((end.getTime() - start.getTime()) / 1000);
+    if (duration != null && String(w.durationUnit ?? '').toLowerCase().startsWith('min')) duration *= 60;
+    const tz = num(body.tzOffsetMinutes);
+    const avg = num(w.avgHr), max = num(w.maxHr);
+    const row = {
+      user_id: userId,
+      date: localDay(w.startRaw, start, tz),
+      start_at: start.toISOString(),
+      distance_mi: miles,
+      duration_s: duration != null && duration > 0 ? Math.round(duration) : null,
+      avg_hr: avg != null ? Math.round(avg) : null,
+      max_hr: max != null ? Math.round(max) : null,
+      kind: 'easy',
+      source: 'watch',
+      // Same key for every sender, so a run sent twice (or by two apps) is saved once.
+      external_id: `watch:${start.toISOString().slice(0, 16)}`,
+      updated_at: new Date().toISOString(),
+    };
+    // A resend fills in details but never erases ones we already have.
+    const clean = Object.fromEntries(Object.entries(row).filter(([, v]) => v != null));
+    const { data, error } = await db.from('bb_activities').upsert(clean, { onConflict: 'user_id,external_id' }).select('id, date, distance_mi').single();
+    if (error) return finish(`Could not save: ${error.message}`, 500);
+    saved.push(data);
   }
-  // The unit can come separately or inside the value ("8.2 km", "5.1 mi").
-  const inline = typeof (body.distance ?? body.totalDistance) === 'string' ? String(body.distance ?? body.totalDistance).replace(/[\d.,\s]/g, '') : '';
-  const miles = Math.round(rawDistance * MI_PER[unitOf(body.distanceUnit ?? body.unit ?? (inline || undefined), 'mi')] * 100) / 100;
-  if (miles <= 0.05 || miles >= 100) return finish(`Skipped: distance ${miles} mi looks wrong.`, 202);
-
-  let duration = num(body.duration ?? body.durationSeconds);
-  if (duration == null && end) duration = Math.round((end.getTime() - start.getTime()) / 1000);
-  if (duration != null && String(body.durationUnit ?? '').toLowerCase().startsWith('min')) duration *= 60;
-
-  const tz = num(body.tzOffsetMinutes);
-  const row = {
-    user_id: userId,
-    date: localDay(body.start ?? body.startDate, start, tz),
-    start_at: start.toISOString(),
-    distance_mi: miles,
-    duration_s: duration != null && duration > 0 ? Math.round(duration) : null,
-    avg_hr: num(body.avgHR ?? body.averageHeartRate) != null ? Math.round(num(body.avgHR ?? body.averageHeartRate)!) : null,
-    max_hr: num(body.maxHR ?? body.maxHeartRate) != null ? Math.round(num(body.maxHR ?? body.maxHeartRate)!) : null,
-    kind: 'easy',
-    source: 'watch',
-    external_id: `watch:${start.toISOString().slice(0, 16)}`,
-    updated_at: new Date().toISOString(),
-  };
-  const { data, error } = await db
-    .from('bb_activities')
-    .upsert(row, { onConflict: 'user_id,external_id' })
-    .select('id, date, distance_mi')
-    .single();
-  if (error) return finish(`Could not save: ${error.message}`, 500);
-  return finish(`Saved ${data.distance_mi} mi on ${data.date}.`, 200, { activity: data });
+  if (!saved.length) return finish(`Got it, but nothing to save${skipped.length ? `: ${[...new Set(skipped)].join(', ')}` : ''}. Saved the message so nothing is lost.`, 202);
+  return finish(`Saved ${saved.map(a => `${a.distance_mi} mi on ${a.date}`).join(', ')}.`, 200, { activity: saved[saved.length - 1], activities: saved });
 });
