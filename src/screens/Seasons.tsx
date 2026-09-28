@@ -17,6 +17,7 @@ export function defaultSeason(kind: 'xc' | 'indoor' | 'outdoor'): DraftSeason {
 }
 
 const DAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 export function SeasonEditor({ seasons, onChange }: { seasons: DraftSeason[]; onChange: (s: DraftSeason[]) => void }) {
   const set = (i: number, patch: Partial<DraftSeason>) => onChange(seasons.map((s, j) => (j === i ? { ...s, ...patch } : s)));
@@ -35,7 +36,7 @@ export function SeasonEditor({ seasons, onChange }: { seasons: DraftSeason[]; on
               <div className="hstack" style={{ gap: 4 }}>
                 {DAYS.map((d, k) => {
                   const on = s.workout_days.includes(k);
-                  return <button key={k} aria-label={`Hard day ${k}`} aria-pressed={on} className={`opt${on ? ' on' : ' soft'}`} style={{ width: 36, height: 44, fontSize: 13, fontWeight: 700 }}
+                  return <button key={k} aria-label={`${DAY_NAMES[k]} is a hard day`} aria-pressed={on} className={`opt${on ? ' on' : ' soft'}`} style={{ width: 36, height: 44, fontSize: 13, fontWeight: 700 }}
                     onClick={() => set(i, { workout_days: on ? s.workout_days.filter(x => x !== k) : [...s.workout_days, k].sort() })}>{d}</button>;
                 })}
               </div>

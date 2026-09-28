@@ -6,7 +6,7 @@ import { Icon, Seg, Sheet, Toggle } from '../ui/kit.tsx';
 
 type Kind = 'easy' | 'long' | 'workout' | 'race';
 const KINDS: { value: Kind; label: string }[] = [
-  { value: 'easy', label: 'Easy' }, { value: 'long', label: 'Long' }, { value: 'workout', label: 'Team workout' }, { value: 'race', label: 'Race' },
+  { value: 'easy', label: 'Easy' }, { value: 'long', label: 'Long' }, { value: 'workout', label: 'Workout' }, { value: 'race', label: 'Race' },
 ];
 
 function parseTime(s: string): number | null {

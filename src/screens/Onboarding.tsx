@@ -46,7 +46,8 @@ export function Onboarding() {
     const monday = weekStart(today);
     const d: RunnerData = {
       profile: { displayName: '', daysPerWeek: days, longRunDay: longDay, startMpw: mpw, startLongest: longest, experienceYears: years, planStart: monday },
-      seasons: [], meets: [], activities: [], days: [], checkins: [], injuries: [], shoes: [], speedLevel: 0,
+      seasons: seasons.filter(s => s.on && s.start_date).map((s, i) => ({ id: String(i), kind: s.kind as never, label: s.label, startDate: s.start_date, endDate: s.end_date || null, workoutDays: s.workout_days })),
+      meets: [], activities: [], days: [], checkins: [], injuries: [], shoes: [], speedLevel: 0,
     };
     return [0, 1, 2, 3, 4].map(i => planWeek(d, addDays(monday, 7 * i), monday));
   })();
@@ -95,7 +96,7 @@ export function Onboarding() {
 
       {step === 1 && <>
         <div className="stack" style={{ gap: 6, paddingTop: 8 }}><h1 className="h1-flow">A bit about you</h1><p className="lead">This sets safe limits for your plan.</p></div>
-        <Stepper label="Birth year" value={birthYear} unit="" hint="Younger runners build a little more gently." onChange={setBirthYear} min={1990} max={2016} />
+        <Stepper label="Birth year" value={birthYear} unit="" hint="Runners 15 and under get a lower weekly ceiling." onChange={setBirthYear} min={1990} max={2016} />
         <Stepper label="Years of running" value={years} unit="years" hint="Count seasons on a team or running on your own." onChange={setYears} min={0} max={15} step={0.5} />
       </>}
 
@@ -131,18 +132,20 @@ export function Onboarding() {
       {step === 6 && <>
         <div className="stack" style={{ gap: 6, paddingTop: 8 }}>
           <h1 className="h1-flow">Here’s your start</h1>
-          <p className="lead">You said about {mpw} miles a week. We add a little each week, then a lighter week so your body catches up.</p>
+          <p className="lead">{preview[0].phase.kind === 'coach'
+            ? `You’re in ${preview[0].phase.season?.label ?? 'season'} now, so your coach leads. We keep your easy days near the ${mpw} miles a week you told us, and learn your real week from your runs.`
+            : `You said about ${mpw} miles a week. We add a little each week, then a lighter week so your body catches up.`}</p>
         </div>
         <section className="card pad">
-          <div className="hstack" style={{ justifyContent: 'space-between' }}><h2 style={{ fontSize: 17, fontWeight: 700 }}>First 5 weeks</h2><span className="small">miles per week</span></div>
+          <div className="hstack" style={{ justifyContent: 'space-between' }}><h2 style={{ fontSize: 17, fontWeight: 700 }}>Next 5 weeks</h2><span className="small">miles per week</span></div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0,1fr))', gap: 10, height: 140, alignItems: 'end' }}>
             {preview.map((w, i) => {
               const max = Math.max(...preview.map(x => x.target ?? 0), 1);
               return (
                 <div key={i} className="stack" style={{ alignItems: 'center', gap: 6, justifyContent: 'flex-end', height: '100%' }}>
-                  <span className="num" style={{ fontSize: 15, fontWeight: 700 }}>{w.target}</span>
+                  <span className="num" style={{ fontSize: 15, fontWeight: 700 }}>{w.target ?? '–'}</span>
                   <span style={{ width: '100%', height: `${((w.target ?? 0) / max) * 90}px`, borderRadius: '10px 10px 4px 4px', background: w.isDown ? 'var(--teal-t)' : 'var(--teal)' }} />
-                  <span className="small">Wk {i + 1}</span>
+                  <span className="small">{w.phase.kind === 'break' ? 'Break' : `Wk ${i + 1}`}</span>
                 </div>
               );
             })}

@@ -29,7 +29,7 @@ export function You() {
       <p className="sec" style={{ fontSize: 15, marginTop: -8 }}>{p.display_name} · {seasonsLine}</p>
 
       <Group title="Connections">
-        <Row label="Apple Watch" sub={watch ? (watch.last_used_at ? `Last run in ${new Date(watch.last_used_at).toLocaleDateString()}` : 'Set up, waiting for a run') : 'Not connected'}
+        <Row label="Apple Watch" sub={watch ? (watch.last_used_at ? `Last heard from ${new Date(watch.last_used_at).toLocaleDateString()}` : 'Set up, waiting for a run') : 'Not connected'}
           lead={<Bubble icon="watch" small />} action={watch ? undefined : 'Set up'} onClick={() => go('watch')} />
         <Row label="Claude" sub={claude ? 'Connected' : 'Optional'} lead={<Bubble icon="spark" bg="var(--bg)" fg="var(--body2)" small />}
           action={claude ? undefined : 'Connect'} onClick={() => go('claude')} />
@@ -47,6 +47,15 @@ export function You() {
         ))}
         <Row label="Add a pair" action="Add" onClick={() => setShoe(true)} />
       </Group>
+
+      {loaded.changes.length > 0 && (
+        <Group title="Changes by Claude">
+          {loaded.changes.slice(0, 5).map(c => (
+            <Row key={c.id} label={c.summary} sub={`${new Date(c.at).toLocaleDateString()}${c.undone_at ? ' · undone' : ''}`} />
+          ))}
+        </Group>
+      )}
+      {loaded.changes.length > 0 && <p className="small" style={{ padding: '0 16px', marginTop: -8 }}>Ask Claude to “undo that” to reverse a change. Changed plan days also have an Undo on Today.</p>}
 
       {loaded.invite && (
         <Group title="Invite a teammate">

@@ -114,7 +114,9 @@ export function snapshot(data: RunnerData, today: ISODate): Snapshot {
 
   // History from the plan start.
   const history: Snapshot['history'] = [];
-  for (let w = weekStart(data.profile.planStart); w < monday; w = addDays(w, 7)) {
+  const firstRun = data.activities.map(a => a.date).sort()[0];
+  const historyFrom = weekStart(firstRun && firstRun < data.profile.planStart ? firstRun : data.profile.planStart);
+  for (let w = historyFrom; w < monday; w = addDays(w, 7)) {
     const f = weekFacts(data, w, today, runsByDate);
     history.push({ start: w, miles: f.miles, estimatedMiles: f.estimatedMiles, reliability: f.reliability });
   }

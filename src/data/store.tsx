@@ -57,7 +57,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     try {
       const l = await loadAll(uid, localToday());
       setLoaded(l);
-      try { l ? localStorage.setItem(CACHE, JSON.stringify(l)) : localStorage.removeItem(CACHE); } catch { /* storage full or private mode */ }
+      try { if (l) localStorage.setItem(CACHE, JSON.stringify(l)); else localStorage.removeItem(CACHE); } catch { /* storage full or private mode */ }
     } catch (e) {
       setMsg(navigator.onLine ? `Couldn't load: ${(e as Error).message}` : 'Offline. Showing what was saved on this phone.');
     } finally {

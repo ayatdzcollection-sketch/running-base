@@ -14,6 +14,8 @@ const CHIP: Record<string, [string, string, string]> = {
   paused: ['Paused', 'var(--red-t)', 'var(--red-d)'],
 };
 
+const DONE_LABEL: Record<string, string> = { easy: 'Easy run', long: 'Long run', workout: 'Workout', race: 'Race', other: 'Run' };
+
 function DayCell({ d, today }: { d: DayView; today: string }) {
   const k = d.planned.kind;
   let cls = 'cell', text: string = '';
@@ -29,7 +31,7 @@ function DayCell({ d, today }: { d: DayView; today: string }) {
   return (
     <div className={`day${d.date === today ? ' today' : ''}`}>
       <span className="d">{dayLetter(d.date)}</span>
-      <span className={cls} aria-label={label}>{text}</span>
+      <span className={cls} aria-label={label + (d.planned.override ? ' (changed)' : '')}>{text}{d.planned.override && <span className="chg" />}</span>
     </div>
   );
 }
@@ -101,6 +103,8 @@ export function Today({ onAdd }: { onAdd: (date?: string) => void }) {
   const checkedIn = loaded.runner.checkins.some(c => c.date === today && c.moment === 'post_run');
   const hasWatch = loaded.tokens.some(k => k.kind === 'shortcut');
   const chip = CHIP[t.kind] ?? CHIP.easy;
+  const todayOverride = snap.week.days.find(d => d.date === today)?.planned.override;
+  const todayNotes = (loaded.runner.notes ?? []).filter(n => n.date === today);
   const issue = snap.issues.find(i => i.level !== 'info');
   const phaseDot = snap.phase.kind === 'coach' ? 'var(--orange)' : snap.phase.kind === 'break' ? '#8E8E93' : 'var(--teal)';
   const morning = async (pain: number) => act(() => api.checkIn(uid, { date: today, moment: 'morning', pain, pain_area: inj?.injury.area ?? null }), 'Check-in saved');
@@ -113,7 +117,7 @@ export function Today({ onAdd }: { onAdd: (date?: string) => void }) {
           {(loaded.profile.display_name || '?').slice(0, 1).toUpperCase()}
         </button>} />
 
-      <div className="hstack" style={{ gap: 8 }}>
+      <div className="hstack wrap" style={{ gap: 8, rowGap: 0 }}>
         <span className="phase"><span className="dot" style={{ background: phaseDot }} />{snap.phase.label} · Wk {snap.phase.week}</span>
         <span className="spacer" />
         <Pill kind="cap" onClick={() => go('injury')}>Something hurts?</Pill>
@@ -143,7 +147,7 @@ export function Today({ onAdd }: { onAdd: (date?: string) => void }) {
       <section className="hero">
         <div className="hstack" style={{ justifyContent: 'space-between' }}>
           <span className="chip" style={{ background: doneToday.length ? 'var(--teal-t)' : chip[1], color: doneToday.length ? 'var(--teal-d)' : chip[2] }}>
-            {doneToday.length > 0 && <Icon name="check" size={14} stroke={2.6} />}{doneToday.length ? `${chip[0]} · done` : chip[0]}
+            {doneToday.length > 0 && <Icon name="check" size={14} stroke={2.6} />}{doneToday.length ? `${DONE_LABEL[doneToday[doneToday.length - 1].kind] ?? 'Run'} · done` : chip[0]}
           </span>
         </div>
         {doneToday.length
@@ -156,6 +160,15 @@ export function Today({ onAdd }: { onAdd: (date?: string) => void }) {
         )}
         {!doneToday.length && <p style={{ fontSize: 17, lineHeight: '23px' }}>{t.guidance}</p>}
         {t.why[0] && !doneToday.length && <p className="sec" style={{ fontSize: 15, lineHeight: '20px' }}>{t.why[0]}</p>}
+        {todayOverride && !doneToday.length && (
+          <div className="hstack" style={{ gap: 10, padding: '10px 12px', borderRadius: 14, background: 'var(--blue-t)' }}>
+            <Icon name={todayOverride.source === 'claude' ? 'spark' : 'pencil'} size={18} color="var(--blue)" />
+            <span style={{ flexGrow: 1, fontSize: 14, lineHeight: '19px', color: 'var(--blue-d)' }}>
+              Changed {todayOverride.source === 'claude' ? 'by Claude' : 'by you'}{todayOverride.note ? `: ${todayOverride.note}` : ''}. Was {todayOverride.was.kind === 'rest' ? 'rest' : `${todayOverride.was.miles ?? ''} mi ${todayOverride.was.kind}`}.
+            </span>
+            <Pill kind="cap" onClick={() => act(() => api.resetDay(uid, today), 'Back to the original plan')}>Undo</Pill>
+          </div>
+        )}
         <div className="divider" />
         {doneToday.length ? (
           <div className="hstack" style={{ gap: 12 }}>
@@ -179,7 +192,7 @@ export function Today({ onAdd }: { onAdd: (date?: string) => void }) {
         <section className="card" style={{ padding: '16px 16px 8px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div className="hstack" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
             <h2 style={{ fontSize: 17, fontWeight: 700 }}>This week</h2>
-            <span className="sec num" style={{ fontSize: 15 }}>{mi(snap.week.actual)} of {snap.week.target != null ? `about ${Math.round(snap.week.target)}` : '–'} mi</span>
+            <span className="sec num" style={{ fontSize: 15 }}>{snap.week.target != null ? `${mi(snap.week.actual)} of about ${Math.round(snap.week.target)} mi` : `${mi(snap.week.actual)} mi so far`}</span>
           </div>
           <div className="week">{snap.week.days.map(d => <DayCell key={d.date} d={d} today={today} />)}</div>
           {snap.gap ? <>
@@ -190,6 +203,13 @@ export function Today({ onAdd }: { onAdd: (date?: string) => void }) {
               <Pill onClick={() => onAdd(snap.gap!.from)}>Fill in</Pill>
             </div>
           </> : <div style={{ height: 8 }} />}
+        </section>
+      )}
+
+      {todayNotes.length > 0 && (
+        <section className="card pad" style={{ gap: 8 }}>
+          <span className="section-title" style={{ padding: 0 }}>Today’s note{todayNotes.length > 1 ? 's' : ''}</span>
+          {todayNotes.map(n => <p key={n.id} className="note">{n.body}</p>)}
         </section>
       )}
 

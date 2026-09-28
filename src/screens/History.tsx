@@ -3,7 +3,7 @@ import { addDays } from '../engine/index.ts';
 import { api, type ActivityRow } from '../data/api.ts';
 import { useStore } from '../data/store.tsx';
 import { monthShort, mi, shortDay, duration } from '../app/format.ts';
-import { Bubble, LargeTitle } from '../ui/kit.tsx';
+import { Bubble, Icon, LargeTitle, Pill, Sheet } from '../ui/kit.tsx';
 import { AddRunSheet } from './AddRun.tsx';
 
 const SOURCE: Record<string, [string, string]> = {
@@ -14,6 +14,9 @@ export function History({ onAdd }: { onAdd: (date?: string) => void }) {
   const { snap, loaded, uid, today, act } = useStore();
   const [sel, setSel] = useState<number | null>(null);
   const [edit, setEdit] = useState<ActivityRow | null>(null);
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [noteDate, setNoteDate] = useState('');
+  const [noteText, setNoteText] = useState('');
   if (!snap || !loaded) return null;
 
   const weeks = snap.history.slice(-12);
@@ -29,7 +32,7 @@ export function History({ onAdd }: { onAdd: (date?: string) => void }) {
 
   return (
     <main className="page">
-      <LargeTitle title="History" />
+      <LargeTitle title="History" right={<Pill kind="cap" icon="pencil" onClick={() => { setNoteDate(today); setNoteOpen(true); }}>Note</Pill>} />
       {weeks.length > 0 && (
         <section className="card pad">
           <div className="hstack" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -105,6 +108,15 @@ export function History({ onAdd }: { onAdd: (date?: string) => void }) {
           );
         }
         flush();
+        for (const n of (loaded.runner.notes ?? []).filter(x => x.date >= ws && x.date <= addDays(ws, 6)).reverse()) {
+          rows.push(
+            <div key={n.id} className="row" style={{ alignItems: 'flex-start', paddingBlock: 12 }}>
+              <Bubble icon={n.source === 'claude' ? 'spark' : 'pencil'} bg="var(--amber-t)" fg="var(--amber-d)" small />
+              <span className="grow"><span className="sub">{shortDay(n.date)} · note{n.source === 'claude' ? ' by Claude' : n.source === 'import' ? ' from the old app' : ''}</span><span className="note">{n.body}</span></span>
+              <button className="pill cap" aria-label="Delete note" onClick={() => confirm('Delete this note?') && act(() => api.deleteNote(uid, n.id), 'Note deleted')}><span><Icon name="close" size={14} stroke={2.2} /></span></button>
+            </div>,
+          );
+        }
         if (!rows.length) return null;
         const total = days.reduce((s, d) => s + (byDate.get(d) ?? []).reduce((t, a) => t + Number(a.distance_mi), 0), 0);
         return (
@@ -118,6 +130,17 @@ export function History({ onAdd }: { onAdd: (date?: string) => void }) {
         );
       })}
       {edit && <AddRunSheet edit={edit} onClose={() => setEdit(null)} />}
+      {noteOpen && (
+        <Sheet onClose={() => setNoteOpen(false)} white label="Add a note">
+          <h2 style={{ fontSize: 20, fontWeight: 700 }}>Add a note</h2>
+          <label className="field"><span>Day</span><input className="input" type="date" max={today} value={noteDate} onChange={e => setNoteDate(e.target.value)} /></label>
+          <label className="field"><span>Note</span><textarea className="input" style={{ height: 120, paddingTop: 12, resize: 'none' }} value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="How you felt, sleep, what the coach said…" autoFocus /></label>
+          <button className="btn btn-primary" onClick={async () => {
+            if (!noteText.trim()) return;
+            if (await act(() => api.addNote(uid, noteDate, noteText.trim()), 'Note saved')) { setNoteOpen(false); setNoteText(''); }
+          }}>Save note</button>
+        </Sheet>
+      )}
     </main>
   );
 }
