@@ -3,6 +3,9 @@
 import { createClient, type Session } from '@supabase/supabase-js';
 import type { RunnerData } from '../engine/index.ts';
 
+// Read before the client consumes it: did this page open from an email link?
+export const CAME_FROM_LINK = /[#&]access_token=/.test(location.hash) && /type=(magiclink|signup|email)/.test(location.hash);
+
 const url = import.meta.env.VITE_SUPABASE_URL as string;
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 export const db = createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true, storageKey: 'bb-auth' } });
@@ -107,6 +110,16 @@ export const api = {
     const back = `${location.origin}${location.pathname}`;
     must(await db.auth.signInWithOtp({ email: email.trim().toLowerCase(), options: { shouldCreateUser: true, emailRedirectTo: back } }));
   },
+  /** A 6-digit code shown by a signed-in browser → a session in this app. */
+  async pair(email: string, code: string): Promise<Session | null> {
+    const r = await fetch(`${FUNCTIONS_URL}/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: email.trim().toLowerCase(), code }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.token_hash) throw new Error(j.error || 'That code didn’t work.');
+    const v = await db.auth.verifyOtp({ token_hash: j.token_hash, type: 'magiclink' });
+    must(v);
+    return v.data.session;
+  },
+  async makePairingCode(): Promise<string> { return must<string>(await db.rpc('bb_make_pairing_code')); },
   async verifyCode(email: string, token: string): Promise<Session | null> {
     const r = await db.auth.verifyOtp({ email: email.trim().toLowerCase(), token: token.trim(), type: 'email' });
     must(r);

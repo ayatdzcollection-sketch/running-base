@@ -3,9 +3,9 @@ import { useEffect, useState } from 'react';
 
 export type Route =
   | 'today' | 'plan' | 'history' | 'you'
-  | 'injury' | 'watch' | 'claude' | 'seasons' | 'shoes';
+  | 'injury' | 'watch' | 'claude' | 'seasons' | 'shoes' | 'pair';
 
-const ROUTES: Route[] = ['today', 'plan', 'history', 'you', 'injury', 'watch', 'claude', 'seasons', 'shoes'];
+const ROUTES: Route[] = ['today', 'plan', 'history', 'you', 'injury', 'watch', 'claude', 'seasons', 'shoes', 'pair'];
 
 function read(): { route: Route; param: string | null } {
   const [r, param] = location.hash.replace(/^#\/?/, '').split('/');

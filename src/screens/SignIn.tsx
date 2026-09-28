@@ -3,8 +3,9 @@ import { api, db } from '../data/api.ts';
 import { useStore } from '../data/store.tsx';
 import { Icon, NavBar } from '../ui/kit.tsx';
 
-// Supabase issues 6–10 digit codes depending on project settings (this one: 8).
-const OTP_LEN = 8;
+// 6 digits = the pairing code shown after tapping the email link.
+// 8 digits = an email code (once the project's email template carries one).
+const OTP_LEN = 6;
 
 export function SignIn() {
   const { toast } = useStore();
@@ -29,8 +30,8 @@ export function SignIn() {
   async function verify(v = code) {
     if (v.length < 6) return;
     setBusy(true);
-    try { await api.verifyCode(email, v); }
-    catch { toast('That code didn’t work. Check it or send a new one.'); setCode(''); }
+    try { if (v.length === 6) await api.pair(email, v); else await api.verifyCode(email, v); }
+    catch (e) { toast((e as Error).message || 'That code didn’t work.'); setCode(''); }
     finally { setBusy(false); }
   }
 
@@ -40,20 +41,21 @@ export function SignIn() {
         <NavBar title="Sign in" onBack={() => setStep('email')} />
         <div className="stack" style={{ gap: 6, paddingTop: 8 }}>
           <h1 className="h1-flow">Check your email</h1>
-          <p className="lead">We sent an email to {email}. Tap the link in it, or type the code if it shows one. It works for 1 hour.</p>
+          <p className="lead">We sent an email to {email}. Tap the link in it. The page that opens shows a 6-digit code: type it here.</p>
         </div>
         <label className="field" style={{ position: 'relative' }}>
-          <span>Code (if your email has one)</span>
+          <span>6-digit code</span>
           <div style={{ display: 'grid', gridTemplateColumns: `repeat(${OTP_LEN}, minmax(0,1fr))`, gap: 6 }} onClick={() => codeRef.current?.focus()}>
             {Array.from({ length: OTP_LEN }, (_, i) => (
               <span key={i} className="center num" style={{ height: 56, borderRadius: 12, background: 'var(--card)', boxShadow: `inset 0 0 0 ${i === code.length ? 2 : 1}px ${i === code.length ? 'var(--ink)' : 'var(--field)'}`, fontSize: 28, fontWeight: 700 }}>{code[i] ?? ''}</span>
             ))}
           </div>
           <input ref={codeRef} inputMode="numeric" autoComplete="one-time-code" aria-label="Code from the email" value={code}
-            onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, OTP_LEN); setCode(v); if (v.length === OTP_LEN) void verify(v); }}
+            onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 8); setCode(v); if (v.length === OTP_LEN) void verify(v); }}
             style={{ position: 'absolute', opacity: 0, inset: 0, height: '100%' }} />
         </label>
-        <button className="btn btn-gray" onClick={send} disabled={busy}>Send a new code</button>
+        <p className="small">Opened the link on this same screen? You’re already signed in; this page will update by itself.</p>
+        <button className="btn btn-gray" onClick={send} disabled={busy}>Send a new link</button>
         <div className="spacer" />
         <button className="btn btn-primary" onClick={() => verify()} disabled={busy || code.length < 6}>Continue</button>
       </main>
@@ -86,7 +88,7 @@ export function RedeemInvite() {
   const [name, setName] = useState('');
   return (
     <main className="page flow">
-      <NavBar title="Join" right={<button className="btn btn-cap" onClick={() => db.auth.signOut()}>Sign out</button>} />
+      <NavBar title="Join" right={<button className="btn btn-cap" onClick={() => db.auth.signOut({ scope: 'local' })}>Sign out</button>} />
       <div className="stack" style={{ gap: 6, paddingTop: 8 }}>
         <h1 className="h1-flow">You’re in. One more thing.</h1>
         <p className="lead">This app is invite-only. Enter the code a teammate gave you.</p>

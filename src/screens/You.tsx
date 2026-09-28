@@ -67,8 +67,9 @@ export function You() {
       )}
 
       <Group>
+        <Row label="Sign in on another device" sub="Shows a one-time code" onClick={() => go('pair')} />
         <Row label="Download my data" onClick={download} />
-        <Row label="Sign out" danger onClick={() => confirm('Sign out on this phone?') && db.auth.signOut()} />
+        <Row label="Sign out" danger onClick={() => confirm('Sign out on this phone?') && db.auth.signOut({ scope: 'local' })} />
       </Group>
 
       {days && (

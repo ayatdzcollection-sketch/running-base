@@ -12,6 +12,9 @@ import { InjuryCheck } from '../screens/Injury.tsx';
 import { ConnectClaude, ConnectWatch } from '../screens/Connect.tsx';
 import { Seasons } from '../screens/Seasons.tsx';
 import { AddRunSheet } from '../screens/AddRun.tsx';
+import { Handoff } from '../screens/Handoff.tsx';
+import { CAME_FROM_LINK } from '../data/api.ts';
+import { isStandalone } from './format.ts';
 
 function Splash() {
   return <main className="page center" style={{ minHeight: '100dvh' }}><span className="small">Loading…</span></main>;
@@ -21,9 +24,14 @@ export default function App() {
   const { authReady, session, loaded, loading } = useStore();
   const { route } = useRoute();
   const [adding, setAdding] = useState<{ date?: string } | null>(null);
+  // Opened from the email link in a browser tab (not the Home Screen app):
+  // offer a code so the Home Screen app can sign in too.
+  const [handoff, setHandoff] = useState(CAME_FROM_LINK && !isStandalone());
 
   if (!authReady) return <Splash />;
   if (!session) return <SignIn />;
+  if (handoff) return <Handoff fromLink onDone={() => setHandoff(false)} />;
+  if (route === 'pair') return <Handoff fromLink={false} onDone={() => history.back()} />;
   if (!loaded) return loading ? <Splash /> : <RedeemInvite />;
   if (!loaded.profile.onboarded) return <Onboarding />;
 
