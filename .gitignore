@@ -4,3 +4,4 @@ dist/
 .env
 gen-icons.mjs
 src/engine/__tests__/fixtures/private/
+dist-native/

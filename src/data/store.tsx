@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import type { Session } from '@supabase/supabase-js';
 import { snapshot, type Snapshot } from '../engine/index.ts';
 import { db, loadAll, localToday, type Loaded } from './api.ts';
+import { HealthSync, isNative } from '../native/health.ts';
 
 interface Store {
   session: Session | null;
@@ -66,6 +67,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [uid]);
 
   useEffect(() => { if (authReady) void refresh(); }, [authReady, refresh]);
+  // In the iPhone app, pull any new runs from Apple Health when it opens.
+  useEffect(() => {
+    if (!uid || !isNative()) return;
+    const catchUp = () => HealthSync.status().then(st => st.connected ? HealthSync.syncNow().then(r => { if (r.sent) void refresh(); }) : undefined).catch(() => {});
+    void catchUp();
+    const on = () => { if (document.visibilityState === 'visible') void catchUp(); };
+    document.addEventListener('visibilitychange', on);
+    return () => document.removeEventListener('visibilitychange', on);
+  }, [uid, refresh]);
   useEffect(() => {
     const on = () => { if (document.visibilityState === 'visible') void refresh(); };
     document.addEventListener('visibilitychange', on);

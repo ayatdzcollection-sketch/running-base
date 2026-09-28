@@ -4,6 +4,7 @@ import { useStore } from '../data/store.tsx';
 import { go } from '../app/router.ts';
 import { Bubble, Icon, NavBar, Why } from '../ui/kit.tsx';
 import { shortDay } from '../app/format.ts';
+import { HealthSync, isNative, type HealthStatus } from '../native/health.ts';
 
 // The raw code is only returned once by the server. Keep it on this phone so
 // the runner can copy it again; making a new one turns the old one off.
@@ -82,7 +83,65 @@ function MethodCard({ title, badge, body, onClick, icon }: { title: string; badg
   );
 }
 
+/** Inside the iPhone app: read runs straight from Apple Health. */
+function NativeHealth() {
+  const { refresh, toast } = useStore();
+  const [st, setSt] = useState<HealthStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => HealthSync.status().then(setSt, () => setSt(null));
+  useEffect(() => { void load(); }, []);
+  async function connect() {
+    setBusy(true);
+    try {
+      const raw = await api.createToken('shortcut');
+      const { sent } = await HealthSync.connect({ endpoint: `${FUNCTIONS_URL}/ingest/${raw}` });
+      toast(sent ? `Connected. Brought in ${sent} run${sent === 1 ? '' : 's'}.` : 'Connected. New runs will show up by themselves.');
+      await refresh();
+    } catch (e) { toast((e as Error).message || 'Couldn’t connect to Health.'); }
+    finally { setBusy(false); void load(); }
+  }
+  async function syncNow() {
+    setBusy(true);
+    try { const { sent } = await HealthSync.syncNow(); toast(sent ? `Brought in ${sent} run${sent === 1 ? '' : 's'}.` : 'You’re up to date.'); await refresh(); }
+    catch (e) { toast((e as Error).message); }
+    finally { setBusy(false); void load(); }
+  }
+  const connected = !!st?.connected;
+  return (
+    <main className="page flow">
+      <NavBar title="Apple Watch" onBack={() => history.back()} />
+      <div className="stack" style={{ gap: 14, alignItems: 'center', textAlign: 'center', paddingTop: 12 }}>
+        <Bubble icon="watch" size={64} />
+        <h1 className="h1-flow">{connected ? 'Runs log themselves' : 'Connect Apple Health'}</h1>
+        <p className="lead">{connected
+          ? 'When you finish a run on your Apple Watch, this app picks it up from Apple Health in the background.'
+          : 'This app reads your runs straight from Apple Health: distance, time and heart rate. Your runs from the last 90 days come in too.'}</p>
+      </div>
+      {connected && (
+        <div className="card pad" style={{ gap: 6 }}>
+          <span className="card-title">Last check</span>
+          <span className="hint">{st?.lastSync ? `${new Date(st.lastSync).toLocaleString()} · ${st.lastCount} new run${st.lastCount === 1 ? '' : 's'}` : 'Not yet'}</span>
+        </div>
+      )}
+      <Why label="What does it read?">
+        <p>Only running workouts: when, how far, how long, and your heart rate. It never writes to Health and never reads anything else.</p>
+        <p>If iPhone asks, turn on <b>Workouts</b>, <b>Walking + Running Distance</b> and <b>Heart Rate</b>. You can change this later in Settings → Health → Data Access.</p>
+      </Why>
+      <div className="spacer" />
+      {connected ? <>
+        <button className="btn btn-gray" onClick={syncNow} disabled={busy}>{busy ? 'Checking…' : 'Check for new runs now'}</button>
+        <button className="btn btn-danger" onClick={() => confirm('Stop reading runs from Apple Health?') && HealthSync.disconnect().then(load)}>Disconnect</button>
+      </> : <button className="btn btn-primary" onClick={connect} disabled={busy || st?.available === false}>{busy ? 'Connecting…' : 'Connect Apple Health'}</button>}
+      {st?.available === false && <p className="small" style={{ textAlign: 'center' }}>Apple Health isn’t available on this device.</p>}
+    </main>
+  );
+}
+
 export function ConnectWatch() {
+  return isNative() ? <NativeHealth /> : <WebWatch />;
+}
+
+function WebWatch() {
   const { code, live, make, revoke } = useCode('shortcut');
   const { loaded, refresh } = useStore();
   const [method, setMethod] = useState<Method | null>(null);

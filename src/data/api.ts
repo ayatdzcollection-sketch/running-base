@@ -107,7 +107,9 @@ export const api = {
   async sendCode(email: string) {
     // The email carries a link (and, once custom SMTP is set up, a code).
     // The link comes back to this page, where the session is picked up.
-    const back = `${location.origin}${location.pathname}`;
+    // Inside the iPhone app the link opens the website, which shows a code for the app.
+    const native = location.protocol === 'capacitor:';
+    const back = native ? 'https://ayatdzcollection-sketch.github.io/running-base/' : `${location.origin}${location.pathname}`;
     must(await db.auth.signInWithOtp({ email: email.trim().toLowerCase(), options: { shouldCreateUser: true, emailRedirectTo: back } }));
   },
   /** A 6-digit code shown by a signed-in browser → a session in this app. */

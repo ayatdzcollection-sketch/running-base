@@ -17,6 +17,8 @@ export default defineConfig(({ command, mode }) => ({
     // service worker. autoUpdate: a new deploy is fetched in the background and
     // activates on the next visit — no user prompt, no stale-forever cache.
     VitePWA({
+      // The native app ships its files inside the app bundle: no service worker.
+      disable: mode === 'native',
       registerType: 'autoUpdate',
       // We register the worker OURSELVES (src/main.tsx) instead of letting the
       // plugin inject its default script. That injected script only ever called
@@ -38,7 +40,7 @@ export default defineConfig(({ command, mode }) => ({
   // Dev stays root-relative; build AND `vite preview` (command 'serve' but
   // mode 'production') use the real /running-base/ base so the preview serves
   // the exact production layout — required to verify the service worker.
-  base: command === 'serve' && mode === 'development' ? '/' : '/running-base/',
+  base: mode === 'native' ? './' : command === 'serve' && mode === 'development' ? '/' : '/running-base/',
   // Honor a harness-assigned PORT (autoPort) so the dev server binds to the
   // expected port instead of falling back to Vite's default 5173→5174. No PORT
   // set (plain `npm run dev`) → Vite's default behavior, unchanged.
