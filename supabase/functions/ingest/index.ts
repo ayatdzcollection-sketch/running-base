@@ -73,15 +73,79 @@ function workoutsIn(body: Record<string, unknown>): Workout[] {
   });
 }
 
+type Db = ReturnType<typeof adminClient>;
+
+/** One line per sample; workouts look like
+ *  {"kind":"workout","start":ms,"end":ms,"workout":{"activityType":"running","duration":s,"totalDistanceMeters":m,
+ *   "statisticsDetail":{"HKQuantityTypeIdentifierHeartRate":{"avg":..,"max":..}}}} */
+async function ingestPuls(db: Db, userId: string, raw: string): Promise<Response> {
+  let accepted = 0, lines = 0;
+  const saved: string[] = [];
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    lines++;
+    let o: Record<string, unknown>;
+    try { o = JSON.parse(line); } catch { continue; }
+    const w = o.workout as Record<string, unknown> | undefined;
+    if (o.kind !== 'workout' || !w || !/run/i.test(String(w.activityType ?? ''))) continue;
+    const meters = Number(w.totalDistanceMeters ?? 0);
+    const start = new Date(Number(o.start));
+    if (!(meters > 80) || Number.isNaN(start.getTime())) continue;
+    const hr = (w.statisticsDetail as Record<string, Record<string, number>> | undefined)?.HKQuantityTypeIdentifierHeartRate;
+    const row: Record<string, unknown> = {
+      user_id: userId,
+      // PulsHealth sends UTC epochs; use the runner's saved time zone for the day.
+      date: await localDate(db, userId, start),
+      start_at: start.toISOString(),
+      distance_mi: Math.round(meters * MI_PER.m * 100) / 100,
+      duration_s: w.duration != null ? Math.round(Number(w.duration)) : null,
+      avg_hr: hr?.avg != null ? Math.round(hr.avg) : null,
+      max_hr: hr?.max != null ? Math.round(hr.max) : null,
+      kind: 'easy', source: 'watch',
+      external_id: `watch:${start.toISOString().slice(0, 16)}`,
+      updated_at: new Date().toISOString(),
+    };
+    const clean = Object.fromEntries(Object.entries(row).filter(([, v]) => v != null));
+    const { error } = await db.from('bb_activities').upsert(clean, { onConflict: 'user_id,external_id' });
+    if (!error) { accepted++; saved.push(`${row.distance_mi} mi on ${row.date}`); }
+  }
+  if (accepted) await db.from('bb_ingest_log').insert({ user_id: userId, payload: { source: 'pulshealth', lines }, result: `Saved ${saved.join(', ')}` });
+  // Always 2xx so the app marks the batch done (samples we don't use are simply skipped).
+  return json({ accepted, deleted: 0, duplicates: 0, routePoints: 0, seriesPoints: 0, aggregateSamples: 0, activitySummaries: 0 });
+}
+
+const tzCache = new Map<string, string>();
+async function localDate(db: Db, userId: string, d: Date): Promise<string> {
+  let tz = tzCache.get(userId);
+  if (!tz) {
+    const { data } = await db.from('bb_profiles').select('settings').eq('user_id', userId).maybeSingle();
+    tz = ((data?.settings as Record<string, unknown> | undefined)?.timezone as string) || 'America/New_York';
+    tzCache.set(userId, tz);
+  }
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+}
+
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
-  if (req.method !== 'POST') return json({ ok: false, error: 'POST a workout' }, 405);
+  const path = new URL(req.url).pathname;
+  if (req.method === 'GET' && path.endsWith('/healthz')) return json({ ok: true });
+  const capabilities = req.method === 'GET' && path.endsWith('/v1/capabilities');
+  if (req.method !== 'POST' && !capabilities) return json({ ok: false, error: 'POST a workout' }, 405);
 
   const db = adminClient();
   const userId = await userForToken(db, tokenFrom(req), 'shortcut');
   if (!userId) return json({ ok: false, error: 'Unknown or turned-off code. Copy a new one in the app.' }, 401);
+  // PulsHealth's "Test Connection" asks this first; a 401 above tells it the code is wrong.
+  if (capabilities) return json({ protocolVersions: [1], features: ['batches'], server: 'Bulletproof Base', version: '1' });
 
-  const text = await req.text();
+  // PulsHealth: gzip NDJSON with one line per sample. Keep only running
+  // workouts, and don't log the raw batch (it can hold thousands of samples).
+  const gz = (req.headers.get('content-encoding') ?? '').includes('gzip');
+  const raw = gz && req.body ? await new Response(req.body.pipeThrough(new DecompressionStream('gzip'))).text() : await req.text();
+  if (/ndjson/i.test(req.headers.get('content-type') ?? '') || new URL(req.url).pathname.endsWith('/v1/batches')) {
+    return await ingestPuls(db, userId, raw);
+  }
+  const text = raw;
   let body: Record<string, unknown> = {};
   try { body = JSON.parse(text); } catch { body = { _raw: text }; }
   const log = await db.from('bb_ingest_log').insert({ user_id: userId, payload: body }).select('id').single();

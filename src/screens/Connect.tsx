@@ -67,8 +67,9 @@ function Guide({ title, steps, step, setStep, onClose, children, next, nextLabel
 }
 
 // ── Apple Watch ────────────────────────────────────────────────────
-type Method = 'hae' | 'shortcut';
+type Method = 'puls' | 'hae' | 'shortcut';
 const HAE_URL = 'https://apps.apple.com/app/id1115567069';
+const PULS_URL = 'https://apps.apple.com/us/app/pulshealth/id6757657354';
 
 function MethodCard({ title, badge, body, onClick, icon }: { title: string; badge?: string; body: string; onClick: () => void; icon: 'watch' | 'spark' | 'share' }) {
   return (
@@ -178,7 +179,7 @@ function WebWatch() {
       </div>
       <Why label="A run didn’t show up?">
         <p>Your iPhone keeps health data locked while it’s locked, so a run can arrive the next time you unlock it.</p>
-        <p>Health Auto Export sends on its own schedule (every hour, for example). With the Shortcut, check the automation is on and set to <b>Run Immediately</b>.</p>
+        <p>PulsHealth sends when iOS wakes it, usually within minutes; opening it sends right away. Health Auto Export sends on its own schedule (every hour, for example). With the Shortcut, check the automation is on and set to <b>Run Immediately</b>.</p>
         <p>You can always add or fix a run by hand with the + button.</p>
       </Why>
       <div className="spacer" />
@@ -195,8 +196,10 @@ function WebWatch() {
         <h1 className="h1-flow">How should runs get in?</h1>
         <p className="lead">Pick one. You can switch later.</p>
       </div>
-      <MethodCard icon="watch" title="Health Auto Export" badge="Most reliable" onClick={() => { setMethod('hae'); setStep(1); }}
-        body="An App Store app sends every run by itself, with time and heart rate. Needs its Premium upgrade (free 7-day trial)." />
+      <MethodCard icon="watch" title="PulsHealth" badge="Free · recommended" onClick={() => { setMethod('puls'); setStep(1); }}
+        body="A free App Store app that sends every run by itself, with time and heart rate. About 2 minutes to set up." />
+      <MethodCard icon="watch" title="Health Auto Export" onClick={() => { setMethod('hae'); setStep(1); }}
+        body="Does the same job, with its own sync schedule. Needs its Premium upgrade (free 7-day trial)." />
       <MethodCard icon="share" title="Free Shortcut" onClick={() => { setMethod('shortcut'); setStep(1); }}
         body="Built into your iPhone. Adds up the distance from the hour before, so a walk right before a run can count. You can fix it in History." />
       <MethodCard icon="spark" title="Just tell Claude" onClick={() => go('claude')}
@@ -208,7 +211,19 @@ function WebWatch() {
     <Guide title={title} steps={total} step={step - 1} setStep={n => setStep(n + 1)} onClose={() => setStep(0)} next={next} nextLabel={label} nextDisabled={disabled}>{body}</Guide>
   );
 
-  // Step 1: link (both methods)
+  // Step 1 (PulsHealth): it asks for a server address and a token separately
+  if (step === 1 && method === 'puls') return guide('Step 1 of 3', <>
+    <div className="stack" style={{ gap: 6 }}>
+      <h1 className="h1-flow">Your two codes</h1>
+      <p className="lead">PulsHealth asks for a <b>server address</b> and a <b>token</b>. The token links runs to <b>your</b> account, so keep it private, like a password.</p>
+    </div>
+    <CopyLink value={`${FUNCTIONS_URL}/ingest`} label="Server address" hint="The same for everyone." />
+    {code
+      ? <CopyLink value={code} label="Your token" hint="Private to you. You’ll paste both in the next step; come back here to copy each one." />
+      : <button className="btn btn-tint" onClick={make}>{live ? 'Make a new token (the old one stops working)' : 'Make my token'}</button>}
+  </>, () => setStep(2), 'Next', !code);
+
+  // Step 1: link (the other methods)
   if (step === 1) return guide(`Step 1 of 3`, <>
     <div className="stack" style={{ gap: 6 }}>
       <h1 className="h1-flow">Copy your link</h1>
@@ -220,6 +235,27 @@ function WebWatch() {
   </>, () => setStep(2), 'I copied it', !link);
 
   // Step 2: set up the sender
+  if (step === 2 && method === 'puls') return guide('Step 2 of 3', <>
+    <div className="stack" style={{ gap: 6 }}>
+      <h1 className="h1-flow">Set up PulsHealth</h1>
+      <p className="lead">It reads your workouts from Apple Health and sends them here by itself.</p>
+    </div>
+    <a className="btn btn-tint" style={{ height: 50, borderRadius: 25 }} href={PULS_URL} target="_blank" rel="noreferrer">Get PulsHealth (free)</a>
+    <Taps steps={[
+      <>Open it and tap <K>Get Started</K>.</>,
+      <>On <K>Your Server</K>, skip the QR code. Under <b>Or enter it by hand</b>, paste the <b>server address</b> in the URL box and <b>your token</b> in <K>Bearer token</K>.</>,
+      <>Tap <K>Test Connection</K>. It should say <b>Connected</b>. Then <K>Continue</K>.</>,
+      <>On <K>Data Types</K>, keep <b>Workouts</b> on. You can turn the rest off; only runs are used.</>,
+      <>Allow Health access when your iPhone asks, including <K>Workouts</K> and <K>Heart Rate</K>.</>,
+      <>Finish. It sends your past runs, then new ones as you finish them.</>,
+    ]} />
+    <Why label="Test Connection failed?">
+      <p><b>Token rejected</b> means the token was pasted wrong or is old. Copy it again from the last step.</p>
+      <p><b>Can’t reach the server</b> usually means the address has a typo. It must start with <b className="mono">https://</b>.</p>
+      <p>Everything is sent only to Bulletproof Base. Walks and bike rides are skipped.</p>
+    </Why>
+  </>, () => setStep(3), 'Next: test it');
+
   if (step === 2 && method === 'hae') return guide('Step 2 of 3', <>
     <div className="stack" style={{ gap: 6 }}>
       <h1 className="h1-flow">Set up Health Auto Export</h1>
@@ -271,7 +307,9 @@ function WebWatch() {
   if (step === 3) return guide('Step 3 of 3', <>
     <div className="stack" style={{ gap: 6 }}>
       <h1 className="h1-flow">Test it once</h1>
-      <p className="lead">{method === 'hae'
+      <p className="lead">{method === 'puls'
+        ? <>Open <b>PulsHealth</b> and keep it open a minute. It sends your recent runs, which should show up below.</>
+        : method === 'hae'
         ? <>In Health Auto Export, open your automation and tap <b>Manual Export</b> (or wait for the next sync). It sends your recent runs.</>
         : <>In Shortcuts, tap <b>Send run to Base</b>. Allow Health access when your iPhone asks.</>}</p>
     </div>
@@ -286,8 +324,8 @@ function WebWatch() {
     </div>
     {pinged && !heard && (
       <Why label="It sent something but no run appeared">
-        {method === 'hae'
-          ? <p>Only runs are saved. If your recent workouts were walks or rides, finish a run and it’ll come through. Check the format is <b>JSON</b> and the data type is <b>Workouts</b>.</p>
+        {method !== 'shortcut'
+          ? <p>Only runs are saved. If your recent workouts were walks or rides, finish a run and it’ll come through.{method === 'hae' && <> Check the format is <b>JSON</b> and the data type is <b>Workouts</b>.</>}</p>
           : <><p>Check the keys are spelled exactly <b className="mono">distance</b> and <b className="mono">start</b>.</p><p>If you haven’t walked or run in the last hour, the distance is 0 and nothing is saved. That’s fine; it’ll work after your next run.</p></>}
       </Why>
     )}

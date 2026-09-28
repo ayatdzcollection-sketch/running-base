@@ -17,15 +17,16 @@ async function sha256Hex(text: string): Promise<string> {
   return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Finds the token in the Authorization header or as the last path segment. */
+/** Finds the token in the Authorization header or anywhere in the path. */
 export function tokenFrom(req: Request): string | null {
   const auth = req.headers.get('authorization');
   if (auth?.toLowerCase().startsWith('bearer ')) {
     const t = auth.slice(7).trim();
     if (t.startsWith('bb_')) return t;
   }
-  const last = new URL(req.url).pathname.split('/').filter(Boolean).pop() ?? '';
-  return last.startsWith('bb_') ? last : null;
+  // The code can sit anywhere in the path (apps may append their own path,
+  // e.g. PulsHealth posts to <link>/v1/batches).
+  return new URL(req.url).pathname.split('/').find(p => p.startsWith('bb_')) ?? null;
 }
 
 /** Returns the runner's user id for a live token of the given kind, or null. */
