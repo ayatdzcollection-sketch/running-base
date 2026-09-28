@@ -40,10 +40,10 @@ export function SignIn() {
         <NavBar title="Sign in" onBack={() => setStep('email')} />
         <div className="stack" style={{ gap: 6, paddingTop: 8 }}>
           <h1 className="h1-flow">Check your email</h1>
-          <p className="lead">We sent a code to {email}. It works for 1 hour.</p>
+          <p className="lead">We sent an email to {email}. Tap the link in it, or type the code if it shows one. It works for 1 hour.</p>
         </div>
         <label className="field" style={{ position: 'relative' }}>
-          <span>Code from the email</span>
+          <span>Code (if your email has one)</span>
           <div style={{ display: 'grid', gridTemplateColumns: `repeat(${OTP_LEN}, minmax(0,1fr))`, gap: 6 }} onClick={() => codeRef.current?.focus()}>
             {Array.from({ length: OTP_LEN }, (_, i) => (
               <span key={i} className="center num" style={{ height: 56, borderRadius: 12, background: 'var(--card)', boxShadow: `inset 0 0 0 ${i === code.length ? 2 : 1}px ${i === code.length ? 'var(--ink)' : 'var(--field)'}`, fontSize: 28, fontWeight: 700 }}>{code[i] ?? ''}</span>
@@ -74,7 +74,7 @@ export function SignIn() {
         </label>
       </form>
       <div className="spacer" />
-      <button className="btn btn-primary" onClick={send} disabled={busy}>{busy ? 'Sending…' : 'Email me a code'}</button>
+      <button className="btn btn-primary" onClick={send} disabled={busy}>{busy ? 'Sending…' : 'Email me a sign-in link'}</button>
       <p className="small" style={{ textAlign: 'center' }}>No password. Only you can see your runs.</p>
     </main>
   );

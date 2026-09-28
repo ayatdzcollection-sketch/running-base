@@ -102,7 +102,10 @@ const must = <T,>(r: { error: { message: string } | null; data?: T | null }) => 
 
 export const api = {
   async sendCode(email: string) {
-    must(await db.auth.signInWithOtp({ email: email.trim().toLowerCase(), options: { shouldCreateUser: true } }));
+    // The email carries a link (and, once custom SMTP is set up, a code).
+    // The link comes back to this page, where the session is picked up.
+    const back = `${location.origin}${location.pathname}`;
+    must(await db.auth.signInWithOtp({ email: email.trim().toLowerCase(), options: { shouldCreateUser: true, emailRedirectTo: back } }));
   },
   async verifyCode(email: string, token: string): Promise<Session | null> {
     const r = await db.auth.verifyOtp({ email: email.trim().toLowerCase(), token: token.trim(), type: 'email' });
